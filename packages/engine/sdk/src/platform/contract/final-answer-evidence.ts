@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { hashState, type JsonValue } from '@goodvibes-jev/judgment';
 import type { ContractView } from './types.js';
 import type { FileChange } from './evidence.js';
+import { commandObservation } from './command-observation.js';
 
 type JsonObject = { [key: string]: JsonValue };
 const object = (value: JsonValue | undefined): value is JsonObject => value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -43,10 +44,36 @@ function criterionLinks(value: JsonValue, units: readonly JsonObject[]): JsonVal
     }) });
 }
 
+/** Historical command bodies stay addressable; current claims and failures keep
+ * their full primary receipts in the review itself. */
+function commandView(contract: Pick<ContractView, 'id' | 'units'>, value: JsonValue | undefined, text: string | undefined): JsonValue {
+  if (text === undefined || !Array.isArray(value)) return value ?? [];
+  const retained = new Map(contract.units.flatMap(unit => (unit.commandEvidence ?? []).map((receipt, index) => [
+    hashState(commandObservation(receipt)),
+    { storage: 'native-contract-store', contractId: contract.id, unitId: unit.id, field: 'commandEvidence', index },
+  ] as const)));
+  return value.map(receipt => {
+    if (!object(receipt) || typeof receipt['callId'] !== 'string' || receipt['executionSucceeded'] !== true
+      || receipt['exitCode'] !== 0 || receipt['success'] !== true || typeof receipt['command'] !== 'string'
+      || typeof receipt['head'] !== 'string') return receipt;
+    const id = receipt['callId'];
+    if (new RegExp('(?<![\\w.-])' + id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w-]|\\.[\\w-])').test(text)) return receipt;
+    const bodySource = retained.get(hashState(receipt));
+    if (!bodySource) return receipt;
+    const { command, head, stderr, sourceCapture, ...identity } = receipt;
+    return { ...identity, observationKind: 'retained-command-receipt-index',
+      commandDigest: hashState(command), commandBytes: Buffer.byteLength(command),
+      stdoutDigest: hashState(head), stdoutBytes: Buffer.byteLength(head),
+      ...(typeof stderr === 'string' ? { stderrDigest: hashState(stderr), stderrBytes: Buffer.byteLength(stderr) } : {}),
+      ...(sourceCapture === undefined ? {} : { sourceCapture: object(sourceCapture)
+        ? Object.fromEntries(Object.entries(sourceCapture).filter(([key]) => key !== 'meaning')) : sourceCapture }), bodySource };
+  });
+}
+
 /** Current artifact text comes from an actual current host read, or an admitted,
  * previously checked read matching its bytes. Exact diffs preserve other changes.
  * Scoped native receipts compose retained work; no root is auto-passed. */
-export function finalAnswerEvidence(contract: Pick<ContractView, 'ask' | 'units'>, evidence: JsonObject, summaries: JsonValue, changes: readonly FileChange[] = []) {
+export function finalAnswerEvidence(contract: Pick<ContractView, 'id' | 'ask' | 'units'>, evidence: JsonObject, summaries: JsonValue, changes: readonly FileChange[] = [], currentOutput?: string) {
   const host = evidence['orchestration'];
   if (!object(host) || !Array.isArray(host['currentFiles'])) return undefined;
   const files = host['currentFiles'].filter(object);
@@ -87,25 +114,37 @@ export function finalAnswerEvidence(contract: Pick<ContractView, 'ask' | 'units'
     artifacts.push(found);
   }
   if (!artifacts.length && !currentChanges.length) return undefined;
-  const units = Array.isArray(host['units']) ? host['units'].filter(object).map(unit => ({
+  const artifactPaths = new Set(files.flatMap(file => typeof file['path'] === 'string' ? [file['path']] : []));
+  const units = Array.isArray(host['units']) ? host['units'].filter(object).map(unit => {
+    const source = contract.units.find(source => source.id === unit['id']);
+    const check = source?.checks.at(-1);
+    const retainedResult = source?.role === 'research' && source.status === 'passed'
+      && check?.result === 'pass' && check.decisionIds.length > 0
+      && source.readEvidence?.some(read => read.contentKind !== 'declared-reference' && !artifactPaths.has(read.path))
+      && unit['acceptedAnswerDigest'] === hashState(source.answer ?? '');
+    return {
     id: unit['id'] ?? null, goal: unit['goal'] ?? null, status: unit['status'] ?? null,
     criteria: unit['criteria'] ?? null, latestCheck: unit['latestCheck'] ?? null,
     acceptedAnswerDigest: unit['acceptedAnswerDigest'] ?? null,
+    ...(retainedResult ? { acceptedAnswer: source.answer ?? '' } : {}),
     acceptedAnswerSource: { storage: 'native-contract-store', contractId: host['contractId'] ?? null, unitId: unit['id'] ?? null, field: 'answer' },
     readObservations: observationTable(unit['readObservations']),
-  })) : [];
+  }; }) : [];
   const view: JsonObject = {
     originalRequest: contract.ask,
     fullSourceEvidence: { digest: hashState(evidence), bytes: Buffer.byteLength(JSON.stringify(evidence)),
-      meaning: 'Digest of the complete native evidence prepared for this decision before projection. Its source records remain in the owned contract, accepted unit answers and read observations, command/check records, task evidence and checked tree. The view below carries current primary artifacts/diffs, every scoped native criterion/check/read range, and complete commands and gates. Earlier verdicts establish only their checked scope. This digest grants no approval and does not replace judging every original root requirement.' },
+      meaning: 'Digest of the complete native evidence prepared for this decision before projection. Its source records remain in the owned contract, accepted unit answers and read observations, command/check records, task evidence and checked tree. The view below carries current primary artifacts/diffs, every scoped native criterion/check/read range, complete accepted research results with non-artifact source observations, referenced execution bodies, all failures and unknown child outcomes, and complete gates. Unreferenced successful command bodies remain available at their exact native storage references and are not execution proof for an unshown claim. Earlier verdicts establish only their checked scope. This digest grants no approval and does not replace judging every original root requirement.' },
     currentArtifacts: artifacts,
     currentTextualChanges: currentChanges,
     hostOperations: Array.isArray(evidence['hostOperations']) ? evidence['hostOperations'].map(metadata) : [],
-    commands: evidence['commands'] ?? [],
+    commands: commandView(contract, evidence['commands'], currentOutput === undefined ? undefined
+      : currentOutput + '\n' + artifacts.map(artifact => artifact.content).join('\n')),
+    commandEvidenceMeaning: 'A retained-command-receipt-index preserves an actual successful child execution identity whose id is not referenced by the current answer or artifacts. Its complete command/result remain unchanged at the exact bodySource, bound by the recorded digests. Capture identities retain their original digest/bytes. Indexed command bodies are not supplied here; metadata or previous acceptance cannot prove an unshown purpose or execution result. Referenced executions, failures, unknown child outcomes and receipts without an exact native source remain in full.',
     gates: evidence['gates'] ?? [],
     criteria: criterionLinks(object(summaries) ? summaries['checks'] ?? summaries : summaries, units),
     criteriaReferenceMeaning: 'A servedBy criterionRef resolves by exact id to orchestration.units[].criteria, including its complete literal text and recorded verdict. Only identical complete criterion values are referenced; conflicting or additional fields remain inline. All original root criteria remain separately supplied unchanged. These references are native evidence links, not new approval.',
     orchestration: { contractId: host['contractId'] ?? null, planChecks: host['planChecks'] ?? [],
+      currentAnswerSource: host['currentAnswerSource'] ?? null,
       repairPlanAdmissions: host['repairPlanAdmissions'] ?? [], referenceOperations: host['referenceOperations'] ?? [],
       sourceReferenceComparisons: host['sourceReferenceComparisons'] ?? [], sourceJsonReferenceComparisons: host['sourceJsonReferenceComparisons'] ?? [],
       currentValidation: host['currentValidation'] ?? null, groups: host['groups'] ?? [], units,

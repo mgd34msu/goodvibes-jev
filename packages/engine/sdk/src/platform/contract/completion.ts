@@ -42,7 +42,8 @@ import { excludeUntouchedLaunchResidue } from '../orchestration/dirty-guard.js';
 import { GitService } from '../git/service.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
-import { describeCommitOutcome, describeContractOutcome, renderContractAnswer, CONTRACT_PASSED_WITHOUT_OUTPUT } from './answer.js';
+import { describeCommitOutcome, describeContractOutcome, finalAnswerUnit, renderContractAnswer, CONTRACT_PASSED_WITHOUT_OUTPUT } from './answer.js';
+import { parseCompletionReportParts } from '../agents/completion-report.js';
 import { DELIVERABLE_JUDGES } from './batteries/deliverable-judge.js';
 import { GROUP_JUDGES } from './batteries/group-judge.js';
 import { FINAL_ANSWER_REVIEWS } from './batteries/final-answer-review.js';
@@ -239,10 +240,24 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       .filter(read => read.contentKind === 'declared-reference' && read.returnedContent !== undefined && read.path.toLowerCase().endsWith('.json'))
       .map(read => [JSON.stringify([read.path, hashState(read.returnedContent!)]), read])).values()];
     const referenceOperations = currentFileObservations(tree, referenceReads.map(read => read.path));
+    const answerSource = input.scope === 'deliverable' ? finalAnswerUnit(contract) : undefined;
+    const sourceReport = answerSource ? parseCompletionReportParts(answerSource.answer ?? '')?.report : undefined;
+    const sourceCheck = answerSource?.checks.at(-1);
+    const currentAnswerSource = answerSource && sourceReport && typeof sourceReport.finalAnswer === 'string'
+      && sourceReport.finalAnswer.trim() === input.output && sourceCheck?.result === 'pass' && sourceCheck.decisionIds.length > 0
+      ? { unitId: answerSource.id, rawReportDigest: hashState(answerSource.answer ?? ''),
+        reportAt: { storage: 'native-contract-store', contractId: contract.id, unitId: answerSource.id, field: 'answer' },
+        reportMetadata: Object.fromEntries(Object.entries(sourceReport).filter(([key]) => key !== 'finalAnswer')) as JsonValue,
+        field: 'finalAnswer', decodedFieldDigest: hashState(sourceReport.finalAnswer), outputDigest: hashState(input.output),
+        transformation: 'Trim only surrounding whitespace from the parsed finalAnswer field.',
+        nativeUnitCheck: { id: sourceCheck.id, result: sourceCheck.result, decisionIds: [...sourceCheck.decisionIds] },
+        meaning: 'Actual native host extraction of this exact output from the stored accepted unit completion report, with its complete other report fields and real passed unit check. The field text is supplied once as output. This establishes answer provenance and normal return of the candidate for host checking, not acceptance of this new root review, owner publication, external execution or substantive facts merely asserted in the report.' }
+      : undefined;
     const evidence = trimEvidence({ output: input.output, changes, gates,
       commands: evidenceUnits.flatMap<EvidenceCommand>(unit => unit.commandEvidence ?? commandsFromTurns(turnsOf(run, new Set([unit.id])))), orchestration: {
       contractId: contract.id, createdAt: contract.createdAt, origin: contract.origin, planChecks,
       continuationEvidence: contract.taskEvidence ?? '',
+      ...(currentAnswerSource ? { currentAnswerSource } : {}),
       ownerPriorReads,
       referenceOperations,
       sourceJsonReferenceComparisons: compareJsonReadReferences(referenceReads, referenceOperations, sourceObservations),
@@ -291,7 +306,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     let answerReview: FinalAnswerReviewReceipt | undefined;
     if (input.scope === 'deliverable') {
       const reviewBattery = FINAL_ANSWER_REVIEWS[config().acceptanceStakes];
-      const primary = finalAnswerEvidence(contract, acceptanceEvidence, input.summaries, changes);
+      const primary = finalAnswerEvidence(contract, acceptanceEvidence, input.summaries, changes, input.output);
       currentEvidence = primary?.evidence;
       const state = { goal: input.goal, criteria: judged(input.criteria).map(criterion => criterion.text), output: evidence.output,
         evidence: primary?.evidence ?? { ...acceptanceEvidence, criteria: input.summaries }, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) };

@@ -23,8 +23,8 @@ export function answerUnit(contract: Pick<Contract, 'units' | 'groups'>): Contra
   return planUnits.find((unit) => unit.role === 'integration') ?? (planUnits.length === 1 ? planUnits[0] : undefined);
 }
 
-/** The contract's answer: its result, accompanying prose, summary, or unstructured answer. */
-export function renderContractAnswer(contract: Pick<Contract, 'units' | 'groups'>): string {
+/** The accepted repair unit that supplied the current explicit final answer. */
+export function finalAnswerUnit(contract: Pick<Contract, 'units' | 'groups'>): ContractUnit | undefined {
   const answerRepairs = new Set(contract.groups.filter(group => group.kind === 'fix' && group.repairs?.scope === 'deliverable').map(group => group.id));
   for (const unit of [...contract.units].reverse()) {
     if (unit.status !== 'passed' || !answerRepairs.has(unit.groupId)) continue;
@@ -32,8 +32,16 @@ export function renderContractAnswer(contract: Pick<Contract, 'units' | 'groups'
     // Research results and engineering fix notes remain supporting evidence.
     const report = parseCompletionReportParts(unit.answer ?? '')?.report;
     const result = typeof report?.finalAnswer === 'string' ? report.finalAnswer.trim() : '';
-    if (result) return result;
+    if (result) return unit;
   }
+  return undefined;
+}
+
+/** The contract's answer: its result, accompanying prose, summary, or unstructured answer. */
+export function renderContractAnswer(contract: Pick<Contract, 'units' | 'groups'>): string {
+  const finalUnit = finalAnswerUnit(contract);
+  const finalReport = finalUnit ? parseCompletionReportParts(finalUnit.answer ?? '')?.report : undefined;
+  if (typeof finalReport?.finalAnswer === 'string') return finalReport.finalAnswer.trim();
   const raw = (answerUnit(contract)?.answer ?? '').trim();
   if (raw.length === 0) return '';
   const parts = parseCompletionReportParts(raw);

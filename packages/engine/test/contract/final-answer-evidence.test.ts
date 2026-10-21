@@ -6,6 +6,7 @@ import { join } from 'node:path';
 import { hashState } from '@goodvibes-jev/judgment';
 import { currentFileObservations } from '../../sdk/src/platform/contract/evidence.js';
 import { finalAnswerEvidence } from '../../sdk/src/platform/contract/final-answer-evidence.js';
+import { commandObservation } from '../../sdk/src/platform/contract/command-observation.js';
 import { makeContract, makeUnit } from './fixtures.js';
 
 const digest = (text: string) => createHash('sha256').update(text).digest('hex');
@@ -53,6 +54,59 @@ test('root projection retains actual scope calculations and repair-plan admissio
   expect(result.evidence['orchestration']).toMatchObject({ sourceJsonReferenceComparisons, repairPlanAdmissions });
   expect(JSON.stringify(result.evidence)).toContain('"missingReferencedLines":1');
   expect(result.evidence).not.toHaveProperty('passed');
+});
+
+test('substantive accepted research stays visible with its actual check while old delivery drafts remain bound in storage', () => {
+  const f = fixture();
+  const source = makeUnit({ id: 'source-review', role: 'research', status: 'passed', answer: 'The reconnect guard suppresses duplicate sockets; the loss of restoration controls is retained.',
+    checks: f.contract.units[0]!.checks.map(check => ({ ...check, id: 'source-review.k1', decisionIds: ['native-source-check'] })),
+    readEvidence: [{ path: 'src/reconnect.ts', returnedRanges: ['1-20'], returnedLines: 20, contentKind: 'cited-source' }] });
+  f.contract.units.push(source);
+  f.evidence.orchestration.units.push({ id: source.id, status: 'passed', acceptedAnswerDigest: hashState(source.answer!),
+    latestCheck: source.checks.at(-1), criteria: source.criteria, readObservations: source.readEvidence });
+  const before = JSON.stringify(f.contract);
+  const view = finalAnswerEvidence(f.contract, f.evidence, {})!;
+  const units = (view.evidence['orchestration'] as { units: { id: string; acceptedAnswer?: string }[] }).units;
+  expect(units.find(unit => unit.id === source.id)?.acceptedAnswer).toBe(source.answer);
+  expect(units.find(unit => unit.id === 'u1')).not.toHaveProperty('acceptedAnswer');
+  expect(JSON.stringify(f.contract)).toBe(before);
+  source.status = 'running';
+  expect((finalAnswerEvidence(f.contract, f.evidence, {})!.evidence['orchestration'] as { units: { id: string }[] }).units.find(unit => unit.id === source.id))
+    .not.toHaveProperty('acceptedAnswer');
+});
+
+test('current execution citations and every failure keep full primary bodies while unrelated successful history retains exact native pointers', () => {
+  const f = fixture();
+  const capture = (callId: string, exitCode = 0) => {
+    const command = `verify-${callId}`;
+    return { agentId: 'actual-worker', turn: 1, callIndex: 0, callId, command, success: true,
+      head: JSON.stringify({ cmd: command, exit_code: exitCode, success: exitCode === 0,
+        stdout: `Actual result for ${callId}`, stderr: exitCode === 0 ? '' : 'Actual failure' }) };
+  };
+  const receipts = [capture('call-inactive'), capture('call-used'), capture('call-failed', 2),
+    { ...capture('call-unknown'), head: 'Actual unstructured result; child exit status not supplied.' }, capture('call-prefix')];
+  f.contract.units[0]!.commandEvidence = receipts;
+  const observed = receipts.map(receipt => commandObservation(receipt));
+  const unbound = commandObservation(capture('call-unbound'));
+  f.evidence.commands = [...observed, unbound];
+  const before = JSON.stringify(f.contract);
+  const view = finalAnswerEvidence(f.contract, f.evidence, {}, [], 'The execution call-used. succeeded; call-prefix-other is a distinct identifier.')!;
+  const commands = view.evidence['commands'] as Record<string, unknown>[];
+  expect(commands[0]).toMatchObject({ callId: 'call-inactive', executionSucceeded: true, exitCode: 0,
+    commandDigest: hashState(receipts[0]!.command), stdoutDigest: hashState('Actual result for call-inactive'),
+    bodySource: { storage: 'native-contract-store', contractId: f.contract.id, unitId: 'u1', field: 'commandEvidence', index: 0 } });
+  expect(commands[0]).not.toHaveProperty('command');
+  expect(commands[0]).not.toHaveProperty('head');
+  expect(commands.slice(1, 4)).toEqual(observed.slice(1, 4));
+  expect(commands[4]).toHaveProperty('observationKind', 'retained-command-receipt-index');
+  expect(commands[5]).toEqual(unbound);
+  expect(JSON.stringify(f.contract)).toBe(before);
+  expect(view.evidence['fullSourceEvidence']).toMatchObject({ digest: hashState(f.evidence) });
+  f.contract.units[0]!.readEvidence![0]!.returnedContent = '1 | call-inactive.';
+  f.evidence.orchestration.currentFiles[0].sha256 = digest('call-inactive.\n');
+  f.evidence.orchestration.currentFiles[0].bytes = Buffer.byteLength('call-inactive.\n');
+  const artifactView = finalAnswerEvidence(f.contract, f.evidence, {}, [], 'Read the report.')!;
+  expect((artifactView.evidence['commands'] as unknown[])[0]).toEqual(observed[0]);
 });
 
 test('native read tables preserve every original field, range and unit attribution while avoiding repeated column names', () => {

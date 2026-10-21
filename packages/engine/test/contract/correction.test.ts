@@ -7,6 +7,7 @@
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { hashState, SqliteDecisionLog } from '@goodvibes-jev/judgment';
 import { hasContractPlanConsumer } from '../../sdk/src/platform/tools/agent/contract-binding.js';
 import { buildFixGroup, validateFixPlan, type ContractRouteSelector, type Criterion, type FixBrief } from '../../sdk/src/platform/contract/index.js';
 import { plannerOutput, type AnswerContext, type DraftPlan } from './plan-support.js';
@@ -282,15 +283,22 @@ describe('groups and the deliverable (6.4)', () => {
   }, 20_000);
 
   test('a passed answer repair replaces the rejected draft without repeating the completed implementation', async () => {
+    using log = new SqliteDecisionLog(':memory:');
     const plan = oneUnitPlan(1);
     const repair = fixPlan([{ serves: ['c1'], files: [] }]);
     repair.groups[0]!.units[0]!.role = 'research';
     const planner = stepPlanner(plan, { fix: () => plannerOutput(repair) });
     const corrected = 'The parser is implemented in src/csv.ts. No runtime verification is claimed.';
-    const report = '```json\n' + JSON.stringify({ version: 1, archetype: 'research', summary: 'Corrected the final response.', result: 'Supporting context retained.', finalAnswer: corrected }) + '\n```';
-    const h = use(makeHarness({ plan, planner: planner.runner,
+    const decoded = `  ${corrected}\n`;
+    const report = '```json\n' + JSON.stringify({ version: 1, archetype: 'research', summary: 'Corrected the final response.', result: 'Supporting context retained.', finalAnswer: decoded }) + '\n```';
+    const sources: unknown[] = [];
+    const h = use(makeHarness({ plan, planner: planner.runner, decisionLog: log,
       scripts: scriptsWith({ u1: finishes('OLD_UNSUPPORTED_CRC') }, id => id.endsWith('.f1.u1') ? () => [{ text: report }] : undefined),
       port: context => {
+        if (context.state['output'] === corrected && (context.name === 'unfinished' || context.name === 'goal' && judgeOf(context) === 'deliverable')) {
+          const evidence = context.state['evidence'] as { orchestration: { currentAnswerSource: unknown } };
+          sources.push(evidence.orchestration.currentAnswerSource);
+        }
         if (context.name === 'role' && (context.state['unit'] as { title?: string })?.title === 'Fix 1') return choiceAnswer(context.question, 'research', 0.98);
         if (context.name === 'unsupported') return noulAnswer(String(context.state['output']).includes('OLD_UNSUPPORTED_CRC') ? 0.98 : 0.03);
         return undefined;
@@ -305,6 +313,18 @@ describe('groups and the deliverable (6.4)', () => {
     expect(done.units.find(unit => unit.id.endsWith('.f1.u1'))!.status).toBe('passed');
     expect(h.manager.getStatus(done.ownerAgentId!)!.fullOutput).toBe(corrected);
     expect(planner.of('fix')).toHaveLength(1);
+    const fixed = done.units.find(unit => unit.id.endsWith('.f1.u1'))!;
+    expect(fixed.checks.at(-1)!.decisionIds.length).toBeGreaterThan(0);
+    expect(sources).toHaveLength(2);
+    for (const source of sources) {
+      expect(source).toMatchObject({ unitId: fixed.id, rawReportDigest: hashState(fixed.answer!),
+        reportAt: { storage: 'native-contract-store', contractId: done.id, unitId: fixed.id, field: 'answer' },
+        reportMetadata: { summary: 'Corrected the final response.', result: 'Supporting context retained.' },
+        field: 'finalAnswer', decodedFieldDigest: hashState(decoded), outputDigest: hashState(corrected),
+        nativeUnitCheck: { id: fixed.checks.at(-1)!.id, result: 'pass', decisionIds: fixed.checks.at(-1)!.decisionIds } });
+      expect((source as { reportMetadata: unknown }).reportMetadata).not.toHaveProperty('finalAnswer');
+      expect(source).not.toHaveProperty('rootPassed');
+    }
   }, 20_000);
 
   test('a group check that fails is repaired by a planned fix, then passes on its re-check', async () => {
