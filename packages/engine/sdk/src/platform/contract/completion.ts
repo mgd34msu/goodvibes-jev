@@ -184,8 +184,9 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       })),
       units: contract.units.filter(unit => evidenceGroups.has(unit.groupId)).map(unit => ({ id: unit.id, groupId: unit.groupId, goal: unit.goal, status: unit.status,
         criteria: judged(unit.criteria).map(criterion => ({ id: criterion.id, text: criterion.text, verdict: criterion.status })),
-        latestCheck: unit.checks.length ? { id: unit.checks.at(-1)!.id, trigger: unit.checks.at(-1)!.trigger,
-          result: unit.checks.at(-1)!.result, decisionIds: [...unit.checks.at(-1)!.decisionIds] } : null,
+        acceptedAnswer: unit.status === 'passed' ? unit.answer ?? '' : null,
+        acceptedAnswerDigest: unit.status === 'passed' ? hashState(unit.answer ?? '') : null,
+        latestCheck: unit.checks.length ? JSON.parse(JSON.stringify(unit.checks.at(-1)!)) as JsonValue : null,
         readObservations: (unit.readEvidence ?? []).map(({ path, returnedRanges, returnedLines, contentKind, returnedContent }) => ({
           path, returnedRanges: [...returnedRanges], returnedLines,
           ...(contentKind === 'declared-reference' && returnedContent !== undefined ? { contentKind, returnedContent } : {}),
@@ -198,7 +199,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     if (input.scope === 'deliverable') {
       const reviewBattery = FINAL_ANSWER_REVIEWS[config().acceptanceStakes];
       const state = { goal: input.goal, criteria: judged(input.criteria).map(criterion => criterion.text), output: evidence.output,
-        evidence: acceptanceEvidence, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) };
+        evidence: { ...acceptanceEvidence, criteria: input.summaries }, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) };
       const evidenceDigest = hashState({ state, policy: { name: reviewBattery.name, version: reviewBattery.version, stakes: config().acceptanceStakes } });
       const outputDigest = hashState(evidence.output);
       const targetId = `${contract.id}.final-answer-review`;

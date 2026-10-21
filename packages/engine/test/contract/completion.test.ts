@@ -55,7 +55,7 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
     port: ({ name, question, state }) => {
       if (name === 'role' && (state['unit'] as { title?: string })?.title === 'CSV parser') return choiceAnswer(question, 'research', 0.98);
       const evidence = state['evidence'] as Record<string, unknown> | undefined;
-      if (evidence && ('units' in evidence || 'criteria' in evidence)) {
+      if (evidence && ('units' in evidence || 'criteria' in evidence) && (name === 'goal' || name.startsWith('criterion_'))) {
         const output = state['output'];
         if (typeof output !== 'string') throw new Error('The contract must check its exact string answer.');
         observed.push(evidence); checkedOutputs.set(evidence, output);
@@ -103,6 +103,10 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   expect(integrationReceipts.units.find(unit => unit.id === 'u1')!.readObservations).toEqual([
     { path: 'input.txt', returnedRanges: ['1-2'], returnedLines: 2, contentKind: 'declared-reference', returnedContent: '1 | first\n2 | second' },
   ]);
+  const acceptedPeer = (integrationEvidence['orchestration'] as { units: { id: string; acceptedAnswer: string; acceptedAnswerDigest: string; latestCheck: unknown }[] }).units.find(unit => unit.id === 'u1')!;
+  expect(acceptedPeer.acceptedAnswer).toBe(done.units[0]!.answer!);
+  expect(acceptedPeer.acceptedAnswerDigest).toBe(hashState(done.units[0]!.answer!));
+  expect(acceptedPeer.latestCheck).toEqual(done.units[0]!.checks.at(-1)!);
   for (const evidence of observed) {
     const host = evidence['orchestration'] as { contractId: string; planChecks: unknown[]; firstUnitStartedAt: number; units: { id: string; status: string; latestCheck: { id: string; result: string; decisionIds: string[] } }[] };
     expect(host.contractId).toBe(id);
