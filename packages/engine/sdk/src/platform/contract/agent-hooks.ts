@@ -441,7 +441,9 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
       checkId: check.id,
       kinds: found.kinds,
       criterionIds: found.criterionIds,
-      text: found.text,
+      text: check.trigger === 'owner-amend'
+        ? `${found.text}\n\nCurrent amended unit brief (continue this work with the criteria above):\n${unit.brief}`
+        : found.text,
       delivery: state === 'held' ? 'hold' : state === 'running' ? 'bus' : 'wake',
       agentId,
       at: run.env.now(),

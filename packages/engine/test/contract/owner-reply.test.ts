@@ -85,6 +85,28 @@ function amendUnit(amended: { value: boolean }) {
 
 type Setup = (reading: Reading) => Promise<Scenario>;
 
+test('an amended brief reaches the worker that must correct its retained work', async () => {
+  const brief = 'Keep the existing findings and add the missing source assessment; do not restart the review.';
+  const amended = { value: false };
+  const s = await reach({
+    plan: oneUnitPlan(2), contract: { stallLimit: 2 }, amended,
+    planner: stepPlanner(oneUnitPlan(2), { amend: () => {
+      amended.value = true;
+      return amendmentOutput([{ id: 'u1.c1', text: 'parser property 1' }, { id: 'u1.c2', text: 'parser property 2' }], brief);
+    } }),
+    scripts: { u1: keepsFailing(5) },
+    port: answers(context => amended.value && judgeOf(context) === 'unit' && context.name === 'criterion_1' ? noulAnswer(MET) : undefined,
+      routeAnswer('owner'), replyAnswers([{ reading: 'amend' }])),
+  }, 'stalled');
+  const reply = await s.reply('Clarify the unit brief, preserving the existing criterion.');
+  expect(reply.action).toBe('amended');
+  const unit = contractOf(s.h, s.contractId).units[0]!;
+  expect(unit.criteria[0]!.id).toBe('u1.c1');
+  const correction = unit.nudges.find(nudge => unit.checks.some(check => check.id === nudge.checkId && check.trigger === 'owner-amend'));
+  expect(correction?.text).toContain(brief);
+  expect(unit.checks.find(check => check.trigger === 'owner-amend')?.result).not.toBe('pass');
+});
+
 const SETUPS: Readonly<Record<Exclude<EscalationReason, 'owner-decision-needed' | 'unsettled' | 'writing-unclear'>, Setup>> = {
   stalled: async (reading) => {
     const amended = { value: false };
