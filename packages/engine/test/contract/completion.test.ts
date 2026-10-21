@@ -8,7 +8,7 @@
 import { afterEach, describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { hashState } from '@goodvibes-jev/judgment';
 import { CONTRACT_PASSED_WITHOUT_OUTPUT, describeCommitOutcome, describeContractOutcome, renderContractAnswer } from '../../sdk/src/platform/contract/index.js';
 import { makeHarness, oneUnitPlan, startContract, twoUnitPlan, waitFor, type AgentScript, type Harness } from './runner-support.js';
@@ -81,7 +81,15 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
     expect(protocol.targetId).toBe('criteria' in evidence ? id : (evidence['units'] as { id: string }[])[0]!.id === 'u1' ? 'g1' : 'g2');
     expect(protocol.outputDigest).toBe(hashState(checkedOutputs.get(evidence)!));
     expect(protocol.status).toBe('in-progress');
-    if (protocol.scope === 'deliverable') expect(protocol.publicationRule).toContain('only commits and delivers this checked answer after this judgment passes');
+    if (protocol.scope === 'deliverable') {
+      expect(protocol.publicationRule).toContain('only commits and delivers this checked answer after this judgment passes');
+      const review = evidence['finalAnswerReview'] as { passed: boolean; outputDigest: string; decisionIds: string[] };
+      expect(review.passed).toBe(true);
+      expect(review.outputDigest).toBe(protocol.outputDigest);
+      const recorded = done.decisions.find(decision => decision.targetId === `${id}.final-answer-review`)!;
+      expect(JSON.parse(recorded.reason)).toEqual(review);
+      expect(recorded.decisionIds).toEqual(review.decisionIds);
+    }
   }
   const integrationEvidence = observed.find(evidence => Array.isArray(evidence['units']) &&
     (evidence['units'] as { id: string }[]).some(unit => unit.id === 'u2'))!;
@@ -107,6 +115,22 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
       expect(receipt.latestCheck).toMatchObject({ id: actual.checks.at(-1)!.id, result: 'pass', decisionIds: actual.checks.at(-1)!.decisionIds });
     }
   }
+});
+
+test('a rejected native answer review holds publication even when fulfillment readings pass', async () => {
+  const h = use(makeHarness({ plan: oneUnitPlan(1), scripts: { u1: finishes('The parser is ready.') },
+    port: ({ name }) => name === 'unfinished' ? noulAnswer(0.98) : undefined,
+  }));
+  const { contract } = startContract(h);
+  await waitFor(() => (h.runner.get(contract.id)?.checks.length ?? 0) > 0, 'the answer review to reach fulfillment');
+  const current = contractOf(h, contract.id);
+  expect(current.status).not.toBe('passed');
+  expect(current.checks[0]!.goal.verdict).toBe('met');
+  expect(current.criteria[0]!.status).toBe('met');
+  expect(current.checks[0]!.result).toBe('stall');
+  const review = JSON.parse(current.decisions.find(decision => decision.targetId === `${contract.id}.final-answer-review`)!.reason);
+  expect(review.passed).toBe(false);
+  expect(review.readings.unfinished.probability).toBe(0.98);
 });
 
 describe('the commit (6.5)', () => {

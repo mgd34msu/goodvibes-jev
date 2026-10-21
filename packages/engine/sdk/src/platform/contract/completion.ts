@@ -33,7 +33,7 @@ import { applyCapturedInputDelta } from './input-apply.js';
 
 import { spawnSync } from 'node:child_process';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { hashState, type JsonValue } from '@goodvibes-jev/judgment';
+import { hashState, type JsonValue, type YesNoReading } from '@goodvibes-jev/judgment';
 import { AgentWorktree, IsolatedWorktree } from '../agents/worktree.js';
 import { excludeUntouchedLaunchResidue } from '../orchestration/dirty-guard.js';
 import { GitService } from '../git/service.js';
@@ -42,6 +42,7 @@ import { logger } from '../utils/logger.js';
 import { deliverableOutput, describeCommitOutcome, describeContractOutcome, renderContractAnswer, CONTRACT_PASSED_WITHOUT_OUTPUT } from './answer.js';
 import { DELIVERABLE_JUDGES } from './batteries/deliverable-judge.js';
 import { GROUP_JUDGES } from './batteries/group-judge.js';
+import { FINAL_ANSWER_REVIEWS } from './batteries/final-answer-review.js';
 import { criterionVerdict, emptyJudgmentUsage, meteredPort } from './check.js';
 import { readContractConfig } from './config.js';
 import { guarded, type Correction } from './correction.js';
@@ -86,6 +87,15 @@ interface TargetReading {
   readonly verdicts: ReadonlyMap<string, CriterionVerdict>;
   readonly passed: boolean;
   readonly output: string;
+}
+
+interface FinalAnswerReviewReceipt {
+  readonly schemaVersion: 1;
+  readonly evidenceDigest: string;
+  readonly outputDigest: string;
+  readonly passed: boolean;
+  readonly readings: Readonly<Record<'unfinished' | 'unsupported', Pick<YesNoReading, 'probability' | 'verdict' | 'outcome'>>>;
+  readonly decisionIds: readonly string[];
 }
 
 function git(cwd: string, args: readonly string[]): { readonly ok: boolean; readonly out: string; readonly err: string } {
@@ -183,7 +193,49 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       })),
       meaning: 'Actual host records for this contract, the checked units and their dependency groups. Declared reference contents are actual retained reads, allowing the assigned scope to be compared with observed ranges. Continuation evidence supplies context, never extra requirements or authority. Observed returned ranges are read receipts, not proof of review quality or complete requested scope. Plan, unit and earlier-group acceptance remain separate from approval of the group or deliverable now being checked.',
     } }, { goal: input.goal, brief: '', files: [] });
-    const digest = hashState({ goal: input.goal, output: evidence.output, evidence: judgeEvidence(evidence), ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) });
+    let acceptanceEvidence = judgeEvidence(evidence) as Record<string, JsonValue>;
+    let answerReview: FinalAnswerReviewReceipt | undefined;
+    if (input.scope === 'deliverable') {
+      const reviewBattery = FINAL_ANSWER_REVIEWS[config().acceptanceStakes];
+      const state = { goal: input.goal, criteria: judged(input.criteria).map(criterion => criterion.text), output: evidence.output,
+        evidence: acceptanceEvidence, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) };
+      const evidenceDigest = hashState({ state, policy: { name: reviewBattery.name, version: reviewBattery.version, stakes: config().acceptanceStakes } });
+      const outputDigest = hashState(evidence.output);
+      const targetId = `${contract.id}.final-answer-review`;
+      for (const decision of [...contract.decisions].reverse()) {
+        if (decision.action !== 'checked' || decision.targetId !== targetId) continue;
+        try {
+          const receipt = JSON.parse(decision.reason) as FinalAnswerReviewReceipt;
+          if (receipt.schemaVersion === 1 && receipt.evidenceDigest === evidenceDigest && receipt.outputDigest === outputDigest && receipt.passed === true
+            && ['unfinished', 'unsupported'].every(key => {
+              const probability = receipt.readings[key as 'unfinished' | 'unsupported']?.probability;
+              return typeof probability === 'number' && Number.isFinite(probability) && probability >= 0 && probability <= 0.5;
+            }) && JSON.stringify(receipt.decisionIds) === JSON.stringify(decision.decisionIds)) { answerReview = receipt; break; }
+        } catch { /* An invalid receipt cannot approve a candidate. */ }
+      }
+      if (answerReview === undefined) {
+        const reviewUsage = emptyJudgmentUsage();
+        const site = 'contract.check.final-answer-review';
+        try {
+          const review = await reviewBattery.run(
+            meteredPort(nativeContractPort(contract, context.native, judgmentPort(site), run.abort.signal), reviewUsage), state,
+            { site, signal: run.abort.signal },
+          );
+          assertOwnedContractSource(contract);
+          if (run.terminal) { review.recordAction('discarded: the contract already ended'); return null; }
+          const readings = { unfinished: review.readings.unfinished, unsupported: review.readings.unsupported };
+          answerReview = { schemaVersion: 1, evidenceDigest, outputDigest,
+            passed: Object.values(readings).every(reading => criterionVerdict(reading) === 'met'),
+            readings: Object.fromEntries(Object.entries(readings).map(([key, { probability, verdict, outcome }]) => [key, { probability, verdict, outcome }])) as FinalAnswerReviewReceipt['readings'],
+            decisionIds: review.result.decisionId ? [review.result.decisionId] : [],
+          };
+          run.decide('checked', targetId, JSON.stringify(answerReview), [...answerReview.decisionIds]);
+          review.recordAction(answerReview.passed ? 'final answer content passed; original fulfillment check remains required' : 'final answer content rejected; publication remains held');
+        } finally { addJudgmentUsage(contract.judgmentUsage, reviewUsage); }
+      }
+      acceptanceEvidence = { ...acceptanceEvidence, finalAnswerReview: answerReview as unknown as JsonValue };
+    }
+    const digest = hashState({ goal: input.goal, output: evidence.output, evidence: acceptanceEvidence, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) });
     const prior = input.checks.at(-1);
     if (contract.nativeSource !== undefined && prior !== undefined && prior.result !== 'pass' && prior.evidenceDigest === digest) {
       return { check: prior, verdicts: new Map(input.criteria.filter(criterion => criterion.disposition === 'judged').map(criterion => [criterion.id, criterion.status === 'unread' ? 'unshown' : criterion.status])), passed: false, output: evidence.output };
@@ -196,7 +248,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     try {
       judgment = await judges[config().acceptanceStakes].judge(
         meteredPort(nativeContractPort(contract, context.native, judgmentPort(site), run.abort.signal), usage),
-        { goal: input.goal, criteria: judgedCriteria.map((criterion) => criterion.text), output: evidence.output, evidence: { ...(judgeEvidence(evidence) as Record<string, JsonValue>), ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }), ...(contract.originalSource ? { originalSource: { goal: contract.originalSource.goal, criteria: [...contract.originalSource.criteria] }, acceptanceChecksOrigin: hasDerivedAcceptanceChecks(contract.originalSource) ? 'planner-derived' : 'original-source' } : {}), [input.scope === 'group' ? 'units' : 'criteria']: input.summaries } },
+        { goal: input.goal, criteria: judgedCriteria.map((criterion) => criterion.text), output: evidence.output, evidence: { ...acceptanceEvidence, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }), ...(contract.originalSource ? { originalSource: { goal: contract.originalSource.goal, criteria: [...contract.originalSource.criteria] }, acceptanceChecksOrigin: hasDerivedAcceptanceChecks(contract.originalSource) ? 'planner-derived' : 'original-source' } : {}), [input.scope === 'group' ? 'units' : 'criteria']: input.summaries } },
         { site, signal: run.abort.signal },
       );
     } finally {
@@ -220,7 +272,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     });
     const verdictList = [...verdicts.values()];
     const problems: NudgeKind[] = [
-      ...(verdictList.includes('unmet') || goalVerdict === 'unmet' ? ['unmet' as const] : []),
+      ...(verdictList.includes('unmet') || goalVerdict === 'unmet' || answerReview?.passed === false ? ['unmet' as const] : []),
       ...(verdictList.includes('unshown') || goalVerdict === 'unshown' ? ['unshown' as const] : []),
       ...(failing.length > 0 ? ['gate' as const] : []),
     ];
@@ -236,7 +288,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       result: passed ? 'pass' : 'stall',
       problems,
       qualityProblems: [],
-      decisionIds: judgment.decisionId === undefined ? [] : [judgment.decisionId],
+      decisionIds: [...(answerReview?.decisionIds ?? []), ...(judgment.decisionId === undefined ? [] : [judgment.decisionId])],
       evidenceDigest: digest,
     };
     input.checks.push(check);
@@ -256,7 +308,9 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       gates: (evidence.gates ?? []).map((gate) => ({ gate: gate.gate, passed: gate.passed, skipped: gate.skipped === true })),
       decisionIds: check.decisionIds,
     });
-    return { check, verdicts, passed, output: evidence.output };
+    return { check, verdicts, passed, output: answerReview?.passed === false
+      ? evidence.output + '\n\nNative final-answer content findings (unfinished substantive work or unsupported claims):\n' + JSON.stringify(answerReview)
+      : evidence.output };
   }
 
   function finding(reading: TargetReading): Parameters<Correction['groupFailed']>[2] {
