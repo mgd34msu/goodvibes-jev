@@ -3,6 +3,7 @@ import { hashState, type JsonValue } from '@goodvibes-jev/judgment';
 import type { ContractView } from './types.js';
 import type { FileChange } from './evidence.js';
 import { commandObservation } from './command-observation.js';
+import { acceptedResearchIds } from './accepted-research.js';
 
 type JsonObject = { [key: string]: JsonValue };
 const object = (value: JsonValue | undefined): value is JsonObject => value !== undefined && value !== null && typeof value === 'object' && !Array.isArray(value);
@@ -115,12 +116,10 @@ export function finalAnswerEvidence(contract: Pick<ContractView, 'id' | 'ask' | 
   }
   if (!artifacts.length && !currentChanges.length) return undefined;
   const artifactPaths = new Set(files.flatMap(file => typeof file['path'] === 'string' ? [file['path']] : []));
+  const researchIds = acceptedResearchIds(contract, artifactPaths);
   const units = Array.isArray(host['units']) ? host['units'].filter(object).map(unit => {
     const source = contract.units.find(source => source.id === unit['id']);
-    const check = source?.checks.at(-1);
-    const retainedResult = source?.role === 'research' && source.status === 'passed'
-      && check?.result === 'pass' && check.decisionIds.length > 0
-      && source.readEvidence?.some(read => read.contentKind !== 'declared-reference' && !artifactPaths.has(read.path))
+    const retainedResult = source && researchIds.has(source.id)
       && unit['acceptedAnswerDigest'] === hashState(source.answer ?? '');
     return {
     id: unit['id'] ?? null, goal: unit['goal'] ?? null, status: unit['status'] ?? null,

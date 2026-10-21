@@ -102,7 +102,7 @@ test('current execution citations and every failure keep full primary bodies whi
   expect(commands[5]).toEqual(unbound);
   expect(JSON.stringify(f.contract)).toBe(before);
   expect(view.evidence['fullSourceEvidence']).toMatchObject({ digest: hashState(f.evidence) });
-  f.contract.units[0]!.readEvidence![0]!.returnedContent = '1 | call-inactive.';
+  f.contract.units[0]!.readEvidence = [{ ...f.contract.units[0]!.readEvidence![0]!, returnedContent: '1 | call-inactive.' }];
   f.evidence.orchestration.currentFiles[0].sha256 = digest('call-inactive.\n');
   f.evidence.orchestration.currentFiles[0].bytes = Buffer.byteLength('call-inactive.\n');
   const artifactView = finalAnswerEvidence(f.contract, f.evidence, {}, [], 'Read the report.')!;

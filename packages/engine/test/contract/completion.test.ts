@@ -9,13 +9,14 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
-import { hashState, JudgmentError, SqliteDecisionLog } from '@goodvibes-jev/judgment';
+import { hashState, JudgmentError, SqliteDecisionLog, type JsonValue } from '@goodvibes-jev/judgment';
 import { CONTRACT_PASSED_WITHOUT_OUTPUT, describeCommitOutcome, describeContractOutcome, renderContractAnswer } from '../../sdk/src/platform/contract/index.js';
 import { makeHarness, oneUnitPlan, startContract, twoUnitPlan, waitFor, type AgentScript, type Harness } from './runner-support.js';
 import { contractOf, finishes, git, judgeOf, terminal } from './steps-support.js';
 import { plannerOutput } from './plan-support.js';
 import { ReadTool } from '../../sdk/src/platform/tools/read/index.js';
 import { ProjectIndex } from '../../sdk/src/platform/state/project-index.js';
+import { contractWorkReceipts } from '../../sdk/src/platform/contract/work-receipts.js';
 
 let harness: Harness | undefined;
 afterEach(() => {
@@ -63,11 +64,12 @@ test('original owner observations reach worker admission, unit checking and orig
 });
 
 test('original fulfillment receives native arithmetic over complete unchanged reference inputs', async () => {
+  using log = new SqliteDecisionLog(':memory:');
   const plan = oneUnitPlan(1);
   plan.groups[0]!.units[0]!.role = 'research';
-  plan.groups[0]!.units[0]!.files = ['scope.json', 'source.ts'];
+  plan.groups[0]!.units[0]!.files = ['scope.json'];
   let rootScope: unknown;
-  const h = use(makeHarness({ plan, scripts: { u1: record => [{
+  const h = use(makeHarness({ plan, decisionLog: log, scripts: { u1: record => [{
     before: async () => {
       const index = new ProjectIndex(record.workingDirectory ?? h.root);
       const args = { files: [{ path: 'scope.json', extract: 'lines', range: { start: 1, end: 1 } },
@@ -93,6 +95,12 @@ test('original fulfillment receives native arithmetic over complete unchanged re
   expect(contractOf(h, id).status).toBe('passed');
   expect(rootScope).toMatchObject([{ source: 'native-host-interval-comparison', referencePath: 'scope.json',
     groups: [{ referencedLines: 3, coveredReferencedLines: 3, missingReferencedLines: 0, missing: [] }] }]);
+  const done = contractOf(h, id);
+  const recovery = contractWorkReceipts(done, { readObservations: true });
+  expect(rootScope).toEqual(recovery.sourceScope?.sourceJsonReferenceComparisons);
+  expect(recovery.sourceScope?.referenceOperations).toMatchObject([{ path: 'scope.json', success: true }]);
+  expect(recovery.units[0]!.acceptedAnswer).toBe(done.units[0]!.answer);
+  expect(recovery.units[0]!.acceptedAnswerDigest).toBe(hashState(done.units[0]!.answer!));
 });
 
 test('group and final checks receive actual plan-validation and unit-acceptance receipts', async () => {
@@ -102,6 +110,7 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   let integrationTask = '';
   let integrationCheckHost: { plannedUnits: { id: string; readObservations?: unknown[]; acceptedAnswer?: string }[] } | undefined;
   let contentCriteria: unknown;
+  let contentEvidence: Record<string, unknown> | undefined;
   const plan = twoUnitPlan();
   plan.groups[0]!.units[0]!.role = 'research';
   plan.groups[0]!.units[0]!.files.push('input.txt');
@@ -127,7 +136,7 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
       if (name === 'goal' && state['goal'] === 'Use the parser in convert') integrationCheckHost = (state['evidence'] as { orchestration?: typeof integrationCheckHost } | undefined)?.orchestration;
       if (name === 'role' && (state['unit'] as { title?: string })?.title === 'CSV parser') return choiceAnswer(question, 'research', 0.98);
       const evidence = state['evidence'] as Record<string, unknown> | undefined;
-      if (name === 'unfinished') contentCriteria = evidence?.['criteria'];
+      if (name === 'unfinished') { contentCriteria = evidence?.['criteria']; contentEvidence = evidence; }
       if (evidence && ('units' in evidence || 'criteria' in evidence) && (name === 'goal' || name.startsWith('criterion_'))) {
         const output = state['output'];
         if (typeof output !== 'string') throw new Error('The contract must check its exact string answer.');
@@ -156,12 +165,21 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
     expect(protocol.status).toBe('in-progress');
     if (protocol.scope === 'deliverable') {
       expect(protocol.publicationRule).toContain('only commits and delivers this checked answer after this judgment passes');
-      const review = evidence['finalAnswerReview'] as { passed: boolean; outputDigest: string; decisionIds: string[] };
+      expect(evidence).not.toHaveProperty('finalAnswerReview');
+      const assessment = contentEvidence!['fulfillmentAssessment'] as { outputDigest: string; evidenceDigest: string; decisionIds: string[];
+        goal: { verdict: string }; criteria: { id: string; verdict: string }[] };
+      expect(assessment.outputDigest).toBe(protocol.outputDigest);
+      expect(assessment.evidenceDigest).toBe(hashState(evidence as Record<string, JsonValue>));
+      expect(assessment.goal.verdict).toBe('met');
+      expect(assessment.criteria.map(criterion => [criterion.id, criterion.verdict])).toEqual(done.criteria.map(criterion => [criterion.id, 'met']));
+      expect(assessment.decisionIds).toHaveLength(1);
+      expect(log.get(assessment.decisionIds[0]!)).toMatchObject({ status: 'answered', context: { site: 'contract.check.deliverable-judge' } });
+      const recorded = done.decisions.find(decision => decision.targetId === `${id}.final-answer-review`)!;
+      const review = JSON.parse(recorded.reason);
       expect(review.passed).toBe(true);
       expect(review.outputDigest).toBe(protocol.outputDigest);
-      const recorded = done.decisions.find(decision => decision.targetId === `${id}.final-answer-review`)!;
-      expect(JSON.parse(recorded.reason)).toEqual(review);
       expect(recorded.decisionIds).toEqual(review.decisionIds);
+      expect(done.checks.at(-1)!.decisionIds).toEqual(expect.arrayContaining([...assessment.decisionIds, ...review.decisionIds]));
     }
   }
   const integrationEvidence = observed.find(evidence => Array.isArray(evidence['units']) &&
@@ -259,14 +277,16 @@ test('stopping a contract cancels its owned verifier retry without a verdict', a
   expect(failures).toBe(1);
 });
 
-test('a retained negative answer verdict is reused after a later fulfillment request failure and still blocks publication', async () => {
+test('a fulfillment request failure retries before content review and a later content rejection still blocks publication', async () => {
   let answerReviews = 0, fulfillmentRequests = 0, workers = 0;
   const h = use(makeHarness({ plan: oneUnitPlan(1),
     scripts: { u1: (record, context) => { workers++; return finishes('The retained parser answer.')(record, context); } },
     port: context => {
       if (context.name === 'unfinished') { answerReviews++; return noulAnswer(0.98); }
-      if (context.name === 'goal' && judgeOf(context) === 'deliverable' && fulfillmentRequests++ === 0)
+      if (context.name === 'goal' && judgeOf(context) === 'deliverable' && fulfillmentRequests++ === 0) {
+        expect(answerReviews).toBe(0);
         throw new JudgmentError('rejected', 'fixture fulfillment request rejection', { status: 400 });
+      }
       return undefined;
     },
   }));
@@ -288,8 +308,24 @@ test('a retained negative answer verdict is reused after a later fulfillment req
 });
 
 test('a rejected native answer review holds publication even when fulfillment readings pass', async () => {
+  const order: string[] = [];
   const h = use(makeHarness({ plan: oneUnitPlan(1), scripts: { u1: finishes('The parser is ready.') },
-    port: ({ name }) => name === 'unfinished' ? noulAnswer(0.98) : undefined,
+    port: context => {
+      if (context.name === 'goal' && judgeOf(context) === 'deliverable') {
+        expect(context.state['evidence']).not.toHaveProperty('finalAnswerReview');
+        order.push('original-requirements');
+      }
+      if (context.name === 'unfinished') {
+        order.push('final-answer-content');
+        const evidence = context.state['evidence'] as { fulfillmentAssessment: { goal: { verdict: string }; outputDigest: string } };
+        expect(evidence.fulfillmentAssessment.goal.verdict).toBe('met');
+        const output = context.state['output'];
+        if (typeof output !== 'string') throw new Error('Content review must receive the exact final answer.');
+        expect(evidence.fulfillmentAssessment.outputDigest).toBe(hashState(output));
+        return noulAnswer(0.98);
+      }
+      return undefined;
+    },
   }));
   const { contract } = startContract(h);
   await waitFor(() => (h.runner.get(contract.id)?.checks.length ?? 0) > 0, 'the answer review to reach fulfillment');
@@ -298,6 +334,7 @@ test('a rejected native answer review holds publication even when fulfillment re
   expect(current.checks[0]!.goal.verdict).toBe('met');
   expect(current.criteria[0]!.status).toBe('met');
   expect(current.checks[0]!.result).toBe('stall');
+  expect(order).toEqual(['original-requirements', 'final-answer-content']);
   const review = JSON.parse(current.decisions.find(decision => decision.targetId === `${contract.id}.final-answer-review`)!.reason);
   expect(review.passed).toBe(false);
   expect(review.readings.unfinished.probability).toBe(0.98);
@@ -458,7 +495,10 @@ describe('answer and status (6.5)', () => {
 
   test('the deliverable judge reads the exact delivered answer, with the full unit report retained as evidence', async () => {
     const report = 'Wired parseCsv into convert.\n\n```json\n{"version":1,"archetype":"integrator","summary":"Wired the parser into convert.","filesCreated":[],"filesModified":["src/convert.ts"]}\n```';
-    for (const [integrationText, expected] of [[report, 'Wired parseCsv into convert.'], ['', '']] as const) {
+    const finalAnswer = 'The convert command now reads CSV through parseCsv. The implementation is in src/convert.ts.';
+    const explicit = 'Supporting integration notes.\n\n```json\n' + JSON.stringify({ version: 1, archetype: 'integrator',
+      summary: 'Wired the parser.', result: 'Supporting wiring details.', filesCreated: [], filesModified: ['src/convert.ts'], finalAnswer }) + '\n```';
+    for (const [integrationText, expected] of [[report, 'Wired parseCsv into convert.'], [explicit, finalAnswer], ['', '']] as const) {
       const outputs: unknown[] = [];
       const reports: unknown[] = [];
       const h = use(makeHarness({

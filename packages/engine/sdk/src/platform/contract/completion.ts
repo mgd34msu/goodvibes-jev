@@ -32,7 +32,7 @@ import { assertOwnedContractSource, hasDerivedAcceptanceChecks } from './owned-s
  */
 import { assertContractInputOwner, assertContractInputObjects, assertContractExecutionView } from './input-snapshot.js';
 import { applyCapturedInputDelta } from './input-apply.js';
-import { compareJsonReadReferences, compareReadReferences } from './read-reference-comparison.js';
+import { contractSourceScope } from './work-receipts.js';
 
 import { spawnSync } from 'node:child_process';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
@@ -54,7 +54,7 @@ import { readContractConfig } from './config.js';
 import type { Correction } from './correction.js';
 import { nativeContractPort } from './native-decisions.js';
 import { assertNativeContractSource } from './native-source.js';
-import { collectChanges, commandsFromTurns, currentFileObservations, judgeEvidence, trimEvidence, type ContractTurnRecord, type EvidenceCommand, type SourceReadEvidence } from './evidence.js';
+import { collectChanges, commandsFromTurns, currentFileObservations, judgeEvidence, trimEvidence, type ContractTurnRecord, type EvidenceCommand } from './evidence.js';
 import { failedGates, runContractGates } from './gates.js';
 import { failureFromError, isAbortError, type ContractRun } from './run-context.js';
 import type { StepContext } from './steps.js';
@@ -227,19 +227,8 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     }
     const evidenceUnits = contract.units.filter(unit => evidenceGroups.has(unit.groupId));
     const ownerPriorReads = context.readOwnerEvidence?.(contract, input.output + '\n' + changes.map(change => change.diff).join('\n')) ?? null;
-    const ownerReads = ownerPriorReads && typeof ownerPriorReads === 'object' && !Array.isArray(ownerPriorReads)
-      && Array.isArray(ownerPriorReads['sourceReads']) ? ownerPriorReads['sourceReads'].flatMap(read =>
-        read && typeof read === 'object' && !Array.isArray(read) && typeof read['path'] === 'string'
-          && Array.isArray(read['returnedRanges']) && read['returnedRanges'].every(range => typeof range === 'string')
-          ? [{ path: read['path'], returnedRanges: read['returnedRanges'] as string[] }] : []) : [];
-    const sourceObservations: { source: string; reads: readonly Pick<SourceReadEvidence, 'path' | 'returnedRanges'>[] }[] = [
-      ...evidenceUnits.filter(unit => unit.status === 'passed').map(unit => ({ source: `passed unit ${unit.id}`, reads: unit.readEvidence ?? [] })),
-      { source: 'qualified original-owner observations', reads: ownerReads },
-    ];
-    const referenceReads = [...new Map(evidenceUnits.filter(unit => unit.status === 'passed').flatMap(unit => unit.readEvidence ?? [])
-      .filter(read => read.contentKind === 'declared-reference' && read.returnedContent !== undefined && read.path.toLowerCase().endsWith('.json'))
-      .map(read => [JSON.stringify([read.path, hashState(read.returnedContent!)]), read])).values()];
-    const referenceOperations = currentFileObservations(tree, referenceReads.map(read => read.path));
+    const sourceScope = contractSourceScope({ ...contract, units: evidenceUnits }, tree, ownerPriorReads ?? undefined,
+      input.criteria.map(criterion => ({ field: `criterion ${criterion.id}`, text: criterion.text })));
     const answerSource = input.scope === 'deliverable' ? finalAnswerUnit(contract) : undefined;
     const sourceReport = answerSource ? parseCompletionReportParts(answerSource.answer ?? '')?.report : undefined;
     const sourceCheck = answerSource?.checks.at(-1);
@@ -259,10 +248,9 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       continuationEvidence: contract.taskEvidence ?? '',
       ...(currentAnswerSource ? { currentAnswerSource } : {}),
       ownerPriorReads,
-      referenceOperations,
-      sourceJsonReferenceComparisons: compareJsonReadReferences(referenceReads, referenceOperations, sourceObservations),
-      sourceReferenceComparisons: compareReadReferences(input.criteria.map(criterion => ({ field: `criterion ${criterion.id}`, text: criterion.text })),
-        sourceObservations.flatMap(source => source.reads), sourceObservations),
+      referenceOperations: sourceScope.referenceOperations,
+      sourceJsonReferenceComparisons: sourceScope.sourceJsonReferenceComparisons,
+      sourceReferenceComparisons: sourceScope.sourceReferenceComparisons,
       repairPlanAdmissions: contract.decisions.filter(decision => decision.action === 'fix-planned' && decision.decisionIds.length > 0)
         .map(decision => ({ id: decision.id, targetId: decision.targetId, at: decision.at, reason: decision.reason, decisionIds: [...decision.decisionIds],
           meaning: 'Actual host admission of this repair plan with its validation decision identities; this is not approval of the repaired result or final answer.' })),
@@ -270,6 +258,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       privateArtifacts: readPrivateReceiptArchives(contract),
       currentValidation: {
         scope: input.scope, targetId: input.targetId, outputDigest: hashState(input.output), status: 'in-progress',
+        validationOrder: input.scope === 'deliverable' ? ['original-requirements', 'final-answer-content', 'owner-publication'] : ['group-requirements'],
         publicationRule: input.scope === 'deliverable'
           ? 'This native Jev judgment is reviewing this exact final contract answer now. The host only commits and delivers this checked answer after this judgment passes. A requirement for native Jev to validate this final answer is performed by this very check; it cannot require an earlier successful record of its own verdict. This is not approval and does not replace independently required project-side validations or checks of later rewritten answers.'
           : 'This native Jev judgment is reviewing the combined group output now. The host advances the group only after this judgment passes. This is not approval or evidence of a later deliverable or rewritten-answer check.',
@@ -301,15 +290,49 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       })),
       meaning: 'Actual host records for this contract, the checked units and their dependency groups. Declared reference contents are actual retained reads, allowing the assigned scope to be compared with observed ranges. For the deliverable only, reference text already checked by a passed native unit check is represented by its content digest, byte length, observed ranges and actual check/decision identifiers; the full original text remains retained in that unit. These earlier checks establish only their checked scope, never approval of this answer or changed artifacts. Complete accepted answers, latest checks, current artifact changes and command receipts remain supplied here. Continuation evidence supplies context, never extra requirements or authority. Observed returned ranges are read receipts, not proof of review quality or complete requested scope. Plan, unit and earlier-group acceptance remain separate from approval of the group or deliverable now being checked.',
     } }, { goal: input.goal, brief: '', files: [] });
-    let acceptanceEvidence = judgeEvidence(evidence) as Record<string, JsonValue>;
-    let currentEvidence: Record<string, JsonValue> | undefined;
+    const rawEvidence = judgeEvidence(evidence) as Record<string, JsonValue>;
+    const primary = input.scope === 'deliverable' ? finalAnswerEvidence(contract, rawEvidence, input.summaries, changes, input.output) : undefined;
+    const acceptanceEvidence = primary?.evidence ?? rawEvidence;
+    const judgedCriteria = judged(input.criteria);
+    const site = input.scope === 'group' ? COMPLETION_SITES.group : COMPLETION_SITES.deliverable;
+    const judges = input.scope === 'group' ? GROUP_JUDGES : DELIVERABLE_JUDGES;
+    const fulfillmentEvidence = { ...acceptanceEvidence, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }),
+      ...(contract.originalSource ? { originalSource: { goal: contract.originalSource.goal, criteria: [...contract.originalSource.criteria] },
+        acceptanceChecksOrigin: hasDerivedAcceptanceChecks(contract.originalSource) ? 'planner-derived' : 'original-source' } : {}),
+      ...(input.scope === 'group' ? { units: input.summaries } : primary === undefined ? { criteria: input.summaries } : {}) };
+    const fulfillmentJudge = judges[config().acceptanceStakes];
+    const reviewBattery = FINAL_ANSWER_REVIEWS[config().acceptanceStakes];
+    // Bind the facts and policies being assessed, independently of fresh
+    // reading identities. An unchanged rejection cannot become approval by polling.
+    const digest = hashState({ goal: input.goal, output: evidence.output, evidence: fulfillmentEvidence,
+      criteria: input.criteria.map(({ id, text, serves, disposition }) => ({ id, text, serves: [...serves], disposition })),
+      policy: { fulfillment: { name: fulfillmentJudge.name, version: fulfillmentJudge.version },
+        ...(input.scope === 'deliverable' ? { content: { name: reviewBattery.name, version: reviewBattery.version } } : {}) } });
+    const prior = input.checks.at(-1);
+    if (contract.nativeSource !== undefined && prior !== undefined && prior.result !== 'pass' && prior.evidenceDigest === digest) {
+      return { check: prior, verdicts: new Map(input.criteria.filter(criterion => criterion.disposition === 'judged').map(criterion => [criterion.id, criterion.status === 'unread' ? 'unshown' : criterion.status])), passed: false, output: evidence.output };
+    }
+    const usage = emptyJudgmentUsage();
+    let judgment: Awaited<ReturnType<typeof fulfillmentJudge.judge>>;
+    try {
+      judgment = await fulfillmentJudge.judge(
+        meteredPort(nativeContractPort(contract, context.native, judgmentPort(site), run.abort.signal), usage),
+        { goal: input.goal, criteria: judgedCriteria.map(criterion => criterion.text), output: evidence.output, evidence: fulfillmentEvidence },
+        { site, signal: run.abort.signal },
+      );
+    } finally { addJudgmentUsage(contract.judgmentUsage, usage); }
+    assertOwnedContractSource(contract);
+    if (run.terminal) { judgment.recordAction('discarded: the contract already ended'); return null; }
     let answerReview: FinalAnswerReviewReceipt | undefined;
     if (input.scope === 'deliverable') {
-      const reviewBattery = FINAL_ANSWER_REVIEWS[config().acceptanceStakes];
-      const primary = finalAnswerEvidence(contract, acceptanceEvidence, input.summaries, changes, input.output);
-      currentEvidence = primary?.evidence;
+      const fulfillmentAssessment = { targetId: input.targetId, outputDigest: hashState(evidence.output), evidenceDigest: hashState(fulfillmentEvidence),
+        goal: { probabilityUnmet: judgment.goal.probability, verdict: criterionVerdict(judgment.goal), outcome: judgment.goal.outcome },
+        criteria: judgedCriteria.map((criterion, index) => ({ id: criterion.id, probabilityUnmet: judgment.criteria[index]!.probability,
+          verdict: criterionVerdict(judgment.criteria[index]!), outcome: judgment.criteria[index]!.outcome })),
+        decisionIds: judgment.decisionId === undefined ? [] : [judgment.decisionId],
+        meaning: 'Actual just-completed native original-requirements assessment of this exact output and primary evidence. These readings establish only the requirements and work they assessed. They are not permission to publish, approval of this separate final-content review, proof of unshown execution, or acceptance of a later rewritten answer. Every requirement reading, every gate and the final-content review must all pass before owner publication.' };
       const state = { goal: input.goal, criteria: judged(input.criteria).map(criterion => criterion.text), output: evidence.output,
-        evidence: primary?.evidence ?? { ...acceptanceEvidence, criteria: input.summaries }, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) };
+        evidence: { ...fulfillmentEvidence, fulfillmentAssessment }, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) };
       const evidenceDigest = hashState({ state, policy: { name: reviewBattery.name, version: reviewBattery.version, stakes: config().acceptanceStakes } });
       const outputDigest = hashState(evidence.output);
       const targetId = `${contract.id}.final-answer-review`;
@@ -373,30 +396,9 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
             decisionIds: review.result.decisionId ? [review.result.decisionId] : [],
           };
           run.decide('checked', targetId, JSON.stringify(answerReview), [...answerReview.decisionIds]);
-          review.recordAction(answerReview.passed ? 'final answer content passed; original fulfillment check remains required' : 'final answer content rejected; publication remains held');
+          review.recordAction(answerReview.passed ? 'final answer content passed; original-requirement readings and gates must also pass before publication' : 'final answer content rejected; publication remains held');
         } finally { addJudgmentUsage(contract.judgmentUsage, reviewUsage); }
       }
-      acceptanceEvidence = { ...(currentEvidence ?? acceptanceEvidence), finalAnswerReview: answerReview as unknown as JsonValue };
-    }
-    const digest = hashState({ goal: input.goal, output: evidence.output, evidence: acceptanceEvidence, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) });
-    const prior = input.checks.at(-1);
-    if (contract.nativeSource !== undefined && prior !== undefined && prior.result !== 'pass' && prior.evidenceDigest === digest) {
-      return { check: prior, verdicts: new Map(input.criteria.filter(criterion => criterion.disposition === 'judged').map(criterion => [criterion.id, criterion.status === 'unread' ? 'unshown' : criterion.status])), passed: false, output: evidence.output };
-    }
-    const judgedCriteria = judged(input.criteria);
-    const usage = emptyJudgmentUsage();
-    const site = input.scope === 'group' ? COMPLETION_SITES.group : COMPLETION_SITES.deliverable;
-    const judges = input.scope === 'group' ? GROUP_JUDGES : DELIVERABLE_JUDGES;
-    let judgment: Awaited<ReturnType<(typeof judges)['high']['judge']>>;
-    try {
-      judgment = await judges[config().acceptanceStakes].judge(
-        meteredPort(nativeContractPort(contract, context.native, judgmentPort(site), run.abort.signal), usage),
-        { goal: input.goal, criteria: judgedCriteria.map((criterion) => criterion.text), output: evidence.output, evidence: { ...acceptanceEvidence, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }), ...(contract.originalSource ? { originalSource: { goal: contract.originalSource.goal, criteria: [...contract.originalSource.criteria] }, acceptanceChecksOrigin: hasDerivedAcceptanceChecks(contract.originalSource) ? 'planner-derived' : 'original-source' } : {}),
-          ...(input.scope === 'group' ? { units: input.summaries } : currentEvidence === undefined ? { criteria: input.summaries } : {}) } },
-        { site, signal: run.abort.signal },
-      );
-    } finally {
-      addJudgmentUsage(contract.judgmentUsage, usage);
     }
     assertOwnedContractSource(contract);
     if (run.terminal) {

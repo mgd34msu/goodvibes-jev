@@ -23,7 +23,7 @@ export function answerUnit(contract: Pick<Contract, 'units' | 'groups'>): Contra
   return planUnits.find((unit) => unit.role === 'integration') ?? (planUnits.length === 1 ? planUnits[0] : undefined);
 }
 
-/** The accepted repair unit that supplied the current explicit final answer. */
+/** The accepted unit that supplied the current explicit final answer. */
 export function finalAnswerUnit(contract: Pick<Contract, 'units' | 'groups'>): ContractUnit | undefined {
   const answerRepairs = new Set(contract.groups.filter(group => group.kind === 'fix' && group.repairs?.scope === 'deliverable').map(group => group.id));
   for (const unit of [...contract.units].reverse()) {
@@ -34,7 +34,9 @@ export function finalAnswerUnit(contract: Pick<Contract, 'units' | 'groups'>): C
     const result = typeof report?.finalAnswer === 'string' ? report.finalAnswer.trim() : '';
     if (result) return unit;
   }
-  return undefined;
+  const original = answerUnit(contract);
+  const report = original?.status === 'passed' ? parseCompletionReportParts(original.answer ?? '')?.report : undefined;
+  return typeof report?.finalAnswer === 'string' && report.finalAnswer.trim() ? original : undefined;
 }
 
 /** The contract's answer: its result, accompanying prose, summary, or unstructured answer. */

@@ -11,7 +11,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import { uptime } from 'node:os';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
-import { JudgmentError } from '@goodvibes-jev/judgment';
+import { hashState, JudgmentError } from '@goodvibes-jev/judgment';
 import { assertJudgmentInput } from '../../sdk/src/platform/gate/judgment-input.js';
 import { findCardNumberShapes } from '../../sdk/src/platform/security/card-shapes.js';
 import type { Contract, ContractView } from '../../sdk/src/platform/contract/index.js';
@@ -815,7 +815,8 @@ describe('a later group and the whole plan', () => {
     expect(host.planChecks).toEqual(accepted.map(({ at, reason, decisionIds }) => ({ at: new Date(at).toISOString(), reason, decisionIds })));
     expect(host.units).toEqual([{ id: 'u1', goal: 'Parse CSV', status: 'passed', latestCheck: {
       id: done.units[0]!.checks.at(-1)!.id, result: 'pass', decisionIds: done.units[0]!.checks.at(-1)!.decisionIds,
-    } }]);
+    }, acceptedAnswerDigest: hashState(done.units[0]!.answer ?? ''),
+      acceptedAnswerSource: { storage: 'native-contract-store', contractId: done.id, unitId: 'u1', field: 'answer' } }]);
     expect(eventsOf(h, 'CONTRACT_UNIT_SPAWNED').map(event => [event.unitId, event.purpose])).toEqual([['u2', 'resume']]);
   }, 30_000);
 

@@ -17,8 +17,7 @@
  *
  * Everything here is collection and arithmetic over sizes; no judgment.
  */
-import { createHash } from 'node:crypto';
-import { existsSync, lstatSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import { estimateTokens, hashState, type JsonValue } from '@goodvibes-jev/judgment';
 import { GitService } from '../git/service.js';
@@ -26,6 +25,9 @@ import { hashWorkingTreeFile, snapshotDirtyTree } from '../orchestration/dirty-g
 import { readNativePrivateReceiptArchives, verifyPrivateReceiptPreservation } from './private-read-receipts.js';
 import { compareJsonReadReferences, compareReadReferences } from './read-reference-comparison.js';
 import { commandObservation } from './command-observation.js';
+import { acceptedResearchIds } from './accepted-research.js';
+import { currentFileObservations } from './current-file-observations.js';
+export { currentFileObservations } from './current-file-observations.js';
 import { parseCompletionReport } from '../agents/completion-report.js';
 import { returnedReadRows } from '../tools/read/observation.js';
 import { compactJsonReference } from './json-reference.js';
@@ -391,26 +393,6 @@ export async function collectChanges(unit: Pick<ContractUnit, 'baseline'>, sourc
   return writtenChanges(sources.cwd, sources.turns);
 }
 
-/** Current regular-file identity, independent of an assistant's earlier claims. */
-export function currentFileObservations(cwd: string, paths: readonly string[], options: { readonly includeText?: boolean } = {}): JsonValue[] {
-  return [...new Set(paths)].flatMap<JsonValue>(path => {
-    if (isAbsolute(path) || path.split('/').includes('..') || path.startsWith('.goodvibes/')) return [];
-    try {
-      const absolute = join(cwd, path);
-      if (!lstatSync(absolute).isFile()) return [];
-      const bytes = readFileSync(absolute);
-      const text = options.includeText && !bytes.includes(0) ? bytes.toString('utf8') : undefined;
-      return [{ operation: 'read-current-file', source: 'native-host-filesystem', success: true,
-        path, bytes: bytes.length, binary: bytes.includes(0), sha256: createHash('sha256').update(bytes).digest('hex'),
-        ...(text !== undefined && Buffer.from(text, 'utf8').equals(bytes) ? { text } : {}),
-        meaning: 'Actual bytes read from the current checked tree. This establishes current file identity, not semantic correctness, archive integrity, a worker execution or native approval.' }];
-    } catch (error) {
-      return [{ operation: 'read-current-file', source: 'native-host-filesystem', success: false, path,
-        error: summarizeError(error), meaning: 'Current file identity could not be established.' }];
-    }
-  });
-}
-
 /**
  * Collects a unit's complete evidence for one check: the diff
  * always; claims at completion and at resume; gates at every trigger but turn-end.
@@ -485,6 +467,7 @@ export async function collectUnitEvidence(
   };
   const repairing = currentUnit?.criteria.some(criterion => criterion.origin === 'fix') === true;
   const dependencyIds = new Set(currentUnit?.dependsOn ?? []);
+  const researchIds = acceptedResearchIds({ units: contract.units ?? [] });
   for (const id of dependencyIds) for (const ancestor of contract.units?.find(planned => planned.id === id)?.dependsOn ?? []) dependencyIds.add(ancestor);
   const referencesExecution = (id: string | undefined): boolean => id !== undefined && new RegExp('(?<![\\w.-])'
     + id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&') + '(?![\\w-]|\\.[\\w-])').test(unit.brief + '\n' + sources.output);
@@ -521,7 +504,7 @@ export async function collectUnitEvidence(
                 bodySource: { storage: 'native-contract-store', contractId: contract.id, unitId: planned.id, field: 'commandEvidence', index },
                 meaning: 'Actual receipt identity and available child exit status retained; this command is outside the assigned dependency closure and its execution id is not referenced by this candidate. Command/result bodies remain unchanged at bodySource under their digests and are not supplied in this check view. Metadata or a prior pass does not prove an unshown command body, purpose or asserted verification result. Declared dependency or explicitly execution-id-referenced receipts are supplied in full.' };
             }),
-            ...(currentUnit?.role === 'integration' || (repairing && (planned.role === 'integration' || dependencyIds.has(planned.id)))
+            ...(currentUnit?.role === 'integration' || (repairing && (planned.role === 'integration' || dependencyIds.has(planned.id) || researchIds.has(planned.id)))
               ? { acceptedAnswer: planned.answer ?? '' } : {}) } : {}) }),
         criteria: planned.criteria.map(criterion => ({ id: criterion.id, text: criterion.text, serves: [...criterion.serves],
           ...(planned.id !== unit.id && planned.status === 'passed' ? { verdict: criterion.status } : {}) })) })) }),
