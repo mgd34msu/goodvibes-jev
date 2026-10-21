@@ -61,7 +61,7 @@ const CRITERION_QUESTION = (criterion: string): NoulQuestion =>
     },
   );
 
-const GOAL_QUESTION: NoulQuestion = noul('Does the work shown by `output` and `evidence` fail to achieve `goal`?', {
+const GOAL_QUESTION: NoulQuestion = noul('Does the work shown by `output` AND `evidence` fail to achieve `goal`? Judge this assigned goal independently of other units and later orchestration stages. Original-source and parent-plan evidence interprets referenced obligations; it does not replace the assigned goal with the entire parent task. Evaluate the substantive work submitted for this check, without requiring earlier approval of this same check or later host-owned steps outside this assigned goal. Missing substantive work still fails, even when every explicit criterion is met. If the assigned goal itself requires publication or execution, a pending host step does not establish it.', {
   true: 'The work falls short of the goal or does something other than the goal asks.',
   false: 'The work shown by the output and evidence achieves what the goal asks.',
 });

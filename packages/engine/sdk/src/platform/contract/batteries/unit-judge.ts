@@ -192,6 +192,26 @@ const FIXTURES: readonly JudgeFixture[] = [
     expect: { verdict: 'pass', unmet: [] },
   },
   {
+    name: 'an assigned final-answer draft precedes its host publication',
+    goal: 'Provide the entire corrected user-facing answer in the completion report finalAnswer field, preserving completed work and accurately attributing verification.',
+    criteria: ['finalAnswer contains the complete delivery with the existing report link and an honest validation limit'],
+    output: withReport('The complete proposed answer is returned for checking.', {
+      finalAnswer: 'The completed static source review is in review.md. It identifies one confirmed missing ownership check, with source citations and a recommendation. No application tests were run.',
+    }),
+    evidence: { originalSource: { goal: 'Review the source, produce review.md and deliver the result after native validation.' },
+      parent: { status: 'checking', publication: 'pending this check' },
+      acceptedWork: { report: 'review.md', findings: ['Missing ownership check with source citations'], testExecution: [] } },
+    expect: { verdict: 'pass', unmet: [] },
+  },
+  {
+    name: 'pending publication fails a goal that actually owns publication',
+    goal: 'Publish the completed review to the user project as review.md',
+    criteria: ['A complete proposed review exists'],
+    output: 'The review is complete in the staging tree, but review.md has not been written to the user project.',
+    evidence: { stagedReport: 'One source-supported finding.', ownerProjectReportExists: false, publication: 'pending' },
+    expect: { verdict: 'fail', unmet: [] },
+  },
+  {
     name: 'a completion report at the end, claims verified, some files omitted from the diff',
     goal: 'Add a slugify helper that turns titles into URL slugs',
     criteria: SLUGIFY_CRITERIA,
@@ -295,7 +315,7 @@ const FIXTURES: readonly JudgeFixture[] = [
 function unitJudge(name: string, band: YesNoBand): Judge {
   return defineJudge({
     name,
-    version: 3,
+    version: 4,
     description: "Whether a unit's work meets each of its acceptance criteria, shown by its output and evidence, and whether it achieves the unit's goal.",
     accuracyFloor: 0.9,
     band,

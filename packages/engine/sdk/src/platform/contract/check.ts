@@ -321,6 +321,33 @@ export async function runUnitCheck(input: UnitCheckInput): Promise<UnitCheckOutc
       ...(evidence.claims === undefined ? {} : { claims: { missingPaths: evidence.claims.missingPaths, noChanges: evidence.claims.missingPaths.length === 0 && claimsDidFail } }),
     };
     nudge = { text: buildNudge(unit, nudgeFindings), kinds: chosen.nudgeKinds, criterionIds: nudgedCriteria(findings, chosen.nudgeKinds) };
+    if (input.trigger !== 'turn-end' && goalVerdict === 'unmet' && [...verdicts.values()].every(verdict => verdict === 'met')) {
+      const output = typeof state['output'] === 'string' ? state['output'] : evidence.output;
+      const candidates = [...new Intl.Segmenter(undefined, { granularity: 'sentence' }).segment(output)]
+        .filter(sentence => sentence.segment.trim()).map((sentence, index) => ({ id: `sentence-${index}`,
+          content: { reference: `current proposed answer at character ${sentence.index}`, quote: sentence.segment.trim() } }));
+      if (candidates.length) {
+        try {
+          const site = 'contract.check.unit-goal-finding';
+          const selected = await responseFinding.select(
+            meteredPort(input.checkPort ?? (input.native === undefined ? judgmentPort(site)
+              : nativeContractPort(input.native.contract, input.native.services, judgmentPort(site), input.signal)), usage),
+            { issue: `The current work was read as failing this assigned unit goal: ${unit.goal}. All explicit unit criteria were read met. Locate a concrete missing substantive result, scope reduction or incorrect attribution in the CURRENT answer. Do not substitute the parent task or later host acceptance/publication for this assigned goal. Choose none rather than inventing a problem.`,
+              evidence: state, metCriteria: judged.map(criterion => criterion.text) }, candidates, { ...signal, site },
+          );
+          if (selected.decisionId) decisionIds.push(selected.decisionId);
+          const passage = candidates.find(candidate => candidate.id === selected.chosen)?.content;
+          selected.recordAction('Localize an unmet assigned unit goal; preserve the original rejection and all acceptance requirements.');
+          nudge = { ...nudge, text: nudge.text + '\n\n' + (passage
+            ? (selected.outcome === 'act' ? 'Specific goal issue to address' : 'Candidate goal issue to investigate (localization is uncertain)')
+              + ` at ${passage.reference}:\n${JSON.stringify(passage.quote)}\nAddress this passage against the assigned goal and actual evidence, preserving completed work and already-met criteria.`
+            : 'The goal reading did not localize a concrete passage. Do not invent omitted work or restart completed reviews from this unlocalized reading. Reconcile the assigned goal with the supplied evidence; this feedback grants no acceptance.') };
+        } catch {
+          input.signal?.throwIfAborted();
+          // A failed diagnostic cannot waive the original unmet-goal finding.
+        }
+      }
+    }
     if (input.trigger !== 'turn-end' && chosen.nudgeQuality.includes('unsupported_claims')) {
       const candidates = [...new Intl.Segmenter(undefined, { granularity: 'sentence' }).segment(evidence.output)]
         .filter(sentence => sentence.segment.trim()).map((sentence, index) => ({ id: `sentence-${index}`,

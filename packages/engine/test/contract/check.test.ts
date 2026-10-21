@@ -308,6 +308,36 @@ describe('check outcomes, in table order (4.6)', () => {
     expect(quality['output']).toBe(raw);
   });
 
+  test('an unmet goal with met criteria localizes the missing result without granting a pass', async () => {
+    const port = fakePort((name, question) => {
+      if (name === 'pick') return choiceAnswer(question, 'sentence-1', 0.99);
+      if (name.startsWith('fits_')) return noulAnswer(name === 'fits_1' ? 0.99 : MET);
+      return noulAnswer(name === 'goal' ? UNMET : MET);
+    });
+    const outcome = await check({}, { checkPort: port.port, evidence: evidence({
+      output: 'The route exists. It does not send the reset email.',
+    }) });
+    expect(outcome.check.result).toBe('nudge');
+    expect(outcome.check.goal?.verdict).toBe('unmet');
+    expect(outcome.nudge?.text).toContain('Specific goal issue to address');
+    expect(outcome.nudge?.text).toContain('"It does not send the reset email."');
+    expect(outcome.verdicts.get('u1.c1')).toBe('met');
+  });
+
+  test('an unlocalized goal still holds publication without inventing a correction', async () => {
+    const port = fakePort((name, question) => {
+      if (name === 'pick') return choiceAnswer(question, 'none', 0.99);
+      if (name.startsWith('fits_')) return noulAnswer(MET);
+      return noulAnswer(name === 'goal' ? UNMET : MET);
+    });
+    const outcome = await check({}, { checkPort: port.port });
+    expect(outcome.check.result).toBe('nudge');
+    expect(outcome.check.goal?.verdict).toBe('unmet');
+    expect(outcome.nudge?.text).toContain('did not localize a concrete passage');
+    expect(outcome.nudge?.text).toContain('Do not invent omitted work');
+    expect(outcome.nudge?.text).not.toContain('Specific goal issue to address');
+  });
+
   test.each([0.99, 0.4])('an unsupported-claim correction localizes the exact draft sentence with confidence %s', async confidence => {
     const port = fakePort((name, question) => {
       if (name === 'pick') return choiceAnswer(question, 'sentence-1', confidence);
