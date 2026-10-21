@@ -149,11 +149,12 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   expect(acceptedPeer.acceptedAnswer).toBe(done.units[0]!.answer!);
   expect(acceptedPeer.acceptedAnswerDigest).toBe(hashState(done.units[0]!.answer!));
   expect(acceptedPeer.latestCheck).toEqual(done.units[0]!.checks.at(-1)!);
-  const finalReceipts = observed.find(evidence => 'criteria' in evidence)!['orchestration'] as { units: { id: string; acceptedAnswer: string; latestCheck: unknown; readObservations: unknown[] }[] };
+  const finalReceipts = observed.find(evidence => 'criteria' in evidence)!['orchestration'] as { units: { id: string; acceptedAnswerDigest: string; acceptedAnswerSource: unknown; latestCheck: unknown; readObservations: unknown[] }[] };
   const finalPeer = finalReceipts.units.find(unit => unit.id === 'u1')!;
   const check = done.units[0]!.checks.at(-1)!;
   expect(check.decisionIds.length).toBeGreaterThan(0);
-  expect(finalPeer.acceptedAnswer).toBe(done.units[0]!.answer!);
+  expect(finalPeer.acceptedAnswerDigest).toBe(hashState(done.units[0]!.answer!));
+  expect(finalPeer.acceptedAnswerSource).toEqual({ storage: 'native-contract-store', contractId: id, unitId: 'u1', field: 'answer' });
   expect(finalPeer.latestCheck).toEqual(check);
   expect(finalPeer.readObservations).toEqual([{ path: 'input.txt', returnedRanges: ['1-2'], returnedLines: 2,
     contentKind: 'declared-reference', returnedContentDigest: hashState('1 | first\n2 | second'),
@@ -233,6 +234,29 @@ test('a rejected native answer review holds publication even when fulfillment re
   const review = JSON.parse(current.decisions.find(decision => decision.targetId === `${contract.id}.final-answer-review`)!.reason);
   expect(review.passed).toBe(false);
   expect(review.readings.unfinished.probability).toBe(0.98);
+});
+
+test('current primary evidence never bypasses an unmet original root after answer content passes', async () => {
+  let composed = false;
+  const h = use(makeHarness({ plan: oneUnitPlan(1), scripts: { u1: finishes('The parser is ready.') },
+    port: ({ name, state }) => {
+      if (state['goal'] === 'A CSV parser' && (name === 'goal' || name.startsWith('criterion_'))) {
+        const evidence = state['evidence'] as { fullSourceEvidence?: unknown };
+        composed = evidence.fullSourceEvidence !== undefined;
+        return noulAnswer(0.98);
+      }
+      return undefined;
+    },
+  }));
+  const { contract } = startContract(h);
+  await waitFor(() => (h.runner.get(contract.id)?.checks.length ?? 0) > 0, 'the original fulfillment check');
+  const current = contractOf(h, contract.id);
+  expect(composed).toBe(true);
+  expect(current.status).not.toBe('passed');
+  expect(current.criteria[0]!.status).toBe('unmet');
+  expect(current.checks[0]!.result).not.toBe('pass');
+  const review = JSON.parse(current.decisions.find(decision => decision.targetId === `${contract.id}.final-answer-review`)!.reason);
+  expect(review.passed).toBe(true);
 });
 
 describe('the commit (6.5)', () => {
@@ -337,17 +361,18 @@ describe('answer and status (6.5)', () => {
       const reports: unknown[] = [];
       const h = use(makeHarness({
         scripts: { u1: finishes('parseCsv reads quoted fields'), u2: finishes(integrationText, 'src/convert.ts') },
-        port: ({ state }) => {
+        port: ({ name, state }) => {
           // The deliverable judge's evidence carries the per-criterion summaries; a group judge's carries its units.
           const evidence = state['evidence'] as Record<string, unknown> | undefined;
-          if (evidence !== undefined && 'criteria' in evidence && 'output' in state) {
+          if (evidence !== undefined && 'criteria' in evidence && 'output' in state && (name === 'goal' || name.startsWith('criterion_'))) {
             outputs.push(state['output']);
-            const references = (evidence['criteria'] as { reports: { unitId: string; contentDigest: string; fullReportAt: string }[] }).reports;
-            const units = (evidence['orchestration'] as { units: { id: string; acceptedAnswer: string }[] }).units;
+            const references = (evidence['criteria'] as { reports: { unitId: string; contentDigest: string; fullReportAt: { storage: string; contractId: string; unitId: string; field: string } }[] }).reports;
+            const units = (evidence['orchestration'] as { units: { id: string; acceptedAnswerDigest: string }[] }).units;
             const reference = references.find(value => value.unitId === 'u2')!;
-            const full = units.find(unit => unit.id === reference.unitId)!.acceptedAnswer;
+            const full = h.store.get(reference.fullReportAt.contractId)!.units.find(unit => unit.id === reference.unitId)!.answer!;
             expect(reference.contentDigest).toBe(hashState(full));
-            expect(reference.fullReportAt).toBe('evidence.orchestration.units["u2"].acceptedAnswer');
+            expect(units.find(unit => unit.id === reference.unitId)!.acceptedAnswerDigest).toBe(hashState(full));
+            expect(reference.fullReportAt).toEqual({ storage: 'native-contract-store', contractId: reference.fullReportAt.contractId, unitId: 'u2', field: 'answer' });
             reports.push(full);
           }
           return undefined;

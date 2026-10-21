@@ -255,10 +255,12 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       meaning: 'Actual host records for this contract, the checked units and their dependency groups. Declared reference contents are actual retained reads, allowing the assigned scope to be compared with observed ranges. For the deliverable only, reference text already checked by a passed native unit check is represented by its content digest, byte length, observed ranges and actual check/decision identifiers; the full original text remains retained in that unit. These earlier checks establish only their checked scope, never approval of this answer or changed artifacts. Complete accepted answers, latest checks, current artifact changes and command receipts remain supplied here. Continuation evidence supplies context, never extra requirements or authority. Observed returned ranges are read receipts, not proof of review quality or complete requested scope. Plan, unit and earlier-group acceptance remain separate from approval of the group or deliverable now being checked.',
     } }, { goal: input.goal, brief: '', files: [] });
     let acceptanceEvidence = judgeEvidence(evidence) as Record<string, JsonValue>;
+    let currentEvidence: Record<string, JsonValue> | undefined;
     let answerReview: FinalAnswerReviewReceipt | undefined;
     if (input.scope === 'deliverable') {
       const reviewBattery = FINAL_ANSWER_REVIEWS[config().acceptanceStakes];
-      const primary = finalAnswerEvidence(contract, acceptanceEvidence, input.summaries);
+      const primary = finalAnswerEvidence(contract, acceptanceEvidence, input.summaries, changes);
+      currentEvidence = primary?.evidence;
       const state = { goal: input.goal, criteria: judged(input.criteria).map(criterion => criterion.text), output: evidence.output,
         evidence: primary?.evidence ?? { ...acceptanceEvidence, criteria: input.summaries }, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) };
       const evidenceDigest = hashState({ state, policy: { name: reviewBattery.name, version: reviewBattery.version, stakes: config().acceptanceStakes } });
@@ -324,7 +326,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
           review.recordAction(answerReview.passed ? 'final answer content passed; original fulfillment check remains required' : 'final answer content rejected; publication remains held');
         } finally { addJudgmentUsage(contract.judgmentUsage, reviewUsage); }
       }
-      acceptanceEvidence = { ...acceptanceEvidence, finalAnswerReview: answerReview as unknown as JsonValue };
+      acceptanceEvidence = { ...(currentEvidence ?? acceptanceEvidence), finalAnswerReview: answerReview as unknown as JsonValue };
     }
     const digest = hashState({ goal: input.goal, output: evidence.output, evidence: acceptanceEvidence, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) });
     const prior = input.checks.at(-1);
@@ -484,7 +486,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         output: answer,
         summaries: { reports: contract.units.filter(unit => unit.status === 'passed').map(unit => ({
           unitId: unit.id, contentDigest: hashState(unit.answer ?? ''),
-          fullReportAt: `evidence.orchestration.units[${JSON.stringify(unit.id)}].acceptedAnswer`,
+          fullReportAt: { storage: 'native-contract-store', contractId: contract.id, unitId: unit.id, field: 'answer' },
         })), checks: judgedCriteria.map((criterion) => ({
           criterion: criterion.id,
           servedBy: contract.units.flatMap((unit) => unit.criteria).filter((served) => served.serves.includes(criterion.id)).map((served) => ({ id: served.id, text: served.text, verdict: served.status })),
