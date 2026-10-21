@@ -38,7 +38,7 @@ function unitLine(unit: Pick<ContractUnitView, 'id' | 'title' | 'goal'>): string
 
 /** Builds a unit's brief. The request shape decides the tool contract, so a contract must be shaped first. */
 export function buildUnitBrief(
-  contract: Pick<ContractView, 'goal' | 'criteria' | 'units' | 'shape' | 'nativeSource' | 'taskEvidence'> & Partial<Pick<ContractView, 'id' | 'decisions'>>,
+  contract: Pick<ContractView, 'goal' | 'criteria' | 'units' | 'shape' | 'nativeSource' | 'taskEvidence'> & Partial<Pick<ContractView, 'id' | 'decisions' | 'projectRoot' | 'inputSnapshot'>>,
   group: Pick<ContractGroupView, 'id' | 'title' | 'goal'>,
   unit: Pick<ContractUnitView, 'id' | 'title' | 'goal' | 'brief' | 'role' | 'dependsOn' | 'criteria'>,
 ): string {

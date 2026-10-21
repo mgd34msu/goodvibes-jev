@@ -21904,7 +21904,7 @@
     {
       "name": "buildUnitBrief",
       "kind": "function",
-      "text": "export declare function buildUnitBrief(contract: Pick<ContractView, 'goal' | 'criteria' | 'units' | 'shape' | 'nativeSource' | 'taskEvidence'> & Partial<Pick<ContractView, 'id' | 'decisions'>>, group: Pick<ContractGroupView, 'id' | 'title' | 'goal'>, unit: Pick<ContractUnitView, 'id' | 'title' | 'goal' | 'brief' | 'role' | 'dependsOn' | 'criteria'>): string; ;; via Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
+      "text": "export declare function buildUnitBrief(contract: Pick<ContractView, 'goal' | 'criteria' | 'units' | 'shape' | 'nativeSource' | 'taskEvidence'> & Partial<Pick<ContractView, 'id' | 'decisions' | 'projectRoot' | 'inputSnapshot'>>, group: Pick<ContractGroupView, 'id' | 'title' | 'goal'>, unit: Pick<ContractUnitView, 'id' | 'title' | 'goal' | 'brief' | 'role' | 'dependsOn' | 'criteria'>): string; ;; via Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
     },
     {
       "name": "buildWritingEscalationQuestion",
@@ -21939,7 +21939,7 @@
     {
       "name": "collectUnitEvidence",
       "kind": "function",
-      "text": "export declare function collectUnitEvidence(contract: Pick<ContractView, 'id' | 'sessionId'> & Partial<Pick<ContractView, 'status' | 'decisions' | 'createdAt' | 'origin' | 'units' | 'proposedUnits'>>, unit: Pick<ContractUnit, 'id' | 'goal' | 'brief' | 'files' | 'baseline' | 'readEvidence' | 'commandEvidence'>, trigger: CheckTrigger, sources: UnitEvidenceSources): Promise<UnitEvidence>; ;; via Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function collectUnitEvidence(contract: Pick<ContractView, 'id' | 'sessionId'> & Partial<Pick<ContractView, 'status' | 'decisions' | 'createdAt' | 'origin' | 'units' | 'proposedUnits' | 'projectRoot' | 'inputSnapshot'>>, unit: Pick<ContractUnit, 'id' | 'goal' | 'brief' | 'files' | 'baseline' | 'readEvidence' | 'commandEvidence'>, trigger: CheckTrigger, sources: UnitEvidenceSources): Promise<UnitEvidence>; ;; via Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "commandsFromTurns",

@@ -22,6 +22,7 @@ import { isAbsolute, join, relative } from 'node:path';
 import { estimateTokens, type JsonValue } from '@goodvibes-jev/judgment';
 import { GitService } from '../git/service.js';
 import { hashWorkingTreeFile, snapshotDirtyTree } from '../orchestration/dirty-guard.js';
+import { readPrivateReceiptArchives } from './private-read-receipts.js';
 import type { ToolResult } from '../types/tools.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
@@ -387,7 +388,7 @@ export async function collectChanges(unit: Pick<ContractUnit, 'baseline'>, sourc
  * always; claims at completion and at resume; gates at every trigger but turn-end.
  */
 export async function collectUnitEvidence(
-  contract: Pick<ContractView, 'id' | 'sessionId'> & Partial<Pick<ContractView, 'status' | 'decisions' | 'createdAt' | 'origin' | 'units' | 'proposedUnits'>>,
+  contract: Pick<ContractView, 'id' | 'sessionId'> & Partial<Pick<ContractView, 'status' | 'decisions' | 'createdAt' | 'origin' | 'units' | 'proposedUnits' | 'projectRoot' | 'inputSnapshot'>>,
   unit: Pick<ContractUnit, 'id' | 'goal' | 'brief' | 'files' | 'baseline' | 'readEvidence' | 'commandEvidence'>,
   trigger: CheckTrigger,
   sources: UnitEvidenceSources,
@@ -416,9 +417,11 @@ export async function collectUnitEvidence(
   const currentReads = sourceReadsFromTurns(sources.turns, sources.mustWrite ? [] : unit.files, sources.output);
   const currentUnit = contract.units?.find(planned => planned.id === unit.id);
   const repairing = currentUnit?.criteria.some(criterion => criterion.origin === 'fix') === true;
+  const privateArtifacts = readPrivateReceiptArchives(contract);
   return trimEvidence({ output: sources.output, changes, claims, gates, commands: unit.commandEvidence ?? commandsFromTurns(sources.turns),
     sourceReads: sources.mustWrite ? currentReads : mergeSourceReads(unit.readEvidence ?? [], currentReads),
     ...(planChecks.length ? { orchestration: { contractId: contract.id, ...(contract.status === undefined ? {} : { status: contract.status }), planChecks,
+      ...(privateArtifacts.length ? { privateArtifacts } : {}),
       ...(contract.createdAt === undefined ? {} : { createdAt: contract.createdAt }),
       ...(contract.origin === undefined ? {} : { origin: contract.origin }),
       ...(firstUnitStartedAt === undefined ? {} : { firstUnitStartedAt }),

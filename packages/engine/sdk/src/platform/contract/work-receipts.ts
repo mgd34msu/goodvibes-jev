@@ -1,5 +1,6 @@
 import type { ContractView } from './types.js';
 import { findCardNumberShapes } from '../security/card-shapes.js';
+import { readPrivateReceiptArchives } from './private-read-receipts.js';
 
 /** Observations can contain incidental card-shaped digit runs (for example
  * adjacent uid/gid/file-size columns). Never send those values to a planner
@@ -16,11 +17,12 @@ function commandReceipt(command: NonNullable<ContractView['units'][number]['comm
 
 /** Facts from the live host tree; these never approve the work receiving them. */
 export function contractWorkReceipts(
-  contract: Pick<ContractView, 'units'> & Partial<Pick<ContractView, 'id' | 'decisions' | 'groups'>>,
+  contract: Pick<ContractView, 'units'> & Partial<Pick<ContractView, 'id' | 'decisions' | 'groups' | 'projectRoot' | 'inputSnapshot'>>,
   options: { readonly excludeUnitId?: string; readonly readObservations?: boolean; readonly answerIds?: ReadonlySet<string> } = {},
 ) {
   return {
     contractId: contract.id,
+    privateArtifacts: contract.id === undefined ? [] : readPrivateReceiptArchives({ ...contract, id: contract.id }),
     meaning: 'Host observations and prior check results, not approval of the current repair. Preserve completed work; missing primary text is not evidence that accepted work never happened.',
     planChecks: (contract.decisions ?? []).filter(decision => decision.action === 'plan-accepted' && decision.targetId === contract.id)
       .map(decision => ({ at: new Date(decision.at).toISOString(), reason: decision.reason, decisionIds: [...decision.decisionIds] })),

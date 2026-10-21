@@ -36,6 +36,7 @@ import { nativeContractRoute, decideNativeContract, nativeContractPort, nativeDe
 import { assertNativeContractSource } from './native-source.js';
 import { renderContractAnswer } from './answer.js';
 import { contractWorkReceipts } from './work-receipts.js';
+import { preserveDeclaredReadReceipts } from './private-read-receipts.js';
 import { runUnitShapeChecks } from './plan-checks.js';
 import { renderContractPlan, type ContractPlan, type PlanProblem } from './plan-schema.js';
 import { prepareFixPlannerInput, type FixPlannerInput } from './fix-planner-input.js';
@@ -357,6 +358,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
   ): void {
     run.contract.groups.push(group);
     run.contract.units.push(...units);
+    preserveDeclaredReadReceipts(run.contract);
     run.decide('fix-planned', brief.targetId, `round ${round}: group ${group.id} with ${units.length} unit${units.length === 1 ? '' : 's'} (${units.map((unit) => unit.id).join(', ')})`, decisionIds, route);
     run.emit({ type: 'CONTRACT_FIX_PLANNED', contractId: run.id, scope: brief.scope, targetId: brief.targetId, groupId: group.id, unitIds: units.map((unit) => unit.id), round });
     context.groups().startGroupNow(run, group.id);

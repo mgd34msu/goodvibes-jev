@@ -56,6 +56,7 @@ import { failureFromError, isAbortError, type ContractRun } from './run-context.
 import type { StepContext } from './steps.js';
 import type { CheckTrigger, Contract, Criterion, CriterionReading, CriterionVerdict, NudgeKind, TreeBaseline, UnitCheck } from './types.js';
 import { addJudgmentUsage } from './usage.js';
+import { readPrivateReceiptArchives } from './private-read-receipts.js';
 
 /** Decision sites, as the decision log records them. */
 export const COMPLETION_SITES = {
@@ -211,6 +212,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       commands: evidenceUnits.flatMap<EvidenceCommand>(unit => unit.commandEvidence ?? commandsFromTurns(turnsOf(run, new Set([unit.id])))), orchestration: {
       contractId: contract.id, createdAt: contract.createdAt, origin: contract.origin, planChecks,
       continuationEvidence: contract.taskEvidence ?? '',
+      privateArtifacts: readPrivateReceiptArchives(contract),
       currentValidation: {
         scope: input.scope, targetId: input.targetId, outputDigest: hashState(input.output), status: 'in-progress',
         publicationRule: input.scope === 'deliverable'

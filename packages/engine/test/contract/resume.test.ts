@@ -131,6 +131,7 @@ test.each(['interrupted', 'privacy-refused', 'verifier-refused'])('an %s final-a
   let requestFailures = 0;
   const repair = fixPlan([{ serves: ['c1'] }, { serves: ['c1'], dependsOn: ['u1'] }]);
   for (const unit of repair.groups[0]!.units) unit.role = 'research';
+  if (condition === 'privacy-refused') repair.groups[0]!.units[0]!.files.push(`.goodvibes/reviews/${id}/source-receipts.json`);
   const second = restart(root, { plan, scripts: { u1: mustNotRun,
     [`${id}.f1.u1`]: () => [{ text: 'Accepted scope reconciliation.' }],
     [`${id}.f1.u2`]: record => { repairTask = record.task; return [{ text: '```json\n' + JSON.stringify({
@@ -181,6 +182,8 @@ test.each(['interrupted', 'privacy-refused', 'verifier-refused'])('an %s final-a
     expect(done.units[0]!.commandEvidence![0]!.head).toBe(privateHead);
     expect(done.units[0]!.commandEvidence![0]!.command).toBe('ls -l');
     expect(done.decisions.some(decision => decision.reason.startsWith('Recovered a historical repair-planner input refusal'))).toBe(true);
+    expect(receipts.privateArtifacts[0].path).toBe(`.goodvibes/reviews/${id}/source-receipts.json`);
+    expect(existsSync(join(root, receipts.privateArtifacts[0].path))).toBe(true);
   }
 });
 

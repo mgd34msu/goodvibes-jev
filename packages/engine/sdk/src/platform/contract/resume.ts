@@ -38,6 +38,7 @@ import type { ContractRun } from './run-context.js';
 import type { ContractStepsWithReplies } from './steps.js';
 import type { ContractStore } from './store.js';
 import { acquireSharedTree } from './workstreams.js';
+import { preserveDeclaredReadReceipts } from './private-read-receipts.js';
 import { isTerminalContractStatus, isTerminalUnitStatus, type Contract, type ContractFailureKind, type ContractStatus, type ContractUnit } from './types.js';
 
 /** The step a resumed contract takes up. */
@@ -254,6 +255,7 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
 
   function prepareResume(run: ContractRun): void {
     const contract = run.contract;
+    preserveDeclaredReadReceipts(contract);
     if (contract.nativeSource === undefined) {
       const pending = contract.escalations.filter(item => item.resolvedAt === undefined);
       if (contract.status === 'awaiting-owner' && contract.units.length === 0 && pending.length > 0

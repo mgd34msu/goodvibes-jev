@@ -89,6 +89,7 @@ export function buildFixPlannerPrompt(): string {
     '- A unit must not undo what already works: the criteria listed as met stay met.',
     '- Host-owned checks run after the worker returns. Require concrete work and a normal return, never prior approval of the very unit check that must judge that return.',
     '- When a deliverable rejection concerns final-answer wording, preserve accepted inspections, findings and artifacts. Use one read-only research unit to return the COMPLETE corrected user-facing answer in its completion report finalAnswer field; that explicit field becomes the next final-answer candidate. Ordinary research results and engineering fix notes are supporting evidence, not replacements for the full answer. Do not hide unfinished substantive work by merely rewording it, and do not repeat completed reviews.',
+    '- Captured workers cannot write reserved .goodvibes state. If raw read receipts must be removed from public reports, declare .goodvibes/reviews/<contract-id>/source-receipts.json in the repair files: the native host archives its retained accepted-unit read observations and complete reference contents there before workers start. Workers receive actual privateArtifacts storage receipts and must change only permitted public artifacts. Host storage receipts are evidence, never native acceptance or permission to read other runtime state.',
   ].join('\n');
 }
 
