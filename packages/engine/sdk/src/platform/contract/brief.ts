@@ -47,6 +47,8 @@ export function buildUnitBrief(
   const judged = unit.criteria.filter((criterion) => criterion.disposition === 'judged');
   const siblings = contract.units.filter((other) => other.groupId === group.id && other.id !== unit.id);
   const dependencies = contract.units.filter((other) => unit.dependsOn.includes(other.id));
+  const dependencyIds = new Set(unit.dependsOn);
+  for (const id of dependencyIds) for (const ancestor of contract.units.find(other => other.id === id)?.dependsOn ?? []) dependencyIds.add(ancestor);
   if (contract.shape === undefined) throw new Error(`unit ${unit.id}: the contract has no request shape; shape it before building briefs`);
   const readOnly = unitToolContract(unit.role, contract.shape).readOnly;
   const sections: string[] = [
@@ -77,7 +79,7 @@ export function buildUnitBrief(
     sections.push('Actual host orchestration records (evidence, not approval of this unit):\n' + JSON.stringify(contractWorkReceipts(contract, {
       excludeUnitId: unit.id, readObservations: repairing,
       ownerEvidence,
-      answerIds: new Set(contract.units.filter(other => repairing && (other.role === 'integration' || unit.dependsOn.includes(other.id))).map(other => other.id)),
+      answerIds: new Set(contract.units.filter(other => repairing && (other.role === 'integration' || dependencyIds.has(other.id))).map(other => other.id)),
     })));
   }
   return sections.join('\n\n');

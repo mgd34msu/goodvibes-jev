@@ -521,7 +521,7 @@ export async function collectUnitEvidence(
                 bodySource: { storage: 'native-contract-store', contractId: contract.id, unitId: planned.id, field: 'commandEvidence', index },
                 meaning: 'Actual receipt identity and available child exit status retained; this command is outside the assigned dependency closure and its execution id is not referenced by this candidate. Command/result bodies remain unchanged at bodySource under their digests and are not supplied in this check view. Metadata or a prior pass does not prove an unshown command body, purpose or asserted verification result. Declared dependency or explicitly execution-id-referenced receipts are supplied in full.' };
             }),
-            ...(currentUnit?.role === 'integration' || (repairing && (planned.role === 'integration' || currentUnit?.dependsOn.includes(planned.id)))
+            ...(currentUnit?.role === 'integration' || (repairing && (planned.role === 'integration' || dependencyIds.has(planned.id)))
               ? { acceptedAnswer: planned.answer ?? '' } : {}) } : {}) }),
         criteria: planned.criteria.map(criterion => ({ id: criterion.id, text: criterion.text, serves: [...criterion.serves],
           ...(planned.id !== unit.id && planned.status === 'passed' ? { verdict: criterion.status } : {}) })) })) }),
@@ -577,6 +577,7 @@ export function judgeState(unit: Pick<ContractUnit, 'goal'>, evidence: UnitEvide
 /** The quality battery's state (design 4.4). */
 export function qualityState(unit: Pick<ContractUnit, 'goal' | 'brief'>, evidence: UnitEvidence): CheckState {
   const hostOperations = actualHostOperations(evidence);
+  const report = parseCompletionReport(evidence.output);
   return {
     ...(hostOperations.length ? { hostOperations } : {}),
     ...(evidence.orchestration === undefined ? {} : { orchestration: evidence.orchestration }),
@@ -590,6 +591,11 @@ export function qualityState(unit: Pick<ContractUnit, 'goal' | 'brief'>, evidenc
     // A gate's result shows a claim such as "the tests pass" as well as a command the agent ran.
     ...(evidence.gates === undefined ? {} : { gates: gateEvidence(evidence.gates) }),
     output: evidence.output,
+    ...(typeof report?.finalAnswer === 'string' ? { completionReport: report as unknown as JsonValue,
+      proposedFinalAnswer: report.finalAnswer,
+      deliverySource: { field: 'finalAnswer', rawReportDigest: hashState(evidence.output), outputDigest: hashState(report.finalAnswer),
+        phase: 'candidate-before-native-acceptance-and-publication',
+        meaning: 'The exact parsed finalAnswer is proposed release text, not an already published response or proof of performed work. The complete raw and parsed completion report remain supplied. The host releases this text only after separate native checks and successful owner publication; the current unit need not perform those future host steps. Every claimed substantive result, read, test or other execution still needs its actual relevant evidence. Internal pending-check metadata is not a claim that task work was omitted; explicit premature claims of native approval remain unsupported. No approval is granted by this state.' } } : {}),
   };
 }
 

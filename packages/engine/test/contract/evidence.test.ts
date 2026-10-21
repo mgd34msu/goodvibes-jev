@@ -39,7 +39,9 @@ import {
   type RawUnitEvidence,
 } from '../../sdk/src/platform/contract/evidence.js';
 import { checkPort } from './check-port.js';
-import { makeContract, makeUnit } from './fixtures.js';
+import { makeContract, makeCriterion, makeUnit } from './fixtures.js';
+import { buildUnitBrief } from '../../sdk/src/platform/contract/brief.js';
+import { shapeOf } from './plan-support.js';
 
 let dir: string;
 beforeEach(() => {
@@ -342,6 +344,26 @@ describe('what each trigger collects', () => {
     expect(peerView(integration)).toMatchObject({ id: 'peer', commands: [{ command: script, exitCode: 2, executionSucceeded: false }] });
   });
 
+  test('a repair delivery and its checker receive substantive ancestor results through the complete dependency chain', async () => {
+    const assessment = 'The reviewed reconnect guard suppresses duplicate sockets; the submitted-packet restoration defect is retained.';
+    const ancestor = makeUnit({ id: 'source-review', role: 'research', status: 'passed', answer: assessment });
+    const packager = makeUnit({ id: 'packager', status: 'passed', dependsOn: ['source-review'], answer: 'Integrated and packaged the reviewed results.' });
+    const current = makeUnit({ role: 'research', dependsOn: ['packager'], criteria: [makeCriterion({ id: 'delivery.c1', origin: 'fix', serves: ['c1'] })] });
+    const unrelated = makeUnit({ id: 'unrelated', status: 'passed', answer: 'Unrelated historical result must not become this task context.' });
+    const planned = makeContract({ id: contract.id, shape: shapeOf(), units: [ancestor, packager, current, unrelated], decisions: [
+      { id: 'accepted', at: 1, action: 'plan-accepted', targetId: contract.id, reason: 'Checked plan', decisionIds: ['native-plan'] },
+    ] });
+    const original = JSON.stringify(planned);
+    const brief = buildUnitBrief(planned, planned.groups[0]!, current);
+    expect(brief).toContain(assessment);
+    expect(brief).not.toContain(unrelated.answer!);
+    const evidence = await collectUnitEvidence(planned, current, 'resume', { ...sources(), turns: [], mustWrite: false });
+    const units = (evidence.orchestration as { plannedUnits: { id: string; acceptedAnswer?: string }[] }).plannedUnits;
+    expect(units.find(unit => unit.id === 'source-review')?.acceptedAnswer).toBe(assessment);
+    expect(units.find(unit => unit.id === 'unrelated')).not.toHaveProperty('acceptedAnswer');
+    expect(JSON.stringify(planned)).toBe(original);
+  });
+
   test('an explicit original requirement reference in the assigned brief resolves to its actual text', async () => {
     const current = makeUnit({ brief: 'Preserve the completed o1.' });
     const root = { ...current.criteria[0]!, id: 'o1', text: 'Inspect the original supplemental ranges.', serves: [] };
@@ -352,6 +374,20 @@ describe('what each trigger collects', () => {
     expect(judgeEvidence(evidence)).toMatchObject({ orchestration: { requirements: {
       referencedCriteria: [{ id: 'o1', text: root.text, serves: [] }],
     } } });
+  });
+
+  test('quality checks receive the exact decoded proposed delivery and full original report without treating either as an operation receipt', () => {
+    const finalAnswer = 'Earlier execution verified the archive.\nNo application tests were run.';
+    const output = '```json\n' + JSON.stringify({ version: 1, archetype: 'researcher', summary: 'Read-only delivery.', finalAnswer }) + '\n```';
+    const unit = makeUnit();
+    const evidence = trimEvidence({ output, changes: [], commands: [] }, unit);
+    const state = qualityState(unit, evidence);
+    expect(state.output).toBe(output);
+    expect(state.proposedFinalAnswer).toBe(finalAnswer);
+    expect(state.completionReport).toMatchObject({ summary: 'Read-only delivery.', finalAnswer });
+    expect(state.deliverySource).toMatchObject({ phase: 'candidate-before-native-acceptance-and-publication', field: 'finalAnswer' });
+    expect(state.commands).toEqual([]);
+    expect(state).not.toHaveProperty('approved');
   });
 
   test('the collected scope calculation binds current reference bytes and never borrows an unpassed worker observation', async () => {
