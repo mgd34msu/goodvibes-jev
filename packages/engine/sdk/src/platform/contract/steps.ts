@@ -23,6 +23,7 @@ import { createEscalations, type OwnerReplyOutcome } from './escalation.js';
 import type { GroupRunner, GroupSteps } from './group-runner.js';
 import type { ContractPlannerDeps, PlanningOutcome, ShapeOutcome } from './planner.js';
 import type { ContractRun } from './run-context.js';
+import type { OwnerEvidenceReader } from './owner-evidence.js';
 import type { CheckTrigger, ContractRouteSelector } from './types.js';
 
 /** The correction and completion steps: what the runner hands a unit, group or contract to when a nudge is not the answer. */
@@ -30,6 +31,7 @@ export interface ContractSteps extends UnitCheckEscalations, GroupSteps {}
 
 /** The runner parts the steps act through. */
 export interface StepContext {
+  readonly readOwnerEvidence?: OwnerEvidenceReader | undefined;
   readonly native?: NativeContractServices | undefined;
   readonly agentManager: Pick<AgentManager, 'getStatus' | 'cancel'>;
   readonly configManager: ContractConfigReader;

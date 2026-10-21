@@ -13,6 +13,7 @@ import { hashState, JudgmentError, SqliteDecisionLog } from '@goodvibes-jev/judg
 import { CONTRACT_PASSED_WITHOUT_OUTPUT, describeCommitOutcome, describeContractOutcome, renderContractAnswer } from '../../sdk/src/platform/contract/index.js';
 import { makeHarness, oneUnitPlan, startContract, twoUnitPlan, waitFor, type AgentScript, type Harness } from './runner-support.js';
 import { contractOf, finishes, git, judgeOf, terminal } from './steps-support.js';
+import { plannerOutput } from './plan-support.js';
 
 let harness: Harness | undefined;
 afterEach(() => {
@@ -30,6 +31,34 @@ async function run(h: Harness): Promise<string> {
   await waitFor(() => terminal(h, contract.id), 'the contract to end', 15_000);
   return contract.id;
 }
+
+test('original owner observations reach worker admission, unit checking and original fulfillment', async () => {
+  const owner = { kind: 'original-owner-read-observations', ownerSessionId: 'session-1',
+    sourceReads: [{ path: 'original.ts', returnedRanges: ['1-10'], returnedLines: 10 }],
+    hostValidation: { operation: 'verify-recorded-owner-reads', success: true } };
+  const seen = new Set<string>(); let task = ''; let plannerTask = '';
+  const h = use(makeHarness({ plan: oneUnitPlan(1), readOwnerEvidence: () => owner,
+    planner: { run: async input => {
+      plannerTask = input.userPrompt;
+      return { status: 'completed', output: plannerOutput(oneUnitPlan(1)), elapsedMs: 1, agentId: 'planner-1' };
+    } },
+    scripts: { u1: (record, context) => { task = record.task; return finishes('The parser is ready.')(record, context); } },
+    port: ({ name, state }) => {
+      const evidence = state['evidence'] as { orchestration?: { ownerPriorReads?: unknown } } | undefined;
+      if (evidence?.orchestration?.ownerPriorReads) {
+        expect(evidence.orchestration.ownerPriorReads).toEqual(owner);
+        if (name === 'unfinished') seen.add('content');
+        if (name === 'goal') seen.add(state['goal'] === 'A CSV parser' ? 'original-fulfillment' : 'unit');
+      }
+      return undefined;
+    },
+  }));
+  const id = await run(h);
+  expect(contractOf(h, id).status).toBe('passed');
+  expect(task).toContain('original-owner-read-observations');
+  expect(plannerTask).toContain(JSON.stringify(owner));
+  expect(seen).toEqual(new Set(['unit', 'content', 'original-fulfillment']));
+});
 
 test('group and final checks receive actual plan-validation and unit-acceptance receipts', async () => {
   using log = new SqliteDecisionLog(':memory:');
@@ -313,7 +342,13 @@ describe('answer and status (6.5)', () => {
           const evidence = state['evidence'] as Record<string, unknown> | undefined;
           if (evidence !== undefined && 'criteria' in evidence && 'output' in state) {
             outputs.push(state['output']);
-            reports.push((evidence['criteria'] as { reports: unknown }).reports);
+            const references = (evidence['criteria'] as { reports: { unitId: string; contentDigest: string; fullReportAt: string }[] }).reports;
+            const units = (evidence['orchestration'] as { units: { id: string; acceptedAnswer: string }[] }).units;
+            const reference = references.find(value => value.unitId === 'u2')!;
+            const full = units.find(unit => unit.id === reference.unitId)!.acceptedAnswer;
+            expect(reference.contentDigest).toBe(hashState(full));
+            expect(reference.fullReportAt).toBe('evidence.orchestration.units["u2"].acceptedAnswer');
+            reports.push(full);
           }
           return undefined;
         },

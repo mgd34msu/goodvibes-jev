@@ -39,7 +39,7 @@ import { excludeUntouchedLaunchResidue } from '../orchestration/dirty-guard.js';
 import { GitService } from '../git/service.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
-import { deliverableOutput, describeCommitOutcome, describeContractOutcome, renderContractAnswer, CONTRACT_PASSED_WITHOUT_OUTPUT } from './answer.js';
+import { describeCommitOutcome, describeContractOutcome, renderContractAnswer, CONTRACT_PASSED_WITHOUT_OUTPUT } from './answer.js';
 import { DELIVERABLE_JUDGES } from './batteries/deliverable-judge.js';
 import { GROUP_JUDGES } from './batteries/group-judge.js';
 import { FINAL_ANSWER_REVIEWS } from './batteries/final-answer-review.js';
@@ -56,7 +56,8 @@ import { failureFromError, isAbortError, type ContractRun } from './run-context.
 import type { StepContext } from './steps.js';
 import type { CheckTrigger, Contract, Criterion, CriterionReading, CriterionVerdict, NudgeKind, TreeBaseline, UnitCheck } from './types.js';
 import { addJudgmentUsage } from './usage.js';
-import { readPrivateReceiptArchives, verifyPrivateReceiptPreservation } from './private-read-receipts.js';
+import { preserveDeclaredReadReceipts, readPrivateReceiptArchives, verifyPrivateReceiptPreservation } from './private-read-receipts.js';
+import { finalAnswerEvidence } from './final-answer-evidence.js';
 
 /** Decision sites, as the decision log records them. */
 export const COMPLETION_SITES = {
@@ -193,6 +194,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     const { contract } = run;
     assertOwnedContractSource(contract);
     const tree = contractTree(contract);
+    preserveDeclaredReadReceipts(contract, context.readOwnerEvidence?.(contract, ''));
     const paths = new Set(contract.units.filter((unit) => input.unitIds.has(unit.id)).flatMap((unit) => unit.touchedPaths));
     const changes = (await collectChanges({ baseline: input.baseline }, { cwd: tree, turns: turnsOf(run, input.unitIds) })).filter((change) => paths.has(change.path));
     const gates = await runContractGates({ configManager: context.configManager, cwd: tree, runtimeBus: context.runtimeBus, sessionId: contract.sessionId, contractId: contract.id, targetId: input.targetId, signal: run.abort.signal });
@@ -216,6 +218,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       commands: evidenceUnits.flatMap<EvidenceCommand>(unit => unit.commandEvidence ?? commandsFromTurns(turnsOf(run, new Set([unit.id])))), orchestration: {
       contractId: contract.id, createdAt: contract.createdAt, origin: contract.origin, planChecks,
       continuationEvidence: contract.taskEvidence ?? '',
+      ownerPriorReads: context.readOwnerEvidence?.(contract, input.output + '\n' + changes.map(change => change.diff).join('\n')) ?? null,
       currentFiles: currentFileObservations(tree, changes.map(change => change.path)),
       privateArtifacts: readPrivateReceiptArchives(contract),
       currentValidation: {
@@ -255,8 +258,9 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     let answerReview: FinalAnswerReviewReceipt | undefined;
     if (input.scope === 'deliverable') {
       const reviewBattery = FINAL_ANSWER_REVIEWS[config().acceptanceStakes];
+      const primary = finalAnswerEvidence(contract, acceptanceEvidence, input.summaries);
       const state = { goal: input.goal, criteria: judged(input.criteria).map(criterion => criterion.text), output: evidence.output,
-        evidence: { ...acceptanceEvidence, criteria: input.summaries }, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) };
+        evidence: primary?.evidence ?? { ...acceptanceEvidence, criteria: input.summaries }, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) };
       const evidenceDigest = hashState({ state, policy: { name: reviewBattery.name, version: reviewBattery.version, stakes: config().acceptanceStakes } });
       const outputDigest = hashState(evidence.output);
       const targetId = `${contract.id}.final-answer-review`;
@@ -283,9 +287,16 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
           if (run.terminal) { review.recordAction('discarded: the contract already ended'); return null; }
           const readings = { unfinished: review.readings.unfinished, unsupported: review.readings.unsupported };
           const passed = Object.values(readings).every(reading => criterionVerdict(reading) === 'met');
-          const candidates = [...new Intl.Segmenter(undefined, { granularity: 'sentence' }).segment(evidence.output)]
+          const segments = new Intl.Segmenter(undefined, { granularity: 'sentence' });
+          const candidates = [...segments.segment(evidence.output)]
             .filter(sentence => sentence.segment.trim()).map((sentence, index) => ({ id: `sentence-${index}`,
               content: { reference: `current final answer at character ${sentence.index}`, quote: sentence.segment.trim() } }));
+          for (const artifact of primary?.artifacts ?? []) {
+            for (const sentence of segments.segment(artifact.content)) {
+              if (sentence.segment.trim()) candidates.push({ id: `artifact-${candidates.length}`,
+                content: { reference: `current artifact ${artifact.path} at character ${sentence.index}`, quote: sentence.segment.trim() } });
+            }
+          }
           const findings = passed ? [] : await Promise.all((Object.keys(readings) as ('unfinished' | 'unsupported')[])
             .filter(key => criterionVerdict(readings[key]) === 'unmet').map(async (key): Promise<CompletionFinding> => {
               const finding = completionFinding(key);
@@ -471,7 +482,10 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         baseline: contract.baseline,
         unitIds: new Set(contract.units.map((unit) => unit.id)),
         output: answer,
-        summaries: { reports: deliverableOutput(contract), checks: judgedCriteria.map((criterion) => ({
+        summaries: { reports: contract.units.filter(unit => unit.status === 'passed').map(unit => ({
+          unitId: unit.id, contentDigest: hashState(unit.answer ?? ''),
+          fullReportAt: `evidence.orchestration.units[${JSON.stringify(unit.id)}].acceptedAnswer`,
+        })), checks: judgedCriteria.map((criterion) => ({
           criterion: criterion.id,
           servedBy: contract.units.flatMap((unit) => unit.criteria).filter((served) => served.serves.includes(criterion.id)).map((served) => ({ id: served.id, text: served.text, verdict: served.status })),
         })) },

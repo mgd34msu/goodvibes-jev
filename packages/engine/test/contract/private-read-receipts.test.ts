@@ -61,6 +61,23 @@ test('unregistered reserved paths grant no host archive operation', () => {
   expect(readPrivateReceiptArchives(other)).toEqual([]);
 });
 
+test('later accepted source work and owner observations are appended without replacing original receipts', () => {
+  const f = fixture(); preserveDeclaredReadReceipts(f.contract);
+  const first = JSON.parse(readFileSync(f.path, 'utf8')).units[0];
+  const later = { ...f.contract, units: [...f.contract.units, { ...f.contract.units[0]!, id: 'later',
+    checks: [{ ...f.contract.units[0]!.checks[0]!, id: 'later.k1' }] }] };
+  const owner = { kind: 'original-owner-read-observations', sourceReads: [{ path: 'original.ts', returnedRanges: ['1-2'] }],
+    sources: [{ sha256: 'first-session-file' }] };
+  preserveDeclaredReadReceipts(later, owner);
+  const stored = JSON.parse(readFileSync(f.path, 'utf8'));
+  expect(stored.units).toHaveLength(2);
+  expect(stored.units[0]).toEqual(first);
+  expect(stored.ownerObservations).toEqual([owner]);
+  const bytes = readFileSync(f.path);
+  preserveDeclaredReadReceipts(later, { ...owner, sources: [{ sha256: 'same-reads-new-session-save' }] });
+  expect(readFileSync(f.path)).toEqual(bytes);
+});
+
 test('archival waits for source dependencies and never seals an empty archive', () => {
   const f = fixture();
   const waiting = { ...f.contract, units: [{ ...f.contract.units[0]!, status: 'running' as const },

@@ -50,6 +50,7 @@ export interface AgentGraph extends AgentExecutionGraph {
 }
 
 export interface AgentGraphOptions extends AgentExecutionGraphOptions {
+  readonly surfaceRoot?: string | undefined;
   readonly readAccessFilter?: import('../tools/shared/read-access.js').ReadAccessFilter | undefined;
   /** Live provider health for the route planner. */
   readonly runtimeStore?: Pick<RuntimeStore, 'getState'> | undefined;
@@ -95,6 +96,7 @@ export function createAgentGraph(options: AgentGraphOptions): AgentGraph {
   const graph = createAgentExecutionGraph(options);
   const { agentMessageBus, agentManager } = graph;
   const composed = composeContractRunner({
+    surfaceRoot: options.surfaceRoot,
     readAccessFilter: options.readAccessFilter,
     runtimeBus: options.runtimeBus,
     agentManager,

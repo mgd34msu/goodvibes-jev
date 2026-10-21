@@ -51,6 +51,7 @@ import { failureFromError, isAbortError, type ContractRun, type InFlightCheck, t
 import { isTerminalUnitStatus, type CheckTrigger, type ContractFailureKind, type ContractUnit } from './types.js';
 import { addJudgmentUsage } from './usage.js';
 import type { UnitWatchdog } from './watchdog.js';
+import type { OwnerEvidenceReader } from './owner-evidence.js';
 
 /**
  * What the completion hold returns. `release` lets the agent complete;
@@ -100,6 +101,7 @@ export interface UnitCheckEscalations {
 }
 
 export interface UnitCheckLoopDeps {
+  readonly readOwnerEvidence?: OwnerEvidenceReader | undefined;
   /** Persist actual tool observations independently of acceptance checks. */
   readonly checkpoint?: ((run: ContractRun) => void) | undefined;
   readonly findRun: (contractId: string) => ContractRun | undefined;
@@ -245,6 +247,7 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
         else unit.lastReport = read;
       }
       let evidence = await collectUnitEvidence(run.contract, unit, trigger, {
+        ownerEvidence: deps.readOwnerEvidence?.(run.contract, output),
         output,
         // A check after a restart reads the report stored on the unit (design 7.2), not the capped output.
         report: trigger === 'resume' ? (unit.lastReport ?? null) : read,

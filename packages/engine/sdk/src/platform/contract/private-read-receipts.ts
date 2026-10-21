@@ -5,6 +5,8 @@ import { join } from 'node:path';
 import { writeFileAtomic } from '../utils/atomic-json-store.js';
 import type { ContractView } from './types.js';
 import type { QualityGateResult } from './gates.js';
+import type { JsonValue } from '@goodvibes-jev/judgment';
+import { ownerEvidenceIdentity } from './owner-evidence.js';
 
 type ArchiveOwner = Pick<ContractView, 'id'> & Partial<Pick<ContractView, 'projectRoot' | 'inputSnapshot' | 'units' | 'groups'>>;
 
@@ -21,23 +23,32 @@ function archivePath(contract: ArchiveOwner): string | undefined {
 }
 
 /** Actual private host storage, never a worker grant to reserved runtime state. */
-export function preserveDeclaredReadReceipts(contract: ArchiveOwner): void {
+export function preserveDeclaredReadReceipts(contract: ArchiveOwner, ownerEvidence?: JsonValue): void {
   const relativePath = `.goodvibes/reviews/${contract.id}/source-receipts.json`;
   if (!contract.units?.some(unit => unit.files.includes(relativePath)
     && (unit.dependsOn ?? []).every(id => contract.units?.some(source => source.id === id && source.status === 'passed'))
     && (contract.groups?.find(group => group.id === unit.groupId)?.dependsOn ?? []).every(id => contract.groups?.some(group => group.id === id && group.status === 'passed')))) return;
   const path = archivePath(contract);
   if (!path) return;
-  if (existsSync(path) && readPrivateReceiptArchives(contract).some(receipt => receipt.archivedUnits.some(unit => unit.observations > 0))) return;
+  let previous: { units: { id: string; latestCheckId: string | null; observations: NonNullable<ContractView['units'][number]['readEvidence']> }[]; ownerObservations?: JsonValue[] } | undefined;
+  if (existsSync(path)) {
+    readPrivateReceiptArchives(contract);
+    previous = JSON.parse(readFileSync(path, 'utf8')) as NonNullable<typeof previous>;
+  }
   const accepted = contract.units.filter(unit => unit.status === 'passed' && (unit.readEvidence?.length ?? 0) > 0);
   if (accepted.length === 0) return;
+  const additions = accepted.filter(unit => !previous?.units.some(saved => saved.id === unit.id));
+  const owners = previous?.ownerObservations ?? [];
+  const newOwner = ownerEvidence !== undefined && !owners.some(saved => JSON.stringify(ownerEvidenceIdentity(saved)) === JSON.stringify(ownerEvidenceIdentity(ownerEvidence)));
+  if (previous && additions.length === 0 && !newOwner) return;
   const archive = { version: 1, kind: 'contract-read-receipts', contractId: contract.id,
     inputId: contract.inputSnapshot?.id ?? null,
     meaning: 'Exact host-retained observations and reference contents from accepted units, preserved privately before public receipt ledgers are removed. This is storage, not approval or a new source inspection.',
-    units: accepted.map(unit => ({
+    units: [...(previous?.units ?? []), ...additions.map(unit => ({
       id: unit.id, latestCheckId: unit.checks.at(-1)?.id ?? null,
       observations: unit.readEvidence ?? [],
-    })),
+    }))],
+    ...(owners.length || newOwner ? { ownerObservations: [...owners, ...(newOwner ? [ownerEvidence!] : [])] } : {}),
   };
   mkdirSync(join(contract.projectRoot!, '.goodvibes', 'reviews', contract.id), { recursive: true, mode: 0o700 });
   // Recheck ancestry after creating it; no runtime/credential namespace is writable by the worker.

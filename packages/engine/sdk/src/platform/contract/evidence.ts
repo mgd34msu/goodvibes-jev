@@ -354,6 +354,7 @@ function writtenChanges(cwd: string, turns: readonly ContractTurnRecord[]): File
 
 /** Where one unit's evidence comes from. */
 export interface UnitEvidenceSources {
+  readonly ownerEvidence?: JsonValue | undefined;
   /** The final output at completion; the last assistant text mid-run. */
   readonly output: string;
   /** Every turn the unit's agents reported through the turn-end hook. */
@@ -393,7 +394,7 @@ export function currentFileObservations(cwd: string, paths: readonly string[]): 
       if (!lstatSync(absolute).isFile()) return [];
       const bytes = readFileSync(absolute);
       return [{ operation: 'read-current-file', source: 'native-host-filesystem', success: true,
-        path, bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'),
+        path, bytes: bytes.length, binary: bytes.includes(0), sha256: createHash('sha256').update(bytes).digest('hex'),
         meaning: 'Actual bytes read from the current checked tree. This establishes current file identity, not semantic correctness, archive integrity, a worker execution or native approval.' }];
     } catch (error) {
       return [{ operation: 'read-current-file', source: 'native-host-filesystem', success: false, path,
@@ -442,6 +443,7 @@ export async function collectUnitEvidence(
   return trimEvidence({ output: sources.output, changes, claims, gates, commands: unit.commandEvidence ?? commandsFromTurns(sources.turns),
     sourceReads: sources.mustWrite ? currentReads : mergeSourceReads(unit.readEvidence ?? [], currentReads),
     ...(planChecks.length ? { orchestration: { contractId: contract.id, ...(contract.status === undefined ? {} : { status: contract.status }), planChecks,
+      ...(sources.ownerEvidence === undefined ? {} : { ownerPriorReads: sources.ownerEvidence }),
       currentFiles: currentFileObservations(sources.cwd, [...unit.files, ...changes.map(change => change.path),
         ...(contract.units ?? []).filter(planned => planned.status === 'passed').flatMap(planned => planned.touchedPaths ?? [])]),
       ...(privateArtifacts.length ? { privateArtifacts } : {}),
@@ -528,7 +530,10 @@ function actualHostOperations(evidence: UnitEvidence): JsonValue[] {
   if (!orchestration || typeof orchestration !== 'object' || Array.isArray(orchestration)) return [];
   const archives = orchestration['privateArtifacts'];
   const files = orchestration['currentFiles'];
-  return [...(Array.isArray(files) ? files : []), ...(Array.isArray(archives) ? archives : []).flatMap(archive => archive && typeof archive === 'object' && !Array.isArray(archive)
+  const owner = orchestration['ownerPriorReads'];
+  const ownerValidation = owner && typeof owner === 'object' && !Array.isArray(owner)
+    && owner['kind'] === 'original-owner-read-observations' ? owner['hostValidation'] : undefined;
+  return [...(ownerValidation ? [ownerValidation] : []), ...(Array.isArray(files) ? files : []), ...(Array.isArray(archives) ? archives : []).flatMap(archive => archive && typeof archive === 'object' && !Array.isArray(archive)
     && archive['kind'] === 'contract-read-receipts' && archive['hostFileRead'] ? [archive['hostFileRead']] : [])];
 }
 

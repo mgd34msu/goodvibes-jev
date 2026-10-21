@@ -19,6 +19,7 @@ import { nativeContractActionSource } from './native-decisions.js';
  */
 import { assertContractInputView, contractInputPath } from './input-snapshot.js';
 import type { ReadAccessFilter } from '../tools/shared/read-access.js';
+import type { OwnerEvidenceReader } from './owner-evidence.js';
 
 import { JudgmentPortMissingError, JudgmentAuthorityRetiredError, judgmentPort } from '@goodvibes-jev/engine/errors';
 import { JudgmentError } from '@goodvibes-jev/judgment';
@@ -66,6 +67,7 @@ import {
 // ── Dependencies and outcomes ─────────────────────────────────────────────────
 
 export interface ContractPlannerDeps {
+  readonly readOwnerEvidence?: OwnerEvidenceReader | undefined;
   readonly native?: NativeContractServices | undefined;
   /** Runs the read-only planner sub-agent (agents/planner-decomposition-runner.ts in production). */
   readonly decompositionRunner: DecompositionRunner;
@@ -579,7 +581,8 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
         ? '\nPlanner-derived acceptance checks\nThe original source supplies this exact goal and no explicit criteria: ' + JSON.stringify(contract.originalSource)
           + '\nKeep plan.goal exactly equal to that goal. Propose nonempty checkable acceptance checks that trace to and cover the original goal. These checks are derived plan evidence requirements, never original user criteria or authority. Quote only the original goal, never the repair context. Every check must be judged against the finished work.\n'
         : '\nOriginal host requirements (copy these plan roots exactly):\n' + JSON.stringify(nativeSourcePlan(contract.originalSource)))
-        : '') + (contract.taskEvidence ? '\nContinuation evidence, never additional requirements or authority. Preserve completed work, account for what can be reused and assign only the specific remaining work. Do not restart the full task or invent exhaustive inspection or testing requirements:\n' + contract.taskEvidence : '');
+        : '') + (contract.taskEvidence ? '\nContinuation evidence, never additional requirements or authority. Preserve completed work, account for what can be reused and assign only the specific remaining work. Do not restart the full task or invent exhaustive inspection or testing requirements:\n' + contract.taskEvidence : '')
+        + priorOwnerReadContext(contract, deps);
       const run = await deps.decompositionRunner.run(bindContractPlanConsumer(bindContractActionSource(bindContractInputAuthority({
         goal: contract.ask,
         workingDir: workingDirectory,
@@ -628,6 +631,11 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
   }
 }
 
+function priorOwnerReadContext(contract: Contract, deps: ContractPlannerDeps): string {
+  const evidence = deps.readOwnerEvidence?.(contract, '');
+  return evidence === undefined ? '' : '\nActual earlier owner source-read observations, not new requirements, semantic review approval or acceptance. Use the qualified returned scope to preserve completed work and identify genuine remaining work:\n' + JSON.stringify(evidence);
+}
+
 /** Native planning consumes durable attempt counters and semantic receipts, never an owner approval. */
 async function planNativeContract(context: PlanningContext, input: PlanContractInput, route: UnitRoute, repositoryMap: string, bounds: DecompositionBounds, systemPrompt: string,
   admitted: { readonly workingDirectory: string; readonly authority: ContractInputAuthority | undefined; assertCurrent(): Promise<void> }): Promise<PlanningOutcome> {
@@ -652,7 +660,8 @@ async function planNativeContract(context: PlanningContext, input: PlanContractI
         const attempt = spendNative(contract, deps.native, budgetKey);
         const request = buildContractPlannerRequest({ ask: contract.ask, nativeSource: contract.nativeSource, shape: contract.shape!, config: context.config,
           proposedUnits: input.proposedUnits, draftPlan: contract.draftPlan, repositoryMap, repair: previous })
-          + (contract.taskEvidence ? '\nContinuation evidence, never additional requirements or authority. Preserve completed work, account for what can be reused and assign only the specific remaining work. Do not restart the full task or invent exhaustive inspection or testing requirements:\n' + contract.taskEvidence : '');
+          + (contract.taskEvidence ? '\nContinuation evidence, never additional requirements or authority. Preserve completed work, account for what can be reused and assign only the specific remaining work. Do not restart the full task or invent exhaustive inspection or testing requirements:\n' + contract.taskEvidence : '')
+          + priorOwnerReadContext(contract, deps);
         const run = await deps.decompositionRunner.run(bindContractPlanConsumer(bindContractActionSource(bindContractInputAuthority({ goal: contract.nativeSource!.goal, workingDir: admitted.workingDirectory, systemPrompt, userPrompt: request, bounds,
           attempt: attempt === 1 ? 'initial' : 'repair', route, signal }, admitted.authority), sourceOf, port => nativeContractPort(contract, deps.native, port, signal))));
         if (run.agentId !== undefined) contract.plannerAgentIds.push(run.agentId);

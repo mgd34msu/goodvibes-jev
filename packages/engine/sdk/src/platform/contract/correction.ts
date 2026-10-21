@@ -35,7 +35,7 @@ import { buildFixGroup, buildFixPlannerPrompt, buildFixPlannerRequest, buildFres
 import { nativeContractRoute, decideNativeContract, nativeContractPort, nativeDecisionState, nativeSpent, spendNative } from './native-decisions.js';
 import { assertNativeContractSource } from './native-source.js';
 import { renderContractAnswer } from './answer.js';
-import { contractWorkReceipts } from './work-receipts.js';
+import { contractWorkReceipts, workReceiptIdentity } from './work-receipts.js';
 import { preserveDeclaredReadReceipts } from './private-read-receipts.js';
 import { runUnitShapeChecks } from './plan-checks.js';
 import { renderContractPlan, type ContractPlan, type PlanProblem } from './plan-schema.js';
@@ -238,7 +238,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
       resultRevision: input.resultRevision ?? null, target,
       output: brief.scope === 'deliverable' ? renderContractAnswer(contract) : priorEvidence,
       finalAnswerReview: brief.scope === 'deliverable' ? contract.decisions.findLast(decision => decision.targetId === `${contract.id}.final-answer-review`)?.reason ?? null : null,
-      work: contractWorkReceipts(contract, { readObservations: true }),
+      work: workReceiptIdentity(contractWorkReceipts(contract, { readObservations: true, ownerEvidence: context.readOwnerEvidence?.(contract, '') })),
     }));
     let retained: string | undefined;
     if (input.resultRevision !== undefined) {
@@ -405,7 +405,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
       requiredIds: [...finding.unmet, ...finding.unshown],
       lastNudges: [],
       gateFailures: gateFailureLines(finding.gates),
-      output: `${finding.output}\n\nActual host work records (not approval of this repair):\n${JSON.stringify(contractWorkReceipts(contract, { readObservations: true }))}`,
+      output: `${finding.output}\n\nActual host work records (not approval of this repair):\n${JSON.stringify(contractWorkReceipts(contract, { readObservations: true, ownerEvidence: context.readOwnerEvidence?.(contract, '') }))}`,
       touchedPaths: [...new Set(target.units.flatMap((unit) => unit.touchedPaths))],
     };
   }

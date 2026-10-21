@@ -1,6 +1,8 @@
 import type { ContractView } from './types.js';
 import { findCardNumberShapes } from '../security/card-shapes.js';
 import { readPrivateReceiptArchives, verifyPrivateReceiptPreservation } from './private-read-receipts.js';
+import type { JsonValue } from '@goodvibes-jev/judgment';
+import { ownerEvidenceIdentity } from './owner-evidence.js';
 
 /** Observations can contain incidental card-shaped digit runs (for example
  * adjacent uid/gid/file-size columns). Never send those values to a planner
@@ -18,14 +20,16 @@ function commandReceipt(command: NonNullable<ContractView['units'][number]['comm
 /** Facts from the live host tree; these never approve the work receiving them. */
 export function contractWorkReceipts(
   contract: Pick<ContractView, 'units'> & Partial<Pick<ContractView, 'id' | 'decisions' | 'groups' | 'projectRoot' | 'inputSnapshot'>>,
-  options: { readonly excludeUnitId?: string; readonly readObservations?: boolean; readonly answerIds?: ReadonlySet<string> } = {},
+  options: { readonly excludeUnitId?: string; readonly readObservations?: boolean; readonly answerIds?: ReadonlySet<string>; readonly ownerEvidence?: JsonValue | undefined } = {},
 ) {
   const privateArchiveChecks = contract.id === undefined || contract.projectRoot === undefined ? [] : contract.units.flatMap(unit => {
     const checked = verifyPrivateReceiptPreservation({ ...contract, id: contract.id! }, unit, contract.projectRoot!);
-    return checked ? [{ unitId: unit.id, ...checked }] : [];
+    return checked ? [{ unitId: unit.id, gate: checked.gate, passed: checked.passed, output: checked.output,
+      ...(checked.skipped === undefined ? {} : { skipped: checked.skipped }) }] : [];
   });
   return {
     contractId: contract.id,
+    ...(options.ownerEvidence === undefined ? {} : { ownerPriorReads: options.ownerEvidence }),
     privateArtifacts: contract.id === undefined ? [] : readPrivateReceiptArchives({ ...contract, id: contract.id }),
     privateArchiveChecks,
     meaning: 'Host observations and prior check results, not approval of the current repair. Preserve completed work; missing primary text is not evidence that accepted work never happened.',
@@ -41,5 +45,14 @@ export function contractWorkReceipts(
         returnedRanges: [...read.returnedRanges], returnedLines: read.returnedLines })), commands: (unit.commandEvidence ?? []).map(commandReceipt) } : {}),
       ...(unit.status === 'passed' && options.answerIds?.has(unit.id) ? { acceptedAnswer: unit.answer ?? '' } : {}),
     })),
+  };
+}
+
+/** Timing and session-file bookkeeping do not change the actual work a
+ * retained correction proposal addresses. Changed observations still do. */
+export function workReceiptIdentity(work: ReturnType<typeof contractWorkReceipts>) {
+  return { ...work,
+    privateArchiveChecks: work.privateArchiveChecks.map(check => Object.fromEntries(Object.entries(check).filter(([key]) => key !== 'durationMs'))),
+    ...(work.ownerPriorReads === undefined ? {} : { ownerPriorReads: ownerEvidenceIdentity(work.ownerPriorReads) }),
   };
 }

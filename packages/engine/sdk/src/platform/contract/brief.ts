@@ -16,6 +16,7 @@ import { contractWorkReceipts } from './work-receipts.js';
 import { buildPreviousChecks } from './nudge.js';
 import { unitToolContract } from './plan-schema.js';
 import type { ContractGroupView, ContractUnitView, ContractView, CriterionView } from './types.js';
+import type { JsonValue } from '@goodvibes-jev/judgment';
 
 /** The fixed closing paragraph of every brief. */
 export const BRIEF_CHECKED_PARAGRAPH =
@@ -41,6 +42,7 @@ export function buildUnitBrief(
   contract: Pick<ContractView, 'goal' | 'criteria' | 'units' | 'shape' | 'nativeSource' | 'taskEvidence'> & Partial<Pick<ContractView, 'id' | 'decisions' | 'projectRoot' | 'inputSnapshot'>>,
   group: Pick<ContractGroupView, 'id' | 'title' | 'goal'>,
   unit: Pick<ContractUnitView, 'id' | 'title' | 'goal' | 'brief' | 'role' | 'dependsOn' | 'criteria'>,
+  ownerEvidence?: JsonValue,
 ): string {
   const judged = unit.criteria.filter((criterion) => criterion.disposition === 'judged');
   const siblings = contract.units.filter((other) => other.groupId === group.id && other.id !== unit.id);
@@ -70,9 +72,10 @@ export function buildUnitBrief(
   // All spawn paths rebuild this brief, including restart recovery and fresh
   // retries. Integrators and repair workers need the accepted work they build on.
   const repairing = unit.criteria.some(criterion => criterion.origin === 'fix');
-  if ((unit.role === 'integration' || repairing) && contract.id !== undefined && contract.decisions !== undefined) {
+  if ((unit.role === 'integration' || repairing || ownerEvidence !== undefined) && contract.id !== undefined && contract.decisions !== undefined) {
     sections.push('Actual host orchestration records (evidence, not approval of this unit):\n' + JSON.stringify(contractWorkReceipts(contract, {
       excludeUnitId: unit.id, readObservations: repairing,
+      ownerEvidence,
       answerIds: new Set(contract.units.filter(other => repairing && (other.role === 'integration' || unit.dependsOn.includes(other.id))).map(other => other.id)),
     })));
   }

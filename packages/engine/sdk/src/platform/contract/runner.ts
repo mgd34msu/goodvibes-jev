@@ -62,6 +62,7 @@ import { createContractPlanSync, type ExecutionPlans, type WorkPlanService } fro
 import { createContractResume, findZombieCause, type ResumeReport } from './resume.js';
 import { numberDraft } from './draft-plan.js';
 import { createContractFleetControls, type ContractFleetControls } from './fleet-controls.js';
+import type { OwnerEvidenceReader } from './owner-evidence.js';
 import { ContractRun, failureFromError, type RunEnv } from './run-context.js';
 import { createContractSteps, type ContractSteps, type ContractStepsWithReplies } from './steps.js';
 import { deserializeContract, serializeContract, type ContractStore } from './store.js';
@@ -84,6 +85,7 @@ import { nativeContractActionSource, nativeContractPort } from './native-decisio
 import type { DurableContractExecution } from './durable-admission.js';
 
 export interface ContractRunnerDeps {
+  readonly readOwnerEvidence?: OwnerEvidenceReader | undefined;
   readonly getSelectedModel?: (() => Pick<import('../providers/registry-types.js').ModelDefinition, 'id' | 'provider' | 'registryKey' | 'displayName'>) | undefined;
   readonly nativeDecisions?: NativeContractDecisionHost | undefined;
   /** Host ledger synchronization and live deterministic validation for native-bound launches. */
@@ -361,7 +363,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
         if (group === undefined) return Promise.resolve(cancelled);
         // Items can wait behind peers, or survive a restart, with an old task.
         // Bind current accepted results when the worker is actually admitted.
-        return Promise.resolve({ kind: 'spawn', task: briefWithPreviousChecks(buildUnitBrief(run.contract, group, unit), unit) });
+        return Promise.resolve({ kind: 'spawn', task: briefWithPreviousChecks(buildUnitBrief(run.contract, group, unit, deps.readOwnerEvidence?.(run.contract, '')), unit) });
       }
       if (decided !== 'wait') {
         runtime.preSpawn = null;
@@ -408,6 +410,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
   });
 
   const ownSteps = createContractSteps({
+    readOwnerEvidence: deps.readOwnerEvidence,
     native,
     agentManager: deps.agentManager,
     configManager: deps.configManager,
@@ -432,6 +435,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
   ])) as unknown as ContractStepsWithReplies;
 
   const checks = createUnitCheckLoop({
+    readOwnerEvidence: deps.readOwnerEvidence,
     checkpoint: run => deps.store.scheduleWrite(run.id),
     findRun: (contractId) => runs.get(contractId),
     agentManager: deps.agentManager,
@@ -848,6 +852,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
 
   function plannerDeps(run: ContractRun): ContractPlannerDeps {
     return {
+      readOwnerEvidence: deps.readOwnerEvidence,
       native,
       decompositionRunner: deps.decompositionRunner,
       routeSelector: deps.routeSelector,

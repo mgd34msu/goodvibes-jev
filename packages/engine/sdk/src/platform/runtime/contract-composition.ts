@@ -22,6 +22,8 @@
  * caller for the root the same promise of the report.
  */
 import { resolve } from 'node:path';
+import { createOwnerReadEvidenceReader } from './owner-read-evidence.js';
+import { resolveSurfaceDirectory } from './surface-root.js';
 import { mapLimit } from '@goodvibes-jev/judgment';
 import type { ConfigManager } from '../config/manager.js';
 import { ContractStore } from '../contract/store.js';
@@ -56,6 +58,8 @@ export interface NativeContractCompositionOwner {
 }
 
 export interface ContractRunnerCompositionOptions {
+  /** Registered conversation surface; absent hosts contribute no owner history. */
+  readonly surfaceRoot?: string | undefined;
   readonly runtimeBus: RuntimeEventBus;
   readonly agentManager: AgentManager;
   readonly agentMessageBus: AgentMessageBus;
@@ -220,6 +224,7 @@ export function composeContractRunner(options: ContractRunnerCompositionOptions)
     providerHealth: routeProviderHealth(options.providerRegistry, options.runtimeStore),
   }, options.providerRegistry.benchmarks);
   const runner = createContractRunner({
+    readOwnerEvidence: options.surfaceRoot ? createOwnerReadEvidenceReader(resolveSurfaceDirectory(options.projectRoot, options.surfaceRoot)) : undefined,
     getSelectedModel: () => options.providerRegistry.getCurrentModel(),
     ...(options.nativeOwner === undefined ? {} : { nativeDecisions: options.nativeOwner.decisions, durableAdmission: options.nativeOwner.admission }),
     agentManager: options.agentManager,

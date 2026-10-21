@@ -130,6 +130,7 @@ export type { ContractAgentHooks, ContractHoldOutcome, ContractSessionHooks, Uni
 // Running contracts (sections 2.2, 4, 6.1, 7.3 and 7.4).
 export { AGENT_MANAGER_SESSION_ID, createContractRunner, filesModified, resolveIsolation } from './runner.js';
 export type { ContractRunner, ContractRunnerDeps, OwnedStartedContract, StartedContract } from './runner.js';
+export type { OwnerEvidenceReader } from './owner-evidence.js';
 // Resume and zombie reaping at startup (section 7.2).
 export { createContractResume } from './resume.js';
 export type { ContractResume, ContractResumeDeps, ResumeReport, ResumeStep } from './resume.js';

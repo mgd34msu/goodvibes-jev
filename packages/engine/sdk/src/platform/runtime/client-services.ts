@@ -547,6 +547,7 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
   const sessionLiveTurnControls = new SessionLiveTurnControlsHolder();
 
   const contracts = composeContractRunner({
+    surfaceRoot,
     readAccessFilter: async (path) => (await permissionManager.readAccess(path)) === 'allow',
     runtimeBus: options.runtimeBus,
     agentManager: agents.agentManager,
