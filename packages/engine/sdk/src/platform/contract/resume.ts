@@ -31,6 +31,7 @@ import { existsSync } from 'node:fs';
 import { loadWorkstreamSnapshot } from '../orchestration/persistence.js';
 import { awaitNativeResumeConditions, nativeDecisionState } from './native-decisions.js';
 import { logger } from '../utils/logger.js';
+import { findCardNumberShapes } from '../security/card-shapes.js';
 import { queueSessionNudge, type UnitCheckLoop } from './agent-hooks.js';
 import { engineItem, type GroupRunner } from './group-runner.js';
 import type { ContractRun } from './run-context.js';
@@ -173,12 +174,17 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
       // Older runners incorrectly ended completed legacy work when the final
       // verifier request failed. Resume only that check, never an actual work
       // failure, cancellation, owner wait, or already published contract.
-      const pendingVerification = contract.nativeSource === undefined && contract.status === 'failed'
-        && contract.failureKind === 'judgment-unavailable' && contract.commit === undefined
+      const acceptedWork = contract.nativeSource === undefined && contract.status === 'failed' && contract.commit === undefined
         && contract.units.length > 0 && contract.units.every(unit => unit.status === 'passed')
         && contract.groups.length > 0 && contract.groups.every(group => group.status === 'passed')
         && contract.escalations.every(item => item.resolvedAt !== undefined);
-      if (isTerminalContractStatus(contract.status) && !pendingVerification) {
+      const pendingVerification = acceptedWork && contract.failureKind === 'judgment-unavailable';
+      const pendingRepair = acceptedWork && contract.failureKind === 'planning' && contract.fixRounds > 0
+        && !contract.groups.some(group => group.id === `${contract.id}.f${contract.fixRounds}`)
+        && contract.error?.startsWith(`the fix for deliverable ${contract.id} could not be planned:`) === true
+        && contract.error.includes('Refused before judgment:')
+        && contract.units.some(unit => unit.commandEvidence?.some(command => findCardNumberShapes(command.head, 1).length > 0));
+      if (isTerminalContractStatus(contract.status) && !pendingVerification && !pendingRepair) {
         deps.store.hold(contract);
         continue;
       }
@@ -194,8 +200,8 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
           continue;
         }
       }
-      if (pendingVerification) {
-        contract.status = 'judging';
+      if (pendingVerification || pendingRepair) {
+        contract.status = pendingRepair ? 'fixing' : 'judging';
         contract.failureKind = undefined;
         contract.error = undefined;
         contract.completedAt = undefined;
@@ -203,6 +209,7 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
       }
       const run = deps.adopt(contract);
       if (pendingVerification) run.decide('resumed', contract.id, 'Recovered a historical final-verifier request failure; all accepted units and groups retained. A fresh final-answer and fulfillment check is required before publication; no approval is inferred.');
+      if (pendingRepair) run.decide('resumed', contract.id, 'Recovered a historical repair-planner input refusal with card-shaped observational output. Resume the same unstarted repair round with projected command observations; original request screening and fresh plan, unit and final checks remain required.');
       prepareResume(run);
       const zombie = findZombieCause(contract);
       if (zombie !== null) {

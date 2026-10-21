@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { uptime } from 'node:os';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { JudgmentError } from '@goodvibes-jev/judgment';
+import { assertJudgmentInput } from '../../sdk/src/platform/gate/judgment-input.js';
 import type { Contract, ContractView } from '../../sdk/src/platform/contract/index.js';
 import { contractPath } from '../../sdk/src/platform/contract/index.js';
 import type { DecompositionRunner } from '../../sdk/src/platform/core/plan-decomposition.js';
@@ -98,7 +99,7 @@ async function ended(h: Harness, id: string): Promise<ContractView> {
 
 const running = (contract: ContractView) => contract.units[0]?.status === 'running' && (contract.units[0]?.checks.length ?? 0) >= 1;
 
-test('an interrupted final-answer repair resumes the same round with its rejected draft and findings', async () => {
+test.each(['interrupted', 'privacy-refused'])('an %s final-answer repair resumes the same round with its rejected draft and findings', async condition => {
   const plan = oneUnitPlan(1);
   plan.groups[0]!.units[0]!.role = 'research';
   let fixing = false;
@@ -111,6 +112,13 @@ test('an interrupted final-answer repair resumes the same round with its rejecte
     port: context => context.name === 'role' ? choiceAnswer(context.question, 'research', 0.98)
       : judgeOf(context) === 'deliverable' || context.name === 'unsupported' ? noulAnswer(0.98) : undefined,
   }, contract => fixing && contract.status === 'fixing', 'the final repair planner');
+  const privateHead = '-rw-r--r-- 1 4111111111111111 Oct 21 00:00 package-lock.json';
+  if (condition === 'privacy-refused') editContract(root, id!, contract => {
+    contract.status = 'failed'; contract.failureKind = 'planning'; contract.completedAt = Date.now();
+    contract.error = `the fix for deliverable ${contract.id} could not be planned: the planner agent failed: Refused before judgment: [REDACTED_TEXT]`;
+    contract.units[0]!.commandEvidence = [{ agentId: contract.units[0]!.agentIds[0]!, turn: 1, callIndex: 0,
+      callId: 'directory-listing', command: 'ls -l', success: true, head: privateHead }];
+  });
   let prompt = '';
   let repairTask = '';
   const repair = fixPlan([{ serves: ['c1'] }, { serves: ['c1'], dependsOn: ['u1'] }]);
@@ -137,6 +145,15 @@ test('an interrupted final-answer repair resumes the same round with its rejecte
   expect(receipts.units.find((unit: { id: string }) => unit.id === `${id}.f1.u1`)).toMatchObject({ status: 'passed', acceptedAnswer: 'Accepted scope reconciliation.' });
   expect(receipts.units.some((unit: { id: string }) => unit.id === `${id}.f1.u2`)).toBe(false);
   expect(done.units[0]!.answer).toBe('Original draft with an unsupported archive claim.');
+  if (condition === 'privacy-refused') {
+    expect(prompt).not.toContain('4111111111111111');
+    expect(prompt).toContain('[WITHHELD:card-shaped-number]');
+    assertJudgmentInput({ prompt });
+    assertJudgmentInput({ task: repairTask });
+    expect(done.units[0]!.commandEvidence![0]!.head).toBe(privateHead);
+    expect(done.units[0]!.commandEvidence![0]!.command).toBe('ls -l');
+    expect(done.decisions.some(decision => decision.reason.startsWith('Recovered a historical repair-planner input refusal'))).toBe(true);
+  }
 });
 
 test.each([false, true])('a rejected verifier request cannot cancel a sibling or pass unchecked work (persistent=%s)', async persistent => {
