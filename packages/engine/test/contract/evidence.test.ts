@@ -315,6 +315,30 @@ describe('what each trigger collects', () => {
     } } });
   });
 
+  test('the collected scope calculation binds current reference bytes and never borrows an unpassed worker observation', async () => {
+    const text = JSON.stringify({ files: [{ path: 'source.ts', ranges: [[1, 6]] }] });
+    writeFileSync(join(dir, 'input.json'), text);
+    const current = makeUnit({ files: ['input.json'], brief: 'Preserve source.ts:1-6.', readEvidence: [
+      { path: 'input.json', returnedRanges: ['1'], returnedLines: 1, contentKind: 'declared-reference', returnedContent: '1 | ' + text },
+      { path: 'source.ts', returnedRanges: ['1-2'], returnedLines: 2 },
+    ] });
+    const passed = makeUnit({ id: 'passed', status: 'passed', readEvidence: [{ path: 'source.ts', returnedRanges: ['3-4'], returnedLines: 2 }] });
+    const pending = makeUnit({ id: 'pending', status: 'running', readEvidence: [{ path: 'source.ts', returnedRanges: ['5-6'], returnedLines: 2 }] });
+    const planned = makeContract({ id: contract.id, units: [current, passed, pending], decisions: [
+      { id: 'accepted', at: 1, action: 'plan-accepted', targetId: contract.id, reason: 'Checked plan', decisionIds: ['native-plan'] },
+    ] });
+    const evidence = await collectUnitEvidence(planned, current, 'resume', { ...sources(), turns: [], mustWrite: false,
+      ownerEvidence: { sourceReads: [{ path: 'source.ts', returnedRanges: ['6'] }] } });
+    expect(judgeEvidence(evidence)).toMatchObject({ orchestration: { requirements: {
+      sourceReferenceComparisons: [{ path: 'source.ts', coveredReferencedLines: 5, missingReferencedLines: 1,
+        observationSources: [{ source: 'current unit u1' }, { source: 'passed unit passed' }, { source: 'qualified original-owner observations' }] }],
+      sourceJsonReferenceComparisons: [{
+      source: 'native-host-interval-comparison', referencePath: 'input.json', groups: [{ referencedLines: 6, coveredReferencedLines: 5,
+        missingReferencedLines: 1, missing: [{ path: 'source.ts', ranges: [[5, 5]] }] }],
+    }] } } });
+    expect(JSON.stringify(evidence.orchestration)).not.toContain('"source":"passed unit pending"');
+  });
+
   test('turn-end: no claims and no gates', async () => {
     const evidence = await collectUnitEvidence(contract, makeUnit(), 'turn-end', sources());
     expect(evidence.claims).toBeUndefined();

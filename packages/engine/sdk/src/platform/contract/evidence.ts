@@ -24,7 +24,7 @@ import { estimateTokens, hashState, type JsonValue } from '@goodvibes-jev/judgme
 import { GitService } from '../git/service.js';
 import { hashWorkingTreeFile, snapshotDirtyTree } from '../orchestration/dirty-guard.js';
 import { readNativePrivateReceiptArchives, verifyPrivateReceiptPreservation } from './private-read-receipts.js';
-import { compareReadReferences } from './read-reference-comparison.js';
+import { compareJsonReadReferences, compareReadReferences } from './read-reference-comparison.js';
 import { commandObservation } from './command-observation.js';
 import { parseCompletionReport } from '../agents/completion-report.js';
 import { returnedReadRows } from '../tools/read/observation.js';
@@ -447,6 +447,19 @@ export async function collectUnitEvidence(
   const currentReads = sourceReadsFromTurns(sources.turns, sources.mustWrite ? [] : unit.files, sources.output);
   const observedReads = sources.mustWrite ? currentReads : mergeSourceReads(unit.readEvidence ?? [], currentReads);
   const currentUnit = contract.units?.find(planned => planned.id === unit.id);
+  const currentFiles = planChecks.length ? currentFileObservations(sources.cwd, [...unit.files, ...changes.map(change => change.path),
+    ...(contract.units ?? []).filter(planned => planned.status === 'passed').flatMap(planned => planned.touchedPaths ?? [])]) : [];
+  const owner = sources.ownerEvidence;
+  const ownerReads = owner && typeof owner === 'object' && !Array.isArray(owner) && Array.isArray(owner['sourceReads'])
+    ? owner['sourceReads'].flatMap(read => read && typeof read === 'object' && !Array.isArray(read) && typeof read['path'] === 'string'
+      && Array.isArray(read['returnedRanges']) && read['returnedRanges'].every(range => typeof range === 'string')
+      ? [{ path: read['path'], returnedRanges: read['returnedRanges'] as string[] }] : []) : [];
+  const observationSources: { source: string; reads: readonly Pick<SourceReadEvidence, 'path' | 'returnedRanges'>[] }[] = [
+    { source: `current unit ${unit.id}`, reads: observedReads },
+    ...(contract.units ?? []).filter(planned => planned.id !== unit.id && planned.status === 'passed')
+      .map(planned => ({ source: `passed unit ${planned.id}`, reads: planned.readEvidence ?? [] })),
+    { source: 'qualified original-owner observations', reads: ownerReads },
+  ];
   // A derived check can name a root or another derived requirement by id.
   // Supply that actual obligation, not just its id or the worker's summary.
   const allCriteria = [...(contract.criteria ?? []), ...(contract.groups ?? []).flatMap(group => group.criteria),
@@ -465,7 +478,9 @@ export async function collectUnitEvidence(
       ...(criterion.quote === undefined ? {} : { quote: criterion.quote }),
     })),
     sourceReferenceComparisons: compareReadReferences([{ field: 'unit.brief', text: unit.brief },
-      ...referencedCriteria.map(criterion => ({ field: `criterion ${criterion.id}`, text: criterion.text }))], observedReads),
+      ...referencedCriteria.map(criterion => ({ field: `criterion ${criterion.id}`, text: criterion.text }))],
+      observationSources.flatMap(source => source.reads), observationSources),
+    sourceJsonReferenceComparisons: compareJsonReadReferences(observedReads, currentFiles, observationSources),
     meaning: 'Actual host-owned requirements referenced by this unit acceptance check, including transitive references. They resolve requirement ids; they do not expand this unit into the whole contract or approve its work. Judge the assigned unit goal and criteria against their referenced obligations and actual evidence.',
   };
   const repairing = currentUnit?.criteria.some(criterion => criterion.origin === 'fix') === true;
@@ -475,8 +490,7 @@ export async function collectUnitEvidence(
     ...(planChecks.length ? { orchestration: { contractId: contract.id, ...(contract.status === undefined ? {} : { status: contract.status }), planChecks,
       requirements,
       ...(sources.ownerEvidence === undefined ? {} : { ownerPriorReads: sources.ownerEvidence }),
-      currentFiles: currentFileObservations(sources.cwd, [...unit.files, ...changes.map(change => change.path),
-        ...(contract.units ?? []).filter(planned => planned.status === 'passed').flatMap(planned => planned.touchedPaths ?? [])]),
+      currentFiles,
       ...(privateArtifacts.length ? { privateArtifacts } : {}),
       ...(contract.createdAt === undefined ? {} : { createdAt: contract.createdAt }),
       ...(contract.origin === undefined ? {} : { origin: contract.origin }),

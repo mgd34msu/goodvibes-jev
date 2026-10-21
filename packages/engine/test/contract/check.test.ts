@@ -82,6 +82,18 @@ async function check(answers: CheckAnswers, input: Partial<UnitCheckInput> = {})
 }
 
 describe('readings to verdicts at the band edges (4.5)', () => {
+  test('host scope arithmetic reaches correction feedback without waiving an unmet requirement', async () => {
+    const comparisons = [{ source: 'native-host-interval-comparison', referencePath: 'input.json',
+      groups: [{ missingReferencedLines: 1, missing: [{ path: 'source.ts', ranges: [[5, 5]] }] }] }];
+    const outcome = await check({ criteria: [UNMET, MET] }, { evidence: evidence({
+      orchestration: { requirements: { sourceJsonReferenceComparisons: comparisons } },
+    }) });
+    expect(outcome.check.result).toBe('nudge');
+    expect(outcome.nudge?.text).toContain(JSON.stringify(comparisons));
+    expect(outcome.nudge?.text).toContain('not semantic approval or worker script execution');
+    expect(outcome.nudge?.criterionIds).toContain('u1.c1');
+  });
+
   test('a leaning unmet criterion remains correction work without a confirmed regression', async () => {
     const unit = twoCriterionUnit();
     const first = await check({}, { unit });

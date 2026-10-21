@@ -321,6 +321,13 @@ export async function runUnitCheck(input: UnitCheckInput): Promise<UnitCheckOutc
       ...(evidence.claims === undefined ? {} : { claims: { missingPaths: evidence.claims.missingPaths, noChanges: evidence.claims.missingPaths.length === 0 && claimsDidFail } }),
     };
     nudge = { text: buildNudge(unit, nudgeFindings), kinds: chosen.nudgeKinds, criterionIds: nudgedCriteria(findings, chosen.nudgeKinds) };
+    const host = evidence.orchestration;
+    const requirements = host && typeof host === 'object' && !Array.isArray(host) ? host['requirements'] : undefined;
+    const comparisons = requirements && typeof requirements === 'object' && !Array.isArray(requirements)
+      ? requirements['sourceJsonReferenceComparisons'] : undefined;
+    if (Array.isArray(comparisons) && comparisons.length) nudge = { ...nudge, text: nudge.text
+      + '\n\nActual native host arithmetic over complete byte-bound JSON references and retained returned observations (not semantic approval or worker script execution):\n'
+      + JSON.stringify(comparisons) };
     if (input.trigger !== 'turn-end' && goalVerdict === 'unmet' && [...verdicts.values()].every(verdict => verdict === 'met')) {
       const output = typeof state['output'] === 'string' ? state['output'] : evidence.output;
       const candidates = [...new Intl.Segmenter(undefined, { granularity: 'sentence' }).segment(output)]
