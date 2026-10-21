@@ -19,6 +19,7 @@ import {
   SqliteDecisionLog,
   withDecisionLog,
   JudgmentError,
+  type JudgmentPort,
   type Question,
   type YesNoReading,
 } from '../../src/index.ts';
@@ -340,6 +341,54 @@ describe('selector', () => {
       const question = request.questions.pick!;
       expect(question.type === 'choice' && Object.keys(question.criteria).length <= 255).toBe(true);
     }
+  });
+
+  test('independent partition reads overlap while recursive overflow remains within four requests', async () => {
+    const context = { evidence: 'Every group receives this identical primary evidence.' };
+    const candidates = Array.from({ length: 1200 }, (_, index) => ({ id: `candidate-${index}`, content: index }));
+    const { port: inner, requests } = fakePort((name, question) => name === 'pick'
+      ? choiceAnswer(question, Object.keys((question as { criteria: object }).criteria).filter(id => id !== 'none').at(-1)!, 0.99) : noulAnswer(0.99));
+    let active = 0, peak = 0;
+    const port: JudgmentPort = { ...inner, async ask(request) {
+      active++; peak = Math.max(peak, active);
+      try {
+        await Promise.resolve();
+        request.signal?.throwIfAborted();
+        if ((request.state as { candidates: unknown[] }).candidates.length > 32) throw new JudgmentContextLimitError();
+        return await inner.ask(request);
+      } finally { active--; }
+    } };
+    const result = await selector.select(port, context, candidates);
+    expect(result.chosen).toBe('candidate-1199');
+    expect(Object.keys(result.fits)).toHaveLength(1200);
+    expect(peak).toBeGreaterThan(1);
+    expect(peak).toBeLessThanOrEqual(4);
+    expect(active).toBe(0);
+    expect(requests.every(request => JSON.stringify((request.state as { context: unknown }).context) === JSON.stringify(context))).toBe(true);
+  });
+
+  test('a failed partition cancels and drains siblings before returning any result', async () => {
+    const failure = new JudgmentError('invalid-response', 'The partition could not be read.');
+    const { port: inner } = fakePort(() => noulAnswer(0.99));
+    let active = 0, cancelled = 0;
+    const port: JudgmentPort = { ...inner, async ask(request) {
+      active++;
+      try {
+        await Promise.resolve();
+        if ((request.state as { candidates: { id: string }[] }).candidates[0]!.id === 'candidate-0') throw failure;
+        await new Promise<void>(resolve => {
+          if (request.signal?.aborted) resolve();
+          else request.signal?.addEventListener('abort', () => resolve(), { once: true });
+        });
+        cancelled++;
+        request.signal?.throwIfAborted();
+        throw new Error('A sibling must not continue after cancellation');
+      } finally { active--; }
+    } };
+    const candidates = Array.from({ length: 600 }, (_, index) => ({ id: `candidate-${index}`, content: index }));
+    await expect(selector.select(port, 'Complete evidence.', candidates)).rejects.toBe(failure);
+    expect(cancelled).toBe(2);
+    expect(active).toBe(0);
   });
 
   test('large shared evidence partitions fit questions without dropping candidates or context', async () => {
