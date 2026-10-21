@@ -8,6 +8,7 @@ import { git } from './steps-support.js';
 import type { Contract } from '../../sdk/src/platform/contract/types.js';
 import { contractWorkReceipts, workReceiptIdentity } from '../../sdk/src/platform/contract/work-receipts.js';
 import { hashState } from '@goodvibes-jev/judgment';
+import { observeReadContent } from '../../sdk/src/platform/tools/read/observation.js';
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
@@ -42,6 +43,17 @@ test('earlier owner reads retain only actual returned lines matching the immutab
   git(f.root, 'commit', '-qam', 'Changed source');
   const changed = { ...f.contract, inputSnapshot: { ...f.contract.inputSnapshot!, inputTree: git(f.root, 'rev-parse', 'HEAD^{tree}').trim() } };
   expect(f.read(changed, 'source.ts:1')).toMatchObject({ sourceReads: [] });
+});
+
+test('host-bound plain owner returns still require a match to immutable original source', () => {
+  const f = fixture();
+  const content = 'second\nWRONG';
+  f.messages[2]!.content = JSON.stringify({ success: true, files: [{ path: 'source.ts', extract: 'lines', content,
+    readObservation: observeReadContent(content, 2, 2, false) }] });
+  writeFileSync(f.saved, f.messages.map(message => JSON.stringify(message)).join('\n') + '\n');
+  expect(f.read(f.contract, 'source.ts:2-3')).toMatchObject({ sourceReads: [{ path: 'source.ts', returnedRanges: ['2'],
+    returnedLines: 1, returnedContent: '    2 | second' }] });
+  expect(JSON.stringify(f.read(f.contract, 'source.ts:2-3'))).not.toContain('WRONG');
 });
 
 test('a live recovery snapshot contributes real reads without inventing operations from assertions', () => {

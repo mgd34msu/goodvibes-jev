@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
 import { sourceReadsFromTurns, type ContractTurnRecord, type SourceReadEvidence } from '../contract/evidence.js';
+import { returnedReadRows } from '../tools/read/observation.js';
 import type { OwnerEvidenceReader } from '../contract/owner-evidence.js';
 const object = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === 'object' && !Array.isArray(value);
 
@@ -48,7 +49,7 @@ export function createOwnerReadEvidenceReader(surfaceDirectory: string): OwnerEv
       for (const message of messages) if (message['role'] === 'assistant' && Array.isArray(message['toolCalls'])) {
         for (const call of message['toolCalls']) if (object(call) && call['name'] === 'read' && typeof call['id'] === 'string') requests.set(call['id'], call);
       }
-      const pending: { callId: string; arguments: Record<string, unknown>; files: { path: string; content: string }[] }[] = [];
+      const pending: { callId: string; arguments: Record<string, unknown>; files: { path: string; content: string; readObservation?: unknown }[] }[] = [];
       for (const message of messages) {
         if (message['role'] !== 'tool' || typeof message['callId'] !== 'string' || typeof message['content'] !== 'string') continue;
         const call = requests.get(message['callId']);
@@ -61,14 +62,14 @@ export function createOwnerReadEvidenceReader(surfaceDirectory: string): OwnerEv
         if (!object(parsed)) continue;
         const result = parsed;
         if (result['success'] !== true || !Array.isArray(result['files'])) continue;
-        const files: { path: string; content: string }[] = [];
+        const files: { path: string; content: string; readObservation?: unknown }[] = [];
         for (const file of result['files']) {
           if (!object(file) || typeof file['path'] !== 'string' || typeof file['content'] !== 'string' || file['error'] || file['binary']
             || (file['extract'] !== 'content' && file['extract'] !== 'lines')) continue;
           const path = isAbsolute(file.path) ? relative(contract.projectRoot, file.path) : file.path;
           if (isAbsolute(path) || /[\r\n\0]/.test(path) || path.split('/').includes('..') || path.startsWith('.goodvibes/') || path.startsWith('.git/')) continue;
           if (typeof file.resolvedPath === 'string' && file.resolvedPath !== join(contract.projectRoot, path)) continue;
-          files.push({ path, content: file.content });
+          files.push({ path, content: file.content, readObservation: file['readObservation'] });
         }
         if (files.length) pending.push({ callId: message['callId'], arguments: object(call['arguments']) ? call['arguments'] : {}, files });
       }
@@ -102,7 +103,7 @@ export function createOwnerReadEvidenceReader(surfaceDirectory: string): OwnerEv
           const path = file.path;
           const original = originals.get(path);
           if (!original) continue;
-          const rows = file.content.split('\n').filter((row: string) => {
+          const rows = returnedReadRows(file).filter((row: string) => {
             const match = /^[ \t]*(\d+) \| ?(.*)$/.exec(row);
             return match !== null && Number.isSafeInteger(Number(match[1])) && Number(match[1]) > 0 && original[Number(match[1]) - 1] === match[2];
           });
@@ -144,7 +145,7 @@ export function createOwnerReadEvidenceReader(surfaceDirectory: string): OwnerEv
         meaning: 'Actual original-owner tool returns matched the immutable source line by line. This establishes returned scope and cited text, not semantic review quality, tests or native acceptance.' },
       sources: sources.map(({ path, sha256, bytes }) => ({ operation: 'read-owner-session', success: true, path, sha256, bytes })),
       sourceReads: reads.map(read => ({ ...read, returnedRanges: [...read.returnedRanges] })),
-      meaning: 'Actual recorded original-owner successful read results, qualified line by line against this immutable contract input. Only matching numbered returned lines count; requests, declared totals, searches and previews do not. Quoted contents are limited to cited source ranges. These are earlier owner observations, not worker actions, executed tests, semantic review approval or acceptance of this answer.',
+      meaning: 'Actual recorded original-owner successful read results, qualified line by line against this immutable contract input. Only complete returned source lines with matching host offsets and original text count; requests, declared totals, searches and previews do not. Line labels may be normalized from host-bound plain returns. Quoted contents are limited to cited source ranges. These are earlier owner observations, not worker actions, executed tests, semantic review approval or acceptance of this answer.',
     };
   };
 }

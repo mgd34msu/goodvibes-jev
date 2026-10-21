@@ -27,6 +27,7 @@ import { readNativePrivateReceiptArchives, verifyPrivateReceiptPreservation } fr
 import { compareReadReferences } from './read-reference-comparison.js';
 import { commandObservation } from './command-observation.js';
 import { parseCompletionReport } from '../agents/completion-report.js';
+import { returnedReadRows } from '../tools/read/observation.js';
 import type { ToolResult } from '../types/tools.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
@@ -125,7 +126,8 @@ export interface RawUnitEvidence {
 
 // ── Commands and written paths from the agent's turns (fixed tool formats) ─────
 
-/** Count actual numbered contents, never requested ranges, file totals or previews. */
+/** Count complete actual rows with host-bound offsets; retain legacy numbered
+ * returns, never requested ranges, file totals or previews. */
 export function sourceReadsFromTurns(turns: readonly ContractTurnRecord[], referencePaths: readonly string[] = [], citationText = ''): SourceReadEvidence[] {
   const files = new Map<string, Set<number>>();
   const references = new Set(referencePaths);
@@ -139,14 +141,14 @@ export function sourceReadsFromTurns(turns: readonly ContractTurnRecord[], refer
     if (body?.success !== true || !Array.isArray(body.files)) continue;
     for (const value of body.files) {
       if (!value || typeof value !== 'object') continue;
-      const file = value as { path?: unknown; extract?: unknown; content?: unknown; error?: unknown; binary?: unknown };
+      const file = value as { path?: unknown; extract?: unknown; content?: unknown; error?: unknown; binary?: unknown; readObservation?: unknown };
       if (typeof file.path !== 'string' || typeof file.content !== 'string' || file.error || file.binary
         || (file.extract !== 'content' && file.extract !== 'lines')) continue;
       const lines = files.get(file.path) ?? new Set<number>();
       const escaped = file.path.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       const citations = [...citationText.matchAll(new RegExp('(?<![\\w./-])' + escaped + '(?::|#L)(\\d+)(?:[-–]L?(\\d+))?', 'g'))]
         .map(match => [Number(match[1]), Number(match[2] ?? match[1])] as const);
-      for (const row of file.content.split('\n')) {
+      for (const row of returnedReadRows({ content: file.content, readObservation: file.readObservation })) {
         const match = /^[ \t]*(\d+) \|/.exec(row);
         if (!match) continue;
         const line = Number(match[1]);
@@ -569,7 +571,7 @@ function sourceReadState(evidence: UnitEvidence): CheckState {
   if (!evidence.sourceReads?.length) return {};
   return {
     sourceReads: evidence.sourceReads.map(read => ({ ...read, returnedRanges: [...read.returnedRanges] })),
-    sourceReadMeaning: 'These host-collected ranges establish which numbered source lines were actually returned by successful read tools. returnedContent contains only actual returned text: declared reference inputs or explicitly cited source ranges, as contentKind records; it may be a subset of returnedRanges. For large inputs, Jev may identify receipt-only citation paragraphs: their source quotations are omitted from this check view while the full report, all returned-range records and raw saved evidence remain intact. Substantive and mixed citation contexts retain their primary text. Read scope alone does not establish semantic review quality or validate findings; missing primary text is not proof of a substantive claim. Judge the substantive work against the provided source evidence separately. This is the current native acceptance check; do not demand an earlier approval of this same check.',
+    sourceReadMeaning: 'These host-collected ranges establish which complete source lines were actually returned by successful read tools. Host-bound offsets retain plain returns as well as numbered ones; displayed line labels may be normalized from those offsets. returnedContent contains only actual returned source text: declared reference inputs or explicitly cited source ranges, as contentKind records; it may be a subset of returnedRanges. For large inputs, Jev may identify receipt-only citation paragraphs: their source quotations are omitted from this check view while the full report, all returned-range records and raw saved evidence remain intact. Substantive and mixed citation contexts retain their primary text. Read scope alone does not establish semantic review quality or validate findings; missing primary text is not proof of a substantive claim. Judge the substantive work against the provided source evidence separately. This is the current native acceptance check; do not demand an earlier approval of this same check.',
   };
 }
 

@@ -24,11 +24,13 @@ import {
 import type { ReadFileInput, ExtractMode, OutputFormat } from './schema.js';
 import { formatContent, extractOutline, extractSymbols, extractAst } from './text.js';
 import { summarizeError } from '../../utils/error-display.js';
+import { observeReadContent, type ReadObservation } from './observation.js';
 
 export interface FileReadResult {
   path: string;
   resolvedPath: string;
   content?: string | undefined;
+  readObservation?: ReadObservation | undefined;
   lineCount: number;
   byteSize: number;
   tokenEstimate: number;
@@ -424,6 +426,12 @@ async function readTextFile(target: ReadTarget, context: ReadExecutionContext, f
     lineCount,
     cache: { status: cacheResult.status },
   };
+  if (extractedContent !== undefined && (target.extract === 'content' || target.extract === 'lines')) {
+    const startLine = fileInput.range?.start ?? 1;
+    const available = Math.max(0, Math.min(lineCount, fileInput.range?.end ?? lineCount) - startLine + 1);
+    const completeLines = Math.min(available, context.maxPerItem === undefined ? available : Math.max(0, Math.trunc(context.maxPerItem)));
+    result.readObservation = observeReadContent(extractedContent, startLine, completeLines, context.includeLineNumbers);
+  }
 
   if (context.format === 'verbose') {
     result.metadata = { encoding: 'utf-8', sizeBytes: byteSize, cacheStatus: cacheResult.status };

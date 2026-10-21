@@ -17,6 +17,7 @@ import {
   type ReadOutput,
 } from './file-readers.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
+import { clipReadContent } from './observation.js';
 
 export type { FileReadResult, ReadOutput } from './file-readers.js';
 
@@ -132,7 +133,7 @@ export class ReadTool implements Tool {
         const contentTokens = Math.ceil(r.content.length / 4);
         if (usedTokens + contentTokens > maxTokens) {
           const remaining = Math.max(0, maxTokens - usedTokens);
-          r.content = r.content.slice(0, remaining * 4);
+          clipReadContent(r, remaining * 4);
         }
         usedTokens += Math.ceil((r.content?.length ?? 0) / 4);
       }
