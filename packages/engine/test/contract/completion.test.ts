@@ -101,6 +101,7 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   const checkedOutputs = new Map<Record<string, unknown>, string>();
   let integrationTask = '';
   let integrationCheckHost: { plannedUnits: { id: string; readObservations?: unknown[]; acceptedAnswer?: string }[] } | undefined;
+  let contentCriteria: unknown;
   const plan = twoUnitPlan();
   plan.groups[0]!.units[0]!.role = 'research';
   plan.groups[0]!.units[0]!.files.push('input.txt');
@@ -126,6 +127,7 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
       if (name === 'goal' && state['goal'] === 'Use the parser in convert') integrationCheckHost = (state['evidence'] as { orchestration?: typeof integrationCheckHost } | undefined)?.orchestration;
       if (name === 'role' && (state['unit'] as { title?: string })?.title === 'CSV parser') return choiceAnswer(question, 'research', 0.98);
       const evidence = state['evidence'] as Record<string, unknown> | undefined;
+      if (name === 'unfinished') contentCriteria = evidence?.['criteria'];
       if (evidence && ('units' in evidence || 'criteria' in evidence) && (name === 'goal' || name.startsWith('criterion_'))) {
         const output = state['output'];
         if (typeof output !== 'string') throw new Error('The contract must check its exact string answer.');
@@ -185,6 +187,8 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   expect(acceptedPeer.acceptedAnswerDigest).toBe(hashState(done.units[0]!.answer!));
   expect(acceptedPeer.latestCheck).toEqual(done.units[0]!.checks.at(-1)!);
   const finalReceipts = observed.find(evidence => 'criteria' in evidence)!['orchestration'] as { units: { id: string; acceptedAnswerDigest: string; acceptedAnswerSource: unknown; latestCheck: unknown; readObservations: unknown[] }[] };
+  expect(Array.isArray(contentCriteria)).toBe(true);
+  expect(observed.find(evidence => 'criteria' in evidence)!['criteria']).toEqual(contentCriteria);
   const finalPeer = finalReceipts.units.find(unit => unit.id === 'u1')!;
   const check = done.units[0]!.checks.at(-1)!;
   expect(check.decisionIds.length).toBeGreaterThan(0);
@@ -253,6 +257,34 @@ test('stopping a contract cancels its owned verifier retry without a verdict', a
   expect(contractOf(h, contract.id).status).toBe('cancelled');
   expect(contractOf(h, contract.id).checks).toEqual([]);
   expect(failures).toBe(1);
+});
+
+test('a retained negative answer verdict is reused after a later fulfillment request failure and still blocks publication', async () => {
+  let answerReviews = 0, fulfillmentRequests = 0, workers = 0;
+  const h = use(makeHarness({ plan: oneUnitPlan(1),
+    scripts: { u1: (record, context) => { workers++; return finishes('The retained parser answer.')(record, context); } },
+    port: context => {
+      if (context.name === 'unfinished') { answerReviews++; return noulAnswer(0.98); }
+      if (context.name === 'goal' && judgeOf(context) === 'deliverable' && fulfillmentRequests++ === 0)
+        throw new JudgmentError('rejected', 'fixture fulfillment request rejection', { status: 400 });
+      return undefined;
+    },
+  }));
+  const { contract } = startContract(h);
+  await waitFor(() => (h.runner.get(contract.id)?.checks.length ?? 0) > 0, 'fulfillment to retain the rejected answer verdict');
+  const current = contractOf(h, contract.id);
+  expect(fulfillmentRequests).toBe(2);
+  expect(answerReviews).toBe(1);
+  expect(workers).toBe(1);
+  expect(current.checks[0]!.goal.verdict).toBe('met');
+  expect(current.checks[0]!.result).toBe('stall');
+  expect(current.commit).toBeUndefined();
+  expect(current.status).not.toBe('passed');
+  const review = JSON.parse(current.decisions.find(decision => decision.targetId === `${contract.id}.final-answer-review`)!.reason);
+  expect(review.passed).toBe(false);
+  expect(review.readings.unfinished.probability).toBe(0.98);
+  h.runner.cancel(contract.id, 'test completed');
+  await h.runner.join(contract.id);
 });
 
 test('a rejected native answer review holds publication even when fulfillment readings pass', async () => {
@@ -436,13 +468,13 @@ describe('answer and status (6.5)', () => {
           const evidence = state['evidence'] as Record<string, unknown> | undefined;
           if (evidence !== undefined && 'criteria' in evidence && 'output' in state && (name === 'goal' || name.startsWith('criterion_'))) {
             outputs.push(state['output']);
-            const references = (evidence['criteria'] as { reports: { unitId: string; contentDigest: string; fullReportAt: { storage: string; contractId: string; unitId: string; field: string } }[] }).reports;
-            const units = (evidence['orchestration'] as { units: { id: string; acceptedAnswerDigest: string }[] }).units;
-            const reference = references.find(value => value.unitId === 'u2')!;
-            const full = h.store.get(reference.fullReportAt.contractId)!.units.find(unit => unit.id === reference.unitId)!.answer!;
-            expect(reference.contentDigest).toBe(hashState(full));
-            expect(units.find(unit => unit.id === reference.unitId)!.acceptedAnswerDigest).toBe(hashState(full));
-            expect(reference.fullReportAt).toEqual({ storage: 'native-contract-store', contractId: reference.fullReportAt.contractId, unitId: 'u2', field: 'answer' });
+            const units = (evidence['orchestration'] as { units: { id: string; acceptedAnswerDigest: string;
+              acceptedAnswerSource: { storage: string; contractId: string; unitId: string; field: string } }[] }).units;
+            const reference = units.find(value => value.id === 'u2')!;
+            const source = reference.acceptedAnswerSource;
+            const full = h.store.get(source.contractId)!.units.find(unit => unit.id === source.unitId)!.answer!;
+            expect(reference.acceptedAnswerDigest).toBe(hashState(full));
+            expect(source).toEqual({ storage: 'native-contract-store', contractId: source.contractId, unitId: 'u2', field: 'answer' });
             reports.push(full);
           }
           return undefined;

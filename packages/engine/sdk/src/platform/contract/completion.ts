@@ -298,15 +298,18 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       const evidenceDigest = hashState({ state, policy: { name: reviewBattery.name, version: reviewBattery.version, stakes: config().acceptanceStakes } });
       const outputDigest = hashState(evidence.output);
       const targetId = `${contract.id}.final-answer-review`;
+      // A later verifier request failure does not invalidate an unchanged
+      // negative review. Reuse its rejection as a hold, never as approval.
       for (const decision of [...contract.decisions].reverse()) {
         if (decision.action !== 'checked' || decision.targetId !== targetId) continue;
         try {
           const receipt = JSON.parse(decision.reason) as FinalAnswerReviewReceipt;
-          if (receipt.schemaVersion === 1 && receipt.evidenceDigest === evidenceDigest && receipt.outputDigest === outputDigest && receipt.passed === true
+          if (receipt.schemaVersion === 1 && receipt.evidenceDigest === evidenceDigest && receipt.outputDigest === outputDigest && typeof receipt.passed === 'boolean'
             && ['unfinished', 'unsupported'].every(key => {
               const probability = receipt.readings[key as 'unfinished' | 'unsupported']?.probability;
-              return typeof probability === 'number' && Number.isFinite(probability) && probability >= 0 && probability <= 0.5;
-            }) && JSON.stringify(receipt.decisionIds) === JSON.stringify(decision.decisionIds)) { answerReview = receipt; break; }
+              return typeof probability === 'number' && Number.isFinite(probability) && probability >= 0 && probability <= 1;
+            }) && receipt.passed === ['unfinished', 'unsupported'].every(key => receipt.readings[key as 'unfinished' | 'unsupported'].probability <= 0.5)
+            && JSON.stringify(receipt.decisionIds) === JSON.stringify(decision.decisionIds)) { answerReview = receipt; break; }
         } catch { /* An invalid receipt cannot approve a candidate. */ }
       }
       if (answerReview === undefined) {
@@ -373,7 +376,8 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     try {
       judgment = await judges[config().acceptanceStakes].judge(
         meteredPort(nativeContractPort(contract, context.native, judgmentPort(site), run.abort.signal), usage),
-        { goal: input.goal, criteria: judgedCriteria.map((criterion) => criterion.text), output: evidence.output, evidence: { ...acceptanceEvidence, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }), ...(contract.originalSource ? { originalSource: { goal: contract.originalSource.goal, criteria: [...contract.originalSource.criteria] }, acceptanceChecksOrigin: hasDerivedAcceptanceChecks(contract.originalSource) ? 'planner-derived' : 'original-source' } : {}), [input.scope === 'group' ? 'units' : 'criteria']: input.summaries } },
+        { goal: input.goal, criteria: judgedCriteria.map((criterion) => criterion.text), output: evidence.output, evidence: { ...acceptanceEvidence, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }), ...(contract.originalSource ? { originalSource: { goal: contract.originalSource.goal, criteria: [...contract.originalSource.criteria] }, acceptanceChecksOrigin: hasDerivedAcceptanceChecks(contract.originalSource) ? 'planner-derived' : 'original-source' } : {}),
+          ...(input.scope === 'group' ? { units: input.summaries } : currentEvidence === undefined ? { criteria: input.summaries } : {}) } },
         { site, signal: run.abort.signal },
       );
     } finally {
