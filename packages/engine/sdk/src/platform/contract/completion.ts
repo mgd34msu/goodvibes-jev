@@ -101,6 +101,7 @@ interface FinalAnswerReviewReceipt {
   readonly schemaVersion: 2;
   readonly fulfillmentDecisionIds: readonly string[];
   readonly stateHash: string;
+  readonly policy: { readonly fulfillment: { readonly name: string; readonly version: number }; readonly content: { readonly name: string; readonly version: number }; readonly stakes: string };
   readonly evidenceDigest: string;
   readonly outputDigest: string;
   readonly passed: boolean;
@@ -304,6 +305,8 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       ...(input.scope === 'group' ? { units: input.summaries } : primary === undefined ? { criteria: input.summaries } : {}) };
     const fulfillmentJudge = judges[config().acceptanceStakes];
     const reviewBattery = FINAL_ANSWER_REVIEWS[config().acceptanceStakes];
+    const reviewPolicy = { fulfillment: { name: fulfillmentJudge.name, version: fulfillmentJudge.version },
+      content: { name: reviewBattery.name, version: reviewBattery.version }, stakes: config().acceptanceStakes };
     // Bind the facts and policies being assessed, independently of fresh
     // reading identities. An unchanged rejection cannot become approval by polling.
     const digest = hashState({ goal: input.goal, output: evidence.output, evidence: fulfillmentEvidence,
@@ -354,7 +357,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         if (decision.action !== 'checked' || decision.targetId !== targetId) continue;
         try {
           const receipt = JSON.parse(decision.reason) as FinalAnswerReviewReceipt;
-          if (receipt.schemaVersion === 2 && typeof receipt.stateHash === 'string' && Array.isArray(receipt.fulfillmentDecisionIds) && receipt.evidenceDigest === evidenceDigest && receipt.outputDigest === outputDigest && typeof receipt.passed === 'boolean'
+          if (receipt.schemaVersion === 2 && JSON.stringify(receipt.policy) === JSON.stringify(reviewPolicy) && typeof receipt.stateHash === 'string' && Array.isArray(receipt.fulfillmentDecisionIds) && receipt.evidenceDigest === evidenceDigest && receipt.outputDigest === outputDigest && typeof receipt.passed === 'boolean'
             && ['unfinished', 'unsupported'].every(key => {
               const probability = receipt.readings[key as 'unfinished' | 'unsupported']?.probability;
               return typeof probability === 'number' && Number.isFinite(probability) && probability >= 0 && probability <= 1;
@@ -409,7 +412,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
           assertOwnedContractSource(contract);
           if (run.terminal) return null;
           if (reviewStateHash === undefined) throw new Error('Final-answer review has no recorded input binding');
-          answerReview = { schemaVersion: 2, stateHash: reviewStateHash, fulfillmentDecisionIds: fulfillmentAssessment.decisionIds, evidenceDigest, outputDigest,
+          answerReview = { schemaVersion: 2, policy: reviewPolicy, stateHash: reviewStateHash, fulfillmentDecisionIds: fulfillmentAssessment.decisionIds, evidenceDigest, outputDigest,
             passed, ...(findings.length ? { findings } : {}),
             readings: Object.fromEntries(Object.entries(readings).map(([key, { probability, verdict, outcome }]) => [key, { probability, verdict, outcome }])) as FinalAnswerReviewReceipt['readings'],
             decisionIds: review.result.decisionId ? [review.result.decisionId] : [],

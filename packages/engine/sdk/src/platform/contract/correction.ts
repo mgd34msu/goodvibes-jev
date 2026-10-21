@@ -28,6 +28,8 @@ import { hashState } from '@goodvibes-jev/judgment';
 import type { StallRoute } from '../../events/contract.js';
 import type { WorkItem } from '../orchestration/types.js';
 import { stallRoute } from './batteries/stall-route.js';
+import { FINAL_ANSWER_REVIEWS } from './batteries/final-answer-review.js';
+import { DELIVERABLE_JUDGES } from './batteries/deliverable-judge.js';
 import { emptyJudgmentUsage, meteredPort, type DecidedCheck } from './check.js';
 import { readContractConfig } from './config.js';
 import { failedGates } from './gates.js';
@@ -653,6 +655,33 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
   async function resumeNative(run: ContractRun): Promise<void> {
     const contract = run.contract;
     if (contract.nativeSource === undefined && contract.status === 'awaiting-owner') return;
+    // A changed acceptance policy requires a real check of the retained result,
+    // rather than asking workers to repair a rejection made under old questions.
+    // Active or already scheduled repairs keep their existing identities.
+    if (contract.status === 'fixing' && contract.units.length > 0 && contract.units.every(unit => unit.status === 'passed')
+      && contract.groups.length > 0 && contract.groups.every(group => group.status === 'passed')
+      && !hasScheduledFix(contract, contract.id, contract.fixRounds)) {
+      const review = contract.decisions.findLast(decision => decision.targetId === `${contract.id}.final-answer-review`);
+      const check = contract.checks.at(-1);
+      if (review && check && check.result !== 'pass' && review.decisionIds.every(id => check.decisionIds.includes(id))) {
+        let changed = false;
+        try {
+          const receipt = JSON.parse(review.reason);
+          const stakes = config().acceptanceStakes;
+          const fulfillment = DELIVERABLE_JUDGES[stakes], content = FINAL_ANSWER_REVIEWS[stakes];
+          const policy = { fulfillment: { name: fulfillment.name, version: fulfillment.version }, content: { name: content.name, version: content.version }, stakes };
+          changed = receipt.schemaVersion === 2 && hashState(receipt.policy ?? null) !== hashState(policy);
+        } catch {
+          // Malformed historical metadata cannot grant permission. Normal
+          // correction below retains the rejection and original requirements.
+        }
+        if (changed) {
+          run.decide('resumed', contract.id, 'Final acceptance policy changed or was not recorded; recheck the retained answer and original requirements before planning any repair. No prior rejection becomes approval.');
+          await escalations.rejudgeDeliverable(run);
+          return;
+        }
+      }
+    }
     const targets: { scope: 'unit' | 'group' | 'deliverable'; targetId: string; round: number }[] = [
       ...contract.units.filter(unit => unit.status === 'fixing' && unit.fixRounds > 0).map(unit => ({ scope: 'unit' as const, targetId: unit.id, round: unit.fixRounds })),
       ...contract.groups.filter(group => group.status === 'fixing' && group.fixRounds > 0).map(group => ({ scope: 'group' as const, targetId: group.id, round: group.fixRounds })),

@@ -132,6 +132,46 @@ test('a denied worktree publication survives restart, revalidates and publishes 
   expect(git(root, 'rev-parse', 'HEAD').trim()).toBe(head);
 }, 20_000);
 
+test('changed final-content policy rechecks retained work before resuming an unstarted repair', async () => {
+  const plan = oneUnitPlan(1);
+  plan.groups[0]!.units[0]!.role = 'research';
+  let fixing = false;
+  const { root, ids: [id] } = await interrupt({ plan, scripts: { u1: () => [{ text: 'The complete retained parser result.' }] },
+    planner: { run: async request => {
+      if (!request.systemPrompt.startsWith('You plan a repair')) return { status: 'completed', output: plannerOutput(plan), elapsedMs: 0 };
+      fixing = true;
+      return new Promise(resolve => request.signal!.addEventListener('abort', () => resolve({ status: 'cancelled', output: '', elapsedMs: 0 }), { once: true }));
+    } }, port: context => context.name === 'role' ? choiceAnswer(context.question, 'research', 0.98)
+      : judgeOf(context) === 'deliverable' || context.name === 'unfinished' ? noulAnswer(0.98) : undefined,
+  }, contract => fixing && contract.status === 'fixing', 'the unstarted repair to retain its rejection');
+  let retained = '', rounds = 0;
+  editContract(root, id!, contract => {
+    retained = JSON.stringify(contract.units);
+    rounds = contract.fixRounds;
+    const index = contract.decisions.findLastIndex(decision => decision.targetId === `${id}.final-answer-review`);
+    const decision = contract.decisions[index]!;
+    const receipt = JSON.parse(decision.reason);
+    receipt.policy.content.version -= 1;
+    contract.decisions[index] = { ...decision, reason: JSON.stringify(receipt) };
+  });
+  let reviews = 0, planners = 0;
+  const second = restart(root, { plan, scripts: { u1: mustNotRun },
+    planner: { run: async () => { planners++; throw new Error('The changed policy must recheck first'); } },
+    port: context => { if (context.name === 'unfinished') reviews++; return undefined; },
+  });
+  await second.runner.resumeAll();
+  await waitFor(() => terminal(second, id!), 'fresh policy validation to complete');
+  const done = contractIn(second, id!);
+  expect(done.status).toBe('passed');
+  expect(JSON.stringify(done.units)).toBe(retained);
+  expect(done.fixRounds).toBe(rounds);
+  expect(planners).toBe(0);
+  expect(reviews).toBe(1);
+  expect(done.checks).toHaveLength(2);
+  expect(done.checks[0]!.result).toBe('stall');
+  expect(done.checks[1]!.result).toBe('pass');
+});
+
 test.each(['interrupted', 'privacy-refused', 'verifier-refused'])('an %s final-answer repair resumes the same round with its rejected draft and findings', async condition => {
   const plan = oneUnitPlan(1);
   plan.groups[0]!.units[0]!.role = 'research';
