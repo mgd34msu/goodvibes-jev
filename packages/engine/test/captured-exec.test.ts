@@ -46,6 +46,23 @@ async function fixture(filter: (path: string) => boolean | Promise<boolean> = ()
 }
 const run = (binding: CapturedExecAuthority, command: string, signal?: AbortSignal) => runCapturedCommand(binding, command, {}, binding.root, 5000, signal);
 
+test.skipIf(!supported)('reserved output gives a specific correction, publishes nothing, and permits a corrected retry', async () => {
+  const binding = await fixture();
+  const rejected = await run(binding, "printf changed > input.txt; mkdir -p .goodvibes/reviews; printf private > .goodvibes/reviews/receipt.json; printf artifact > artifact.txt; printf SYNTHETIC_OUTPUT");
+  expect(rejected.denied).toBe(true);
+  expect(rejected.stderr).toContain('reserved directory .goodvibes');
+  expect(rejected.stderr).toContain('Remove those writes and rerun');
+  expect(rejected.stderr).not.toContain('SYNTHETIC_OUTPUT');
+  expect(rejected.stdout).toBe('');
+  expect(readFileSync(join(binding.root, 'input.txt'), 'utf8')).toBe('captured-fixture\n');
+  expect(existsSync(join(binding.root, 'artifact.txt'))).toBe(false);
+  expect(existsSync(join(binding.root, '.goodvibes/reviews/receipt.json'))).toBe(false);
+  expect(existsSync(join(binding.owner, 'artifact.txt'))).toBe(false);
+  const corrected = await run(binding, 'printf artifact > artifact.txt');
+  expect(corrected.success).toBe(true);
+  expect(readFileSync(join(binding.root, 'artifact.txt'), 'utf8')).toBe('artifact');
+});
+
 test.skipIf(!supported)('real captured shell and Bun build/test use admitted files and return member output', async () => {
   const binding = await fixture();
   writeFileSync(join(binding.root, 'answer.ts'), 'export const answer = 42;\n');

@@ -49,6 +49,12 @@ export type CapturedExecAvailability =
   | { readonly available: false; readonly reason: 'unsupported-platform' | 'unsupported-architecture' | 'missing-bwrap' | 'unusable-boundary'; readonly message: string };
 const HELD = 'Captured exec held: original-owner/view authority is unavailable, changed, cancelled or restricted. Output withheld.';
 
+class ReservedCapturedOutput extends Error {
+  constructor(directory: (typeof CONTRACT_INPUT_EXCLUSIONS)[number]) {
+    super(`Captured exec cannot publish writes to reserved directory ${directory}. Remove those writes and rerun using permitted project or artifact paths. Output withheld.`);
+  }
+}
+
 /** These are not exec schema inputs; never pretend that supplied stdin ran. */
 export function capturedExecUnsupportedOptions(input: Record<string, unknown>): string[] {
   return ['stdin', 'input'].filter((name) => Object.prototype.hasOwnProperty.call(input, name));
@@ -453,6 +459,8 @@ export async function runCapturedCommand(
         const rel = join(dir, entry.name);
         const target = join(root, rel);
         if (dependencies.mounts.some((mount) => mount.target === target)) return;
+        const reserved = CONTRACT_INPUT_EXCLUSIONS.find(name => name === entry.name);
+        if (reserved !== undefined) throw new ReservedCapturedOutput(reserved);
         await authorize(target);
         paths.add(target);
         const stat = await lstat(join(projection, rel));
@@ -499,11 +507,12 @@ export async function runCapturedCommand(
     return { ...modeResult, cmd: command, cwd, exit_code: exitCode, stdout, stderr, success: (input.until ? untilMatched : (modeResult?.success ?? exitCode === 0)) && failures.length === 0,
       duration_ms: Date.now() - start, sandboxed: true, sandbox_boundary: `captured authorized projection; isolated PID/mounts; network ${network}`, sandbox_network: network,
       captured_exec_availability: availability, ...(failures.length ? { expectation_error: failures.join('; ') } : {}) };
-  } catch {
+  } catch (error) {
     stop();
     await childCompletion?.catch(() => {});
     if (timedOut) return { cmd: command, cwd, exit_code: null, stdout: '', stderr: '', success: false, timed_out: true, duration_ms: Date.now() - start };
-    return { cmd: command, cwd, exit_code: null, stdout: '', stderr: HELD, success: false, denied: true,
+    const diagnosis = error instanceof ReservedCapturedOutput && !combined?.aborted ? error.message : HELD;
+    return { cmd: command, cwd, exit_code: null, stdout: '', stderr: diagnosis, success: false, denied: true,
       ...(combined?.aborted ? { cancelled: true } : {}), duration_ms: Date.now() - start };
   } finally {
     clearTimeout(timer); clearInterval(monitor);
