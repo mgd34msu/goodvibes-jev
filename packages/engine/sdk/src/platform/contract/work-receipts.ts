@@ -3,17 +3,23 @@ import { findCardNumberShapes } from '../security/card-shapes.js';
 import { readPrivateReceiptArchives, verifyPrivateReceiptPreservation } from './private-read-receipts.js';
 import type { JsonValue } from '@goodvibes-jev/judgment';
 import { ownerEvidenceIdentity } from './owner-evidence.js';
+import { commandObservation } from './command-observation.js';
 
 /** Observations can contain incidental card-shaped digit runs (for example
  * adjacent uid/gid/file-size columns). Never send those values to a planner
  * or change its action arguments; retain the exact execution record locally. */
 function commandReceipt(command: NonNullable<ContractView['units'][number]['commandEvidence']>[number]) {
-  const spans = findCardNumberShapes(command.head);
-  if (spans.length === 0) return command;
-  let head = command.head;
-  for (const span of spans.toReversed()) head = head.slice(0, span.startIndex)
-    + '[WITHHELD:card-shaped-number]' + head.slice(span.startIndex + span.length);
-  return { ...command, head, headProjection: { withheldSpans: spans.length,
+  const observed = commandObservation(command);
+  const spans = findCardNumberShapes(observed.head);
+  const stderr = 'stderr' in observed && typeof observed.stderr === 'string' ? observed.stderr : undefined;
+  const errorSpans = stderr === undefined ? [] : findCardNumberShapes(stderr);
+  if (spans.length + errorSpans.length === 0) return observed;
+  const redact = (value: string, found: ReturnType<typeof findCardNumberShapes>) => {
+    for (const span of found.toReversed()) value = value.slice(0, span.startIndex)
+      + '[WITHHELD:card-shaped-number]' + value.slice(span.startIndex + span.length);
+    return value;
+  };
+  return { ...observed, head: redact(observed.head, spans), ...(stderr === undefined ? {} : { stderr: redact(stderr, errorSpans) }), headProjection: { withheldSpans: spans.length + errorSpans.length,
     meaning: 'Card-shaped number spans in this observational output are unavailable here. Markers do not establish their contents or equality. The complete execution receipt remains retained locally; this projection does not approve the command or any claim.' } };
 }
 

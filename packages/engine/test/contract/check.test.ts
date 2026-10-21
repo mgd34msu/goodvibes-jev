@@ -292,6 +292,22 @@ describe('check outcomes, in table order (4.6)', () => {
     expect(outcome.nudge?.kinds).toEqual(['quality']);
   });
 
+  test('a delivery goal checks the actual finalAnswer and retains the complete report for field criteria', async () => {
+    const port = checkPort({});
+    const report = { version: 1, archetype: 'researcher', summary: 'Internal handoff notes.', result: 'Supporting work.',
+      finalAnswer: 'The complete review is available in review.md.' };
+    const raw = '```json\n' + JSON.stringify(report) + '\n```';
+    const outcome = await check({}, { checkPort: port.port, evidence: evidence({ output: raw }) });
+    expect(outcome.check.result).toBe('pass');
+    const goal = port.requests.find(request => request.questions['goal'])!.state;
+    if (!goal || typeof goal !== 'object' || Array.isArray(goal)) throw new Error('The goal check needs an object state');
+    expect(goal['output']).toBe(report.finalAnswer);
+    expect(goal['evidence']).toMatchObject({ completionReport: report });
+    const quality = port.requests.find(request => request.questions['unsupported_claims'])!.state;
+    if (!quality || typeof quality !== 'object' || Array.isArray(quality)) throw new Error('The quality check needs an object state');
+    expect(quality['output']).toBe(raw);
+  });
+
   test.each([0.99, 0.4])('an unsupported-claim correction localizes the exact draft sentence with confidence %s', async confidence => {
     const port = fakePort((name, question) => {
       if (name === 'pick') return choiceAnswer(question, 'sentence-1', confidence);

@@ -78,3 +78,13 @@ test('correction proposal identity ignores bookkeeping but changes when actual o
   later.ownerPriorReads.sourceReads[0].returnedRanges = ['1-2'];
   expect(hashState(JSON.stringify(workReceiptIdentity(later)))).not.toBe(first);
 });
+
+test('decoded stderr keeps observational number withholding while the native receipt stays exact', () => {
+  const f = fixture();
+  const raw = JSON.stringify({ cmd: 'ls', success: true, exit_code: 0, stdout: 'Directory listing', stderr: 'owner 4111111111111111' });
+  f.contract.units[0]!.commandEvidence = [{ command: 'ls', success: true, head: raw, agentId: 'previous-worker', turn: 1, callIndex: 0, callId: 'listing' }];
+  const projected = contractWorkReceipts(f.contract, { readObservations: true });
+  expect(JSON.stringify(projected)).not.toContain('4111111111111111');
+  expect(JSON.stringify(projected)).toContain('[WITHHELD:card-shaped-number]');
+  expect(f.contract.units[0]!.commandEvidence[0]!.head).toBe(raw);
+});

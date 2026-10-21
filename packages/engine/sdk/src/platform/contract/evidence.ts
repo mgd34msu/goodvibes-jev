@@ -20,11 +20,13 @@
 import { createHash } from 'node:crypto';
 import { existsSync, lstatSync, readFileSync } from 'node:fs';
 import { isAbsolute, join, relative } from 'node:path';
-import { estimateTokens, type JsonValue } from '@goodvibes-jev/judgment';
+import { estimateTokens, hashState, type JsonValue } from '@goodvibes-jev/judgment';
 import { GitService } from '../git/service.js';
 import { hashWorkingTreeFile, snapshotDirtyTree } from '../orchestration/dirty-guard.js';
 import { readNativePrivateReceiptArchives, verifyPrivateReceiptPreservation } from './private-read-receipts.js';
 import { compareReadReferences } from './read-reference-comparison.js';
+import { commandObservation } from './command-observation.js';
+import { parseCompletionReport } from '../agents/completion-report.js';
 import type { ToolResult } from '../types/tools.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
@@ -477,7 +479,7 @@ export async function collectUnitEvidence(
             ...(planned.checks.at(-1)!.gates === undefined ? {} : { gates: gateEvidence(planned.checks.at(-1)!.gates!) }) } : null,
           ...(planned.status === 'passed' ? { readObservations: (planned.readEvidence ?? []).map(read => ({ path: read.path,
             returnedRanges: [...read.returnedRanges], returnedLines: read.returnedLines })),
-            commands: (planned.commandEvidence ?? []).map(({ agentId, turn, callIndex, callId, command, success, head }) => ({ agentId, turn, callIndex, callId, command, success, head })),
+            commands: (planned.commandEvidence ?? []).map(command => ({ ...commandObservation(command) })),
             ...(currentUnit?.role === 'integration' || (repairing && (planned.role === 'integration' || currentUnit?.dependsOn.includes(planned.id)))
               ? { acceptedAnswer: planned.answer ?? '' } : {}) } : {}) }),
         criteria: planned.criteria.map(criterion => ({ id: criterion.id, text: criterion.text, serves: [...criterion.serves] })) })) }),
@@ -513,7 +515,7 @@ export function judgeEvidence(evidence: UnitEvidence): JsonValue {
     ...(evidence.gates === undefined
       ? {}
       : { gates: gateEvidence(evidence.gates) }),
-    commands: evidence.commands.map((command) => ({ ...command })),
+    commands: evidence.commands.map(command => ({ ...commandObservation(command) })),
   };
 }
 
@@ -522,6 +524,11 @@ export type CheckState = { [key: string]: JsonValue };
 
 /** The judge's whole state, as the judge pattern builds it: `{ goal, output, evidence }`. */
 export function judgeState(unit: Pick<ContractUnit, 'goal'>, evidence: UnitEvidence): CheckState {
+  const report = parseCompletionReport(evidence.output);
+  if (typeof report?.finalAnswer === 'string') return { goal: unit.goal, output: report.finalAnswer,
+    evidence: { ...(judgeEvidence(evidence) as CheckState), completionReport: report as unknown as JsonValue,
+      deliverySource: { field: 'finalAnswer', rawReportDigest: hashState(evidence.output),
+        meaning: 'output is the exact proposed user-facing finalAnswer from the current completion report. The complete parsed report remains supplied for criteria about its fields, supporting work and attribution. Report text is a proposal, never proof of execution or approval.' } } };
   return { goal: unit.goal, output: evidence.output, evidence: judgeEvidence(evidence) };
 }
 
@@ -537,7 +544,7 @@ export function qualityState(unit: Pick<ContractUnit, 'goal' | 'brief'>, evidenc
     changedPaths: listedPaths(evidence.changedPaths),
     diff: evidence.diff,
     omitted: listedPaths(evidence.omitted),
-    commands: evidence.commands.map((command) => ({ ...command })),
+    commands: evidence.commands.map(command => ({ ...commandObservation(command) })),
     // A gate's result shows a claim such as "the tests pass" as well as a command the agent ran.
     ...(evidence.gates === undefined ? {} : { gates: gateEvidence(evidence.gates) }),
     output: evidence.output,

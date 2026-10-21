@@ -27,7 +27,7 @@ import { midRunNudgeItems, qualityVerdict, unitQuality, type QualityVerdict } fr
 import { unmetSeverity } from './batteries/unmet-severity.js';
 import { responseFinding } from '../core/batteries/response-finding.js';
 import type { ContractAcceptanceStakes, ContractConfig } from './config.js';
-import { judgeEvidence, judgeState, qualityState, type UnitEvidence } from './evidence.js';
+import { judgeState, qualityState, type UnitEvidence } from './evidence.js';
 import { failedGates } from './gates.js';
 import { buildNudge, checkNumberOf, type NudgeFindings } from './nudge.js';
 import {
@@ -243,10 +243,11 @@ export async function runUnitCheck(input: UnitCheckInput): Promise<UnitCheckOutc
   const usage = emptyJudgmentUsage();
   const judged = unit.criteria.filter((criterion) => criterion.disposition === 'judged');
   const signal = input.signal === undefined ? {} : { signal: input.signal };
+  const state = judgeState(unit, evidence);
   const [judgment, quality] = await Promise.all([
     UNIT_JUDGES[settings.acceptanceStakes].judge(
       meteredPort(input.checkPort ?? (input.native === undefined ? judgmentPort(CHECK_SITES.judge) : nativeContractPort(input.native.contract, input.native.services, judgmentPort(CHECK_SITES.judge), input.signal)), usage),
-      { goal: unit.goal, criteria: judged.map((criterion) => criterion.text), output: evidence.output, evidence: judgeEvidence(evidence) },
+      { goal: unit.goal, criteria: judged.map((criterion) => criterion.text), output: state['output']!, evidence: state['evidence']! },
       { ...signal, site: CHECK_SITES.judge },
     ),
     unitQuality.run(meteredPort(input.checkPort ?? (input.native === undefined ? judgmentPort(CHECK_SITES.quality) : nativeContractPort(input.native.contract, input.native.services, judgmentPort(CHECK_SITES.quality), input.signal)), usage), qualityState(unit, evidence), { ...signal, site: CHECK_SITES.quality }),
