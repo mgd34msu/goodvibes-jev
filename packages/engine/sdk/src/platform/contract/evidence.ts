@@ -22,7 +22,7 @@ import { isAbsolute, join, relative } from 'node:path';
 import { estimateTokens, type JsonValue } from '@goodvibes-jev/judgment';
 import { GitService } from '../git/service.js';
 import { hashWorkingTreeFile, snapshotDirtyTree } from '../orchestration/dirty-guard.js';
-import { readNativePrivateReceiptArchives } from './private-read-receipts.js';
+import { readNativePrivateReceiptArchives, verifyPrivateReceiptPreservation } from './private-read-receipts.js';
 import type { ToolResult } from '../types/tools.js';
 import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
@@ -400,7 +400,7 @@ export async function collectUnitEvidence(
   const claims = trigger === 'completion' || trigger === 'resume'
     ? verifyUnitClaims(sources.report, { cwd: sources.cwd, mustWrite: sources.mustWrite, changedPaths: changes.map((change) => change.path) })
     : undefined;
-  const gates = GATED_TRIGGERS.has(trigger)
+  const configuredGates = GATED_TRIGGERS.has(trigger)
     ? await runContractGates({
       configManager: sources.configManager,
       cwd: sources.cwd,
@@ -411,6 +411,8 @@ export async function collectUnitEvidence(
       signal: sources.signal,
     })
     : undefined;
+  const preservation = verifyPrivateReceiptPreservation(contract, unit, sources.cwd);
+  const gates = preservation ? [...(configuredGates ?? []), preservation] : configuredGates;
   const planChecks = contract.decisions?.filter(decision => decision.action === 'plan-accepted' && decision.targetId === contract.id)
     .map(decision => ({ at: decision.at, reason: decision.reason, decisionIds: [...decision.decisionIds] })) ?? [];
   const firstUnitStartedAt = contract.decisions?.find(decision => decision.action === 'spawned' && contract.units?.some(unit => unit.id === decision.targetId))?.at;
@@ -454,7 +456,9 @@ function gateEvidence(gates: NonNullable<UnitEvidence['gates']>): JsonValue {
 }
 
 export function judgeEvidence(evidence: UnitEvidence): JsonValue {
+  const hostOperations = privateArchiveOperations(evidence);
   return {
+    ...(hostOperations.length ? { hostOperations } : {}),
     ...(evidence.orchestration === undefined ? {} : { orchestration: evidence.orchestration }),
     ...sourceReadState(evidence),
     changedPaths: listedPaths(evidence.changedPaths),
@@ -480,7 +484,9 @@ export function judgeState(unit: Pick<ContractUnit, 'goal'>, evidence: UnitEvide
 
 /** The quality battery's state (design 4.4). */
 export function qualityState(unit: Pick<ContractUnit, 'goal' | 'brief'>, evidence: UnitEvidence): CheckState {
+  const hostOperations = privateArchiveOperations(evidence);
   return {
+    ...(hostOperations.length ? { hostOperations } : {}),
     ...(evidence.orchestration === undefined ? {} : { orchestration: evidence.orchestration }),
     ...sourceReadState(evidence),
     goal: unit.goal,
@@ -493,6 +499,15 @@ export function qualityState(unit: Pick<ContractUnit, 'goal' | 'brief'>, evidenc
     ...(evidence.gates === undefined ? {} : { gates: gateEvidence(evidence.gates) }),
     output: evidence.output,
   };
+}
+
+function privateArchiveOperations(evidence: UnitEvidence): JsonValue[] {
+  const orchestration = evidence.orchestration;
+  if (!orchestration || typeof orchestration !== 'object' || Array.isArray(orchestration)) return [];
+  const archives = orchestration['privateArtifacts'];
+  if (!Array.isArray(archives)) return [];
+  return archives.flatMap(archive => archive && typeof archive === 'object' && !Array.isArray(archive)
+    && archive['kind'] === 'contract-read-receipts' && archive['hostFileRead'] ? [archive['hostFileRead']] : []);
 }
 
 function sourceReadState(evidence: UnitEvidence): CheckState {

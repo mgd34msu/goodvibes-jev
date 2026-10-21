@@ -421,7 +421,7 @@ function assertFixture(entry: UnitShapeFixture): void {
 
 const HEADER = {
   name: 'contract.unit-shape',
-  version: 4,
+  version: 5,
   description: 'A unit’s work role, independently checkable derived acceptance criteria, and coverage of the original requirements it serves.',
   accuracyFloor: 0.9,
 } as const;

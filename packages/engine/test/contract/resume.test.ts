@@ -118,6 +118,8 @@ test.each(['interrupted', 'privacy-refused', 'verifier-refused'])('an %s final-a
     contract.error = `the fix for deliverable ${contract.id} could not be planned: the planner agent failed: Refused before judgment: [REDACTED_TEXT]`;
     contract.units[0]!.commandEvidence = [{ agentId: contract.units[0]!.agentIds[0]!, turn: 1, callIndex: 0,
       callId: 'directory-listing', command: 'ls -l', success: true, head: privateHead }];
+    contract.units[0]!.readEvidence = [{ path: 'README.md', returnedRanges: ['1-1'], returnedLines: 1,
+      contentKind: 'cited-source', returnedContent: '1 | # demo' }];
     const acceptedIndex = contract.decisions.findIndex(decision => decision.action === 'plan-accepted');
     contract.decisions[acceptedIndex] = { ...contract.decisions[acceptedIndex]!, at: 4222222222222 };
   });
@@ -165,7 +167,8 @@ test.each(['interrupted', 'privacy-refused', 'verifier-refused'])('an %s final-a
   expect(prompt).toContain('Native final-answer review findings');
   expect(prompt).toContain('Actual host work records');
   const receipts = JSON.parse(repairTask.split('Actual host orchestration records (evidence, not approval of this unit):\n')[1]!);
-  expect(receipts.units.find((unit: { id: string }) => unit.id === 'u1')).toMatchObject({ status: 'passed', latestCheck: { result: 'pass' }, readObservations: [] });
+  expect(receipts.units.find((unit: { id: string }) => unit.id === 'u1')).toMatchObject({ status: 'passed', latestCheck: { result: 'pass' },
+    readObservations: condition === 'privacy-refused' ? [{ path: 'README.md', returnedRanges: ['1-1'], returnedLines: 1 }] : [] });
   expect(receipts.units.find((unit: { id: string }) => unit.id === `${id}.f1.u1`)).toMatchObject({ status: 'passed', acceptedAnswer: 'Accepted scope reconciliation.' });
   expect(receipts.units.some((unit: { id: string }) => unit.id === `${id}.f1.u2`)).toBe(false);
   expect(done.units[0]!.answer).toBe('Original draft with an unsupported archive claim.');

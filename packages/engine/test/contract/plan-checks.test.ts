@@ -84,10 +84,15 @@ test('the checks ask about the right states', async () => {
   ]);
 });
 
-test('circular or inseparable derived acceptance requires plan repair before execution', async () => {
-  const verdict = await check(({ name, state }) => name === 'acceptance_problem' && unitTitleOf(state) === 'CSV parser' ? noulAnswer(0.98) : undefined);
+test.each([0.51, 0.8, 0.98])('likely circular or inseparable derived acceptance requires plan repair before execution (p=%s)', async probability => {
+  const verdict = await check(({ name, state }) => name === 'acceptance_problem' && unitTitleOf(state) === 'CSV parser' ? noulAnswer(probability) : undefined);
   expect(problemCodes(verdict, 'not-checkable')).toEqual(['u1']);
   expect(verdict.problems[0]!.message).toContain('Preserve all original requirements');
+});
+
+test.each([0.49, 0.5])('a criterion-shape reading does not invent a likely problem (p=%s)', async probability => {
+  const verdict = await check(({ name }) => name === 'acceptance_problem' ? noulAnswer(probability) : undefined);
+  expect(problemCodes(verdict, 'not-checkable')).toEqual([]);
 });
 
 test('established host responsibility covers a native-check requirement without pretending work passed', async () => {

@@ -56,7 +56,7 @@ import { failureFromError, isAbortError, type ContractRun } from './run-context.
 import type { StepContext } from './steps.js';
 import type { CheckTrigger, Contract, Criterion, CriterionReading, CriterionVerdict, NudgeKind, TreeBaseline, UnitCheck } from './types.js';
 import { addJudgmentUsage } from './usage.js';
-import { readPrivateReceiptArchives } from './private-read-receipts.js';
+import { readPrivateReceiptArchives, verifyPrivateReceiptPreservation } from './private-read-receipts.js';
 
 /** Decision sites, as the decision log records them. */
 export const COMPLETION_SITES = {
@@ -196,6 +196,10 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     const paths = new Set(contract.units.filter((unit) => input.unitIds.has(unit.id)).flatMap((unit) => unit.touchedPaths));
     const changes = (await collectChanges({ baseline: input.baseline }, { cwd: tree, turns: turnsOf(run, input.unitIds) })).filter((change) => paths.has(change.path));
     const gates = await runContractGates({ configManager: context.configManager, cwd: tree, runtimeBus: context.runtimeBus, sessionId: contract.sessionId, contractId: contract.id, targetId: input.targetId, signal: run.abort.signal });
+    for (const unit of contract.units.filter(unit => input.unitIds.has(unit.id))) {
+      const preservation = verifyPrivateReceiptPreservation(contract, unit, tree);
+      if (preservation) gates.push(preservation);
+    }
     if (run.terminal) return null;
     assertOwnedContractSource(contract);
     const planChecks = contract.decisions.filter(decision => decision.action === 'plan-accepted' && decision.targetId === contract.id)
