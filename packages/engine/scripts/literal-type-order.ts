@@ -1,8 +1,8 @@
 import ts from 'typescript';
 
-/** Compare literal alternatives as a multiset while preserving every other declaration byte. */
-export function normalizeLiteralUnionOrder(text: string): string {
-  if (!text.includes('|')) return text;
+/** Canonicalize literal alternatives and inferred enum maps; keep other declaration bytes exact. */
+export function normalizeLiteralTypeOrder(text: string): string {
+  if (!text.includes('|') && !text.includes('ZodEnum')) return text;
   let invalid = false;
   const scanner = ts.createScanner(ts.ScriptTarget.Latest, true, ts.LanguageVariant.Standard, text, () => { invalid = true; });
   const masks: Array<{ start: number; end: number }> = [];
@@ -52,6 +52,19 @@ export function normalizeLiteralUnionOrder(text: string): string {
       const sorted = [...original].sort();
       if (original.some((member, index) => member !== sorted[index])) {
         edits.push({ start: node.getStart(source) - prefix.length, end: node.end - prefix.length, value: sorted.join(' | ') });
+      }
+    }
+    if (ts.isTypeLiteralNode(node) && ts.isTypeReferenceNode(node.parent)
+      && (ts.isQualifiedName(node.parent.typeName) ? node.parent.typeName.right.text : node.parent.typeName.text) === 'ZodEnum'
+      && node.members.every(member => ts.isPropertySignature(member) && member.type && ts.isLiteralTypeNode(member.type)
+        && member.name && (ts.isIdentifier(member.name) || ts.isStringLiteral(member.name)))) {
+      const members = node.members as ts.NodeArray<ts.PropertySignature>;
+      const names = members.map(member => (member.name as ts.Identifier | ts.StringLiteral).text);
+      if (new Set(names).size === names.length) {
+        const sorted = members.map((member, index) => ({ name: names[index]!, text: member.getText(source) }))
+          .sort((a, b) => a.name < b.name ? -1 : a.name > b.name ? 1 : 0);
+        edits.push({ start: node.getStart(source) - prefix.length, end: node.end - prefix.length,
+          value: '{ ' + sorted.map(member => member.text).join(' ') + ' }' });
       }
     }
     ts.forEachChild(node, visit);

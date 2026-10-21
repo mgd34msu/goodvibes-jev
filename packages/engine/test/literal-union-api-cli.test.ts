@@ -8,7 +8,7 @@ test('the real API command accepts a literal permutation without rewriting its b
   const engine = resolve(dirname(fileURLToPath(import.meta.url)), '..');
   const fixture = makeProjectTempDir('literal-api-command');
   for (const directory of ['scripts', 'etc', 'sdk/dist', 'terminal-shell/dist', 'node_modules']) mkdirSync(join(fixture, directory), { recursive: true });
-  for (const file of ['check-subpath-api-surface.ts', 'subpath-api-surface-rule.ts', 'literal-union-order.ts', 'export-conditions.ts']) {
+  for (const file of ['check-subpath-api-surface.ts', 'subpath-api-surface-rule.ts', 'literal-type-order.ts', 'export-conditions.ts']) {
     copyFileSync(join(engine, 'scripts', file), join(fixture, 'scripts', file));
   }
   symlinkSync(resolve(engine, '../../node_modules/typescript'), join(fixture, 'node_modules/typescript'));

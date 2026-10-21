@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { normalizeLiteralUnionOrder } from '../scripts/literal-union-order.ts';
+import { normalizeLiteralTypeOrder } from '../scripts/literal-type-order.ts';
 import { diffSnapshots, sameApiSurface, type ExportEntry, type Snapshot } from '../scripts/subpath-api-surface-rule.ts';
 
 const entry = (text: string, overrides: Partial<ExportEntry> = {}): ExportEntry => ({ name: 'Example', kind: 'type', text, ...overrides });
@@ -45,8 +45,20 @@ test('type operators, nonliteral alternatives, declaration structure and report 
 
 test('quoted metadata, malformed declarations and template interpolation are never rewritten as structure', () => {
   const quoted = 'export type Example = " ;; via Alias = export type Alias = b | a" | "x";';
-  expect(normalizeLiteralUnionOrder(quoted)).toContain('" ;; via Alias = export type Alias = b | a"');
+  expect(normalizeLiteralTypeOrder(quoted)).toContain('" ;; via Alias = export type Alias = b | a"');
   for (const unknown of ['export type Example = "b" | ;', 'export type Example = { a: "b" | "a";', 'export type Example = `prefix${"b" | "a"}`;']) {
-    expect(normalizeLiteralUnionOrder(unknown)).toBe(unknown);
+    expect(normalizeLiteralTypeOrder(unknown)).toBe(unknown);
   }
+});
+
+test('compiler-reordered enum maps compare equally while actual schema and overload edits stay visible', () => {
+  const before = 'schema: z.ZodEnum<{ decision: "decision"; artifact: "artifact"; test: "test"; commit: "commit"; }>';
+  const after = 'schema: z.ZodEnum<{ commit: "commit"; test: "test"; decision: "decision"; artifact: "artifact"; }>';
+  expect(same(before, after)).toBe(true);
+  expect(diffSnapshots(snapshot(entry(before)), snapshot(entry(after)))).toEqual([]);
+  for (const changed of [after.replace('test: "test";', ''), after.replace('test: "test";', 'test: "changed";'),
+    after.replace('test: "test";', 'test?: "test";'), after.replace('test: "test";', 'readonly test: "test";')]) expect(same(before, changed)).toBe(false);
+  expect(same('schema: z.ZodEnum<{ a: "x"; a: "y"; }>', 'schema: z.ZodEnum<{ a: "y"; a: "x"; }>')).toBe(false);
+  expect(same('schema: z.ZodEnum<{ f(x: string): 1; f(x: number): 2; }>',
+    'schema: z.ZodEnum<{ f(x: number): 2; f(x: string): 1; }>')).toBe(false);
 });

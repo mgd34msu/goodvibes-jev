@@ -9,7 +9,7 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import ts from 'typescript';
-import { normalizeLiteralUnionOrder } from './literal-union-order.ts';
+import { normalizeLiteralTypeOrder } from './literal-type-order.ts';
 
 /** The subset of a package manifest this rule reads. */
 export interface ExportManifest {
@@ -354,7 +354,7 @@ export function diffSnapshots(before: Snapshot, after: Snapshot): string[] {
       if (removedPublic.length > 0) {
         lines.push(`  - ${subpath} class ${name} no longer exposes PUBLIC member(s): ${removedPublic.join(', ')}`);
       }
-      if (was.text !== entry.text && normalizeLiteralUnionOrder(was.text) !== normalizeLiteralUnionOrder(entry.text)) {
+      if (was.text !== entry.text && normalizeLiteralTypeOrder(was.text) !== normalizeLiteralTypeOrder(entry.text)) {
         lines.push(`  ~ ${subpath} ${name} declaration changed:`);
         lines.push(`      was: ${was.text}`);
         lines.push(`      now: ${entry.text}`);
@@ -376,13 +376,13 @@ export function render(snapshot: Snapshot): string {
   return `${JSON.stringify(snapshot, null, 2)}\n`;
 }
 
-/** Ignore only the order of literal alternatives; every other report field remains exact. */
+/** Ignore literal alternative and inferred enum-map order; other report fields remain exact. */
 export function sameApiSurface(before: Snapshot, after: Snapshot): boolean {
   const normalized = (snapshot: Snapshot, counterpart: Snapshot): Snapshot => Object.fromEntries(
     Object.entries(snapshot).map(([subpath, entries]) => {
       const peers = new Map((counterpart[subpath] ?? []).map(entry => [entry.name, entry]));
       return [subpath, entries.map(entry => peers.get(entry.name)?.text === entry.text
-        ? entry : { ...entry, text: normalizeLiteralUnionOrder(entry.text) })];
+        ? entry : { ...entry, text: normalizeLiteralTypeOrder(entry.text) })];
     }),
   );
   return render(normalized(before, after)) === render(normalized(after, before));
