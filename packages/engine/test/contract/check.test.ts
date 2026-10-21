@@ -81,6 +81,16 @@ async function check(answers: CheckAnswers, input: Partial<UnitCheckInput> = {})
 }
 
 describe('readings to verdicts at the band edges (4.5)', () => {
+  test('a leaning unmet criterion remains correction work without a confirmed regression', async () => {
+    const unit = twoCriterionUnit();
+    const first = await check({}, { unit });
+    applyUnitCheck(unit, first);
+    const next = await check({ criteria: [0.59, MET] }, { unit });
+    expect(next.check.result).toBe('nudge');
+    expect(next.regressions).toEqual([]);
+    expect(next.nudge?.kinds).toContain('unmet');
+  });
+
   const high = (p: number) => criterionVerdict(readYesNo({ type: 'noul', noul: p }, UNIT_JUDGE_BANDS.high));
   const critical = (p: number) => criterionVerdict(readYesNo({ type: 'noul', noul: p }, UNIT_JUDGE_BANDS.critical));
 

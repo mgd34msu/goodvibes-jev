@@ -263,7 +263,10 @@ export async function runUnitCheck(input: UnitCheckInput): Promise<UnitCheckOutc
   const qualityVerdicts = Object.fromEntries(QUALITY_ITEMS.map((item) => [item, qualityVerdict(qualityReadings[item])])) as Record<QualityItem, QualityVerdict>;
   const qualityProblems = QUALITY_ITEMS.filter((item) => qualityVerdicts[item] === 'problem');
   const qualityUnshown = QUALITY_ITEMS.filter((item) => qualityVerdicts[item] === 'unshown');
-  const regressions = findRegressions(unit, verdicts);
+  // Unsettled leaning verdicts still require correction, but do not prove
+  // that previously completed work regressed.
+  const regressions = findRegressions(unit, new Map(judged.flatMap((criterion, index) =>
+    judgment.criteria[index]!.outcome === 'act' ? [[criterion.id, verdicts.get(criterion.id)!] as const] : [])));
   const regressed = new Set(regressions.map((regression) => regression.criterionId));
   const failing = failedGates(evidence.gates);
   const claimsDidFail = claimsFailed(input);

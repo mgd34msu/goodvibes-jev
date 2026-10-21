@@ -58,6 +58,18 @@ function standing(overrides: Partial<CheckStanding>): CheckStanding {
 }
 
 describe('regressions', () => {
+  test('uncertain flips do not establish or accumulate confirmed regressions', () => {
+    const unit = unitWith(['a']);
+    for (const verdict of ['met', 'unmet', 'met', 'unmet'] as const) {
+      record(unit, 'completion', { a: verdict });
+      unit.criteria[0]!.readings.at(-1)!.outcome = 'escalate';
+    }
+    expect(regressionCounts(unit)).toEqual(new Map());
+    record(unit, 'completion', { a: 'met' });
+    unit.criteria[0]!.readings.at(-1)!.outcome = 'confirm';
+    expect(findRegressions(unit, new Map([['a', 'unmet']]))).toEqual([]);
+  });
+
   test('met then unmet is a regression, naming the check it was met at', () => {
     const unit = unitWith(['a', 'b', 'c']);
     record(unit, 'completion', { a: 'met', b: 'unshown', c: 'unmet' });

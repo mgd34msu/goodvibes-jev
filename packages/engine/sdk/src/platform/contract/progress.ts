@@ -32,7 +32,7 @@ export function findRegressions(unit: Pick<ContractUnit, 'criteria'>, verdicts: 
   for (const criterion of unit.criteria) {
     const verdict = verdicts.get(criterion.id);
     const previous = criterion.readings.at(-1);
-    if (verdict === 'unmet' && previous?.verdict === 'met') regressions.push({ criterionId: criterion.id, metAtCheckId: previous.checkId });
+    if (verdict === 'unmet' && previous?.verdict === 'met' && previous.outcome === 'act') regressions.push({ criterionId: criterion.id, metAtCheckId: previous.checkId });
   }
   return regressions;
 }
@@ -43,7 +43,8 @@ export function regressionCounts(unit: Pick<ContractUnit, 'criteria'>): Map<stri
   for (const criterion of unit.criteria) {
     let count = 0;
     criterion.readings.forEach((reading, index) => {
-      if (reading.verdict === 'unmet' && criterion.readings[index - 1]?.verdict === 'met') count += 1;
+      const previous = criterion.readings[index - 1];
+      if (reading.verdict === 'unmet' && reading.outcome === 'act' && previous?.verdict === 'met' && previous.outcome === 'act') count += 1;
     });
     if (count > 0) counts.set(criterion.id, count);
   }
