@@ -228,10 +228,14 @@ describe('what each trigger collects', () => {
 
   test('actual plan acceptance reaches the unit checks without claiming unit completion', async () => {
     const current = makeUnit();
+    const gates = [{ gate: 'artifact-preservation', passed: true, durationMs: 4, output: 'Original records and snapshots match.' }];
     const planned = makeContract({ id: contract.id, status: 'running', decisions: [
       { id: 'foreign-plan', at: 122, action: 'plan-accepted', targetId: 'another-contract', reason: 'Other work', decisionIds: ['foreign-decision'] },
       { id: 'plan-check', at: 123, action: 'plan-accepted', targetId: contract.id, reason: 'Every fresh plan check passed', decisionIds: ['native-plan-decision'] },
-    ], units: [current, makeUnit({ id: 'peer', status: 'passed' })] });
+    ], units: [current, makeUnit({ id: 'peer', status: 'passed', checks: [{ id: 'peer.k1', at: 124, trigger: 'completion',
+      result: 'pass', goal: { probabilityUnmet: 0.1, verdict: 'met', outcome: 'act' }, quality: {}, gates,
+      decisionIds: ['peer-check'], evidenceDigest: 'peer-evidence' }], commandEvidence: [{ agentId: 'peer-agent', turn: 1, callIndex: 0, callId: 'verify-call',
+      command: 'verify-archive', success: true, head: 'ZIP CRC and exact member bytes passed.' }] })] });
     const evidence = await collectUnitEvidence(planned, current, 'turn-end', sources());
     const expected = { contractId: planned.id, status: 'running', planChecks: [{ at: 123, reason: 'Every fresh plan check passed', decisionIds: ['native-plan-decision'] }] };
     expect(judgeEvidence(evidence)).toMatchObject({ orchestration: expected });
@@ -239,7 +243,9 @@ describe('what each trigger collects', () => {
     const host = evidence.orchestration as { plannedUnits: Record<string, unknown>[] };
     expect(host.plannedUnits[0]).not.toHaveProperty('latestCheck');
     expect(host.plannedUnits[0]).not.toHaveProperty('status');
-    expect(host.plannedUnits[1]).toMatchObject({ id: 'peer', status: 'passed', latestCheck: null });
+    expect(host.plannedUnits[1]).toMatchObject({ id: 'peer', status: 'passed', latestCheck: { id: 'peer.k1', result: 'pass',
+      gates: [{ gate: 'artifact-preservation', passed: true, output: 'Original records and snapshots match.' }] },
+      commands: [{ command: 'verify-archive', success: true, head: 'ZIP CRC and exact member bytes passed.' }] });
   });
 
   test('turn-end: no claims and no gates', async () => {
