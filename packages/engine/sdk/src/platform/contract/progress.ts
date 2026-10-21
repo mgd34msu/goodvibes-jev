@@ -124,7 +124,9 @@ export function detectStall(
   if (current.trigger !== 'turn-end') settled.push(current);
   let run = 0;
   for (let index = settled.length - 1; index >= 0; index -= 1) {
-    if (madeProgress(settled[index]!, settled[index - 1])) break;
+    // An explicit amendment starts a new correction round. The worker must
+    // receive the revised instructions before its next effort can stall.
+    if (settled[index]!.trigger === 'owner-amend' || madeProgress(settled[index]!, settled[index - 1])) break;
     run += 1;
   }
   return limits.stallLimit > 0 && run >= limits.stallLimit ? { kind: 'no-progress', checks: run } : null;

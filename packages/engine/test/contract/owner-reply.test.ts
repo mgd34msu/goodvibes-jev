@@ -87,16 +87,11 @@ type Setup = (reading: Reading) => Promise<Scenario>;
 
 test('an amended brief reaches the worker that must correct its retained work', async () => {
   const brief = 'Keep the existing findings and add the missing source assessment; do not restart the review.';
-  const amended = { value: false };
   const s = await reach({
-    plan: oneUnitPlan(2), contract: { stallLimit: 2 }, amended,
-    planner: stepPlanner(oneUnitPlan(2), { amend: () => {
-      amended.value = true;
-      return amendmentOutput([{ id: 'u1.c1', text: 'parser property 1' }, { id: 'u1.c2', text: 'parser property 2' }], brief);
-    } }),
+    plan: oneUnitPlan(1), contract: { stallLimit: 2 }, amended: { value: false },
+    planner: stepPlanner(oneUnitPlan(1), { amend: () => amendmentOutput([{ id: 'u1.c1', text: 'parser property 1' }], brief) }),
     scripts: { u1: keepsFailing(5) },
-    port: answers(context => amended.value && judgeOf(context) === 'unit' && context.name === 'criterion_1' ? noulAnswer(MET) : undefined,
-      routeAnswer('owner'), replyAnswers([{ reading: 'amend' }])),
+    port: answers(routeAnswer('owner'), replyAnswers([{ reading: 'amend' }])),
   }, 'stalled');
   const reply = await s.reply('Clarify the unit brief, preserving the existing criterion.');
   expect(reply.action).toBe('amended');
