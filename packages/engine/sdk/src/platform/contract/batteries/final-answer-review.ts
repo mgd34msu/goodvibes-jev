@@ -16,8 +16,12 @@ function finalAnswerReview(stakes: ContractAcceptanceStakes) {
     },
     fixtures: [
       { name: 'current host identity matches successful prior packaging', state: { goal: 'Review the code and deliver review.zip.', criteria: [], output: 'The completed static review is in review.zip. Its earlier packaging execution checked ZIP integrity; no application tests ran.', evidence: {
+        fulfillmentAssessment: { goal: { probabilityUnmet: 0.02, verdict: 'met' },
+          criteria: [{ id: 'original-review', probabilityUnmet: 0.02, verdict: 'met' }], decisionIds: ['current-native-requirements-assessment'],
+          meaning: 'Actual original-requirements assessment of this same output and retained source review; final content review and owner publication remain pending.' },
         hostOperations: [{ operation: 'read-current-file', path: 'review.zip', success: true, bytes: 82, sha256: 'same-artifact-digest' }],
-        commands: [{ command: 'verify-archive', success: true, head: 'review.zip: 82 bytes; sha256 same-artifact-digest; CRC and exact member equality passed' }],
+        commands: [{ command: 'verify-archive', success: true, executionSucceeded: true, exitCode: 0,
+          head: 'review.zip: 82 bytes; sha256 same-artifact-digest; CRC and exact member equality passed' }],
         orchestration: { units: [{ status: 'passed', criteria: [{ text: 'Source-reviewed findings integrated', verdict: 'met' }], latestCheck: { id: 'review.k2', result: 'pass', decisionIds: ['native-review'] } }] },
       } }, expect: { unfinished: 'no', unsupported: 'no' } },
       { name: 'old successful packaging cannot certify different current bytes', state: { goal: 'Deliver the verified archive.', criteria: [], output: 'The current archive passed its integrity checks.', evidence: {
