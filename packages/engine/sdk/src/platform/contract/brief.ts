@@ -6,7 +6,8 @@ import { nativeContractTaskSource } from './native-source.js';
  * criteria with the contract criteria each serves; the group's goal and the
  * sibling and dependency units (so the parts stay compatible with the whole);
  * for an integration unit, every other unit's answer; the tool contract; and
- * one fixed paragraph saying the work is checked while it runs.
+ * one fixed paragraph saying the work is checked while it runs; and current
+ * host orchestration receipts for an integration unit.
  *
  * The brief never asks the agent to enumerate constraints or review itself:
  * the criteria belong to the contract and Jev reads them continuously.
@@ -36,7 +37,7 @@ function unitLine(unit: Pick<ContractUnitView, 'id' | 'title' | 'goal'>): string
 
 /** Builds a unit's brief. The request shape decides the tool contract, so a contract must be shaped first. */
 export function buildUnitBrief(
-  contract: Pick<ContractView, 'goal' | 'criteria' | 'units' | 'shape' | 'nativeSource' | 'taskEvidence'>,
+  contract: Pick<ContractView, 'goal' | 'criteria' | 'units' | 'shape' | 'nativeSource' | 'taskEvidence'> & Partial<Pick<ContractView, 'id' | 'decisions'>>,
   group: Pick<ContractGroupView, 'id' | 'title' | 'goal'>,
   unit: Pick<ContractUnitView, 'id' | 'title' | 'goal' | 'brief' | 'role' | 'dependsOn' | 'criteria'>,
 ): string {
@@ -65,6 +66,18 @@ export function buildUnitBrief(
     ].join('\n'));
   }
   sections.push(readOnly ? READ_ONLY_LINE : WRITE_LINE, BRIEF_CHECKED_PARAGRAPH);
+  // All spawn paths rebuild this brief, including restart recovery and fresh
+  // retries. Keep receipts here so a resumed integrator gets current evidence.
+  if (unit.role === 'integration' && contract.id !== undefined && contract.decisions !== undefined) {
+    sections.push('Actual host orchestration records (evidence, not approval of this unit):\n' + JSON.stringify({
+      contractId: contract.id,
+      planChecks: contract.decisions.filter(decision => decision.action === 'plan-accepted' && decision.targetId === contract.id)
+        .map(decision => ({ at: decision.at, reason: decision.reason, decisionIds: [...decision.decisionIds] })),
+      units: contract.units.filter(other => other.id !== unit.id).map(other => ({ id: other.id, status: other.status,
+        latestCheck: other.checks.length ? { id: other.checks.at(-1)!.id, result: other.checks.at(-1)!.result,
+          decisionIds: [...other.checks.at(-1)!.decisionIds] } : null })),
+    }));
+  }
   return sections.join('\n\n');
 }
 

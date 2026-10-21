@@ -68,18 +68,10 @@ export function unitWorkItem(contract: Contract, group: ContractGroup, unit: Con
   }
   const tools = unitToolContract(unit.role, contract.shape);
   const groupUnitIds = new Set(group.unitIds);
-  const hostRecords = unit.role === 'integration'
-    ? '\n\nActual host orchestration records (evidence, not approval of this unit):\n' + JSON.stringify({ contractId: contract.id,
-      planChecks: contract.decisions.filter(decision => decision.action === 'plan-accepted' && decision.targetId === contract.id)
-        .map(decision => ({ at: decision.at, reason: decision.reason, decisionIds: [...decision.decisionIds] })),
-      units: contract.units.filter(other => other.id !== unit.id).map(other => ({ id: other.id, status: other.status,
-        latestCheck: other.checks.length ? { id: other.checks.at(-1)!.id, result: other.checks.at(-1)!.result,
-          decisionIds: [...other.checks.at(-1)!.decisionIds] } : null })),
-    }) : '';
   return {
     id: unit.id,
     title: unit.title,
-    task: briefWithPreviousChecks(buildUnitBrief(contract, group, unit) + hostRecords, unit),
+    task: briefWithPreviousChecks(buildUnitBrief(contract, group, unit), unit),
     dependsOn: unit.dependsOn.filter((id) => groupUnitIds.has(id)),
     contractId: contract.id,
     contractUnitId: unit.id,

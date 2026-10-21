@@ -565,6 +565,36 @@ describe('zombies', () => {
 });
 
 describe('a later group and the whole plan', () => {
+  test('a resumed integrator receives current plan and accepted peer receipts without repeating the review', async () => {
+    const plan = twoUnitPlan();
+    const { root, ids: [id] } = await interrupt({ plan, scripts: {
+      u1: () => [{ files: { 'src/csv.ts': 'export const parse = 5;\n' }, text: 'Finished the parser.' }],
+      u2: () => [{ text: '', stop: { kind: 'hang' } }],
+    } }, contract => contract.units[0]?.status === 'passed' && contract.units[1]?.status === 'running', 'integration running after accepted research');
+    let resumedTask = '';
+    const h = restart(root, { plan, scripts: {
+      u1: mustNotRun,
+      u2: record => {
+        resumedTask = record.task;
+        return [{ files: { 'src/convert.ts': 'import { parse } from "./csv";\n' }, text: 'Wired convert.' }];
+      },
+    } });
+    await h.runner.resumeAll();
+    const done = await ended(h, id!);
+    expect(done.status).toBe('passed');
+    const marker = 'Actual host orchestration records (evidence, not approval of this unit):\n';
+    expect(resumedTask).toContain(marker);
+    const host = JSON.parse(resumedTask.split(marker)[1]!.split('\n')[0]!);
+    const accepted = done.decisions.filter(decision => decision.action === 'plan-accepted' && decision.targetId === id);
+    expect(accepted).toHaveLength(1);
+    expect(host.contractId).toBe(id);
+    expect(host.planChecks).toEqual(accepted.map(({ at, reason, decisionIds }) => ({ at, reason, decisionIds })));
+    expect(host.units).toEqual([{ id: 'u1', status: 'passed', latestCheck: {
+      id: done.units[0]!.checks.at(-1)!.id, result: 'pass', decisionIds: done.units[0]!.checks.at(-1)!.decisionIds,
+    } }]);
+    expect(eventsOf(h, 'CONTRACT_UNIT_SPAWNED').map(event => [event.unitId, event.purpose])).toEqual([['u2', 'resume']]);
+  }, 30_000);
+
   test('a two-group contract stopped while g1 ran resumes g1 and then runs g2', async () => {
     const { root, ids: [id] } = await interrupt({ plan: twoUnitPlan(), scripts: { u1: writesThenHangs } }, running, 'u1 running after a check');
     const h = restart(root, {
