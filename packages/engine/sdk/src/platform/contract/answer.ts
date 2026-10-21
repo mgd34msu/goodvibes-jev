@@ -25,6 +25,15 @@ export function answerUnit(contract: Pick<Contract, 'units' | 'groups'>): Contra
 
 /** The contract's answer: its result, accompanying prose, summary, or unstructured answer. */
 export function renderContractAnswer(contract: Pick<Contract, 'units' | 'groups'>): string {
+  const answerRepairs = new Set(contract.groups.filter(group => group.kind === 'fix' && group.repairs?.scope === 'deliverable').map(group => group.id));
+  for (const unit of [...contract.units].reverse()) {
+    if (unit.status !== 'passed' || !answerRepairs.has(unit.groupId)) continue;
+    // Only an explicit complete final answer replaces the rejected draft.
+    // Research results and engineering fix notes remain supporting evidence.
+    const report = parseCompletionReportParts(unit.answer ?? '')?.report;
+    const result = typeof report?.finalAnswer === 'string' ? report.finalAnswer.trim() : '';
+    if (result) return result;
+  }
   const raw = (answerUnit(contract)?.answer ?? '').trim();
   if (raw.length === 0) return '';
   const parts = parseCompletionReportParts(raw);

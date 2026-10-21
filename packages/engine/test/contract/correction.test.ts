@@ -6,7 +6,7 @@
  * deliverable, and the code checks on a fix plan.
  */
 import { afterEach, describe, expect, test } from 'bun:test';
-import { noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { hasContractPlanConsumer } from '../../sdk/src/platform/tools/agent/contract-binding.js';
 import { buildFixGroup, validateFixPlan, type ContractRouteSelector, type Criterion, type FixBrief } from '../../sdk/src/platform/contract/index.js';
 import { plannerOutput, type AnswerContext, type DraftPlan } from './plan-support.js';
@@ -252,6 +252,32 @@ function failsFirst(kind: 'group' | 'deliverable') {
 }
 
 describe('groups and the deliverable (6.4)', () => {
+  test('a passed answer repair replaces the rejected draft without repeating the completed implementation', async () => {
+    const plan = oneUnitPlan(1);
+    const repair = fixPlan([{ serves: ['c1'], files: [] }]);
+    repair.groups[0]!.units[0]!.role = 'research';
+    const planner = stepPlanner(plan, { fix: () => plannerOutput(repair) });
+    const corrected = 'The parser is implemented in src/csv.ts. No runtime verification is claimed.';
+    const report = '```json\n' + JSON.stringify({ version: 1, archetype: 'research', summary: 'Corrected the final response.', result: 'Supporting context retained.', finalAnswer: corrected }) + '\n```';
+    const h = use(makeHarness({ plan, planner: planner.runner,
+      scripts: scriptsWith({ u1: finishes('OLD_UNSUPPORTED_CRC') }, id => id.endsWith('.f1.u1') ? () => [{ text: report }] : undefined),
+      port: context => {
+        if (context.name === 'role' && (context.state['unit'] as { title?: string })?.title === 'Fix 1') return choiceAnswer(context.question, 'research', 0.98);
+        if (context.name === 'unsupported') return noulAnswer(String(context.state['output']).includes('OLD_UNSUPPORTED_CRC') ? 0.98 : 0.03);
+        return undefined;
+      },
+    }));
+    const { contract } = startContract(h);
+    await waitFor(() => terminal(h, contract.id), 'the repaired answer to pass', 15_000);
+    const done = contractOf(h, contract.id);
+    expect(done.status).toBe('passed');
+    expect(h.agentsOf('u1')).toHaveLength(1);
+    expect(done.units[0]!.answer).toContain('OLD_UNSUPPORTED_CRC');
+    expect(done.units.find(unit => unit.id.endsWith('.f1.u1'))!.status).toBe('passed');
+    expect(h.manager.getStatus(done.ownerAgentId!)!.fullOutput).toBe(corrected);
+    expect(planner.of('fix')).toHaveLength(1);
+  }, 20_000);
+
   test('a group check that fails is repaired by a planned fix, then passes on its re-check', async () => {
     const planner = stepPlanner(groupCriterionPlan(), { fix: () => plannerOutput(fixPlan([{ serves: ['g1.c1'], files: ['src/index.ts'] }])) });
     const h = use(makeHarness({

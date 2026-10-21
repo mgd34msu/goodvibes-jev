@@ -87,6 +87,8 @@ export function buildFixPlannerPrompt(): string {
     '- There are no review, test or verification units: every unit is checked against its criteria as it goes. Put "the tests for X pass" in the criteria of the unit that fixes X.',
     '- Units that do not depend on each other run at the same time; units that change the same file are run one after another.',
     '- A unit must not undo what already works: the criteria listed as met stay met.',
+    '- Host-owned checks run after the worker returns. Require concrete work and a normal return, never prior approval of the very unit check that must judge that return.',
+    '- When a deliverable rejection concerns final-answer wording, preserve accepted inspections, findings and artifacts. Use one read-only research unit to return the COMPLETE corrected user-facing answer in its completion report finalAnswer field; that explicit field becomes the next final-answer candidate. Ordinary research results and engineering fix notes are supporting evidence, not replacements for the full answer. Do not hide unfinished substantive work by merely rewording it, and do not repeat completed reviews.',
   ].join('\n');
 }
 

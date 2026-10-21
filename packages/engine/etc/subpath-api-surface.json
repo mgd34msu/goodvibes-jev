@@ -10122,7 +10122,7 @@
         "summary",
         "version"
       ],
-      "text": "export interface BaseCompletionReport { version: 1; archetype: string; summary: string; }"
+      "text": "export interface BaseCompletionReport { version: 1; archetype: string; summary: string; finalAnswer?: string; }"
     },
     {
       "name": "CONTRACT_CHECKS_FOLLOW",

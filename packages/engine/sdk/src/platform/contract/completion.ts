@@ -43,12 +43,14 @@ import { deliverableOutput, describeCommitOutcome, describeContractOutcome, rend
 import { DELIVERABLE_JUDGES } from './batteries/deliverable-judge.js';
 import { GROUP_JUDGES } from './batteries/group-judge.js';
 import { FINAL_ANSWER_REVIEWS } from './batteries/final-answer-review.js';
+import { responseFinding } from '../core/batteries/response-finding.js';
+import { completionFinding, type CompletionFinding } from '../core/response-completion-findings.js';
 import { criterionVerdict, emptyJudgmentUsage, meteredPort } from './check.js';
 import { readContractConfig } from './config.js';
 import { guarded, type Correction } from './correction.js';
 import { nativeContractPort } from './native-decisions.js';
 import { assertNativeContractSource } from './native-source.js';
-import { collectChanges, judgeEvidence, trimEvidence, type ContractTurnRecord } from './evidence.js';
+import { collectChanges, commandsFromTurns, judgeEvidence, trimEvidence, type ContractTurnRecord } from './evidence.js';
 import { failedGates, runContractGates } from './gates.js';
 import type { ContractRun } from './run-context.js';
 import type { StepContext } from './steps.js';
@@ -96,6 +98,7 @@ interface FinalAnswerReviewReceipt {
   readonly passed: boolean;
   readonly readings: Readonly<Record<'unfinished' | 'unsupported', Pick<YesNoReading, 'probability' | 'verdict' | 'outcome'>>>;
   readonly decisionIds: readonly string[];
+  readonly findings?: readonly CompletionFinding[];
 }
 
 function git(cwd: string, args: readonly string[]): { readonly ok: boolean; readonly out: string; readonly err: string } {
@@ -165,7 +168,9 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     for (const id of evidenceGroups) {
       for (const dependency of contract.groups.find(group => group.id === id)?.dependsOn ?? []) evidenceGroups.add(dependency);
     }
-    const evidence = trimEvidence({ output: input.output, changes, gates, commands: [], orchestration: {
+    const evidenceUnits = contract.units.filter(unit => evidenceGroups.has(unit.groupId));
+    const evidence = trimEvidence({ output: input.output, changes, gates,
+      commands: commandsFromTurns(turnsOf(run, new Set(evidenceUnits.map(unit => unit.id)))), orchestration: {
       contractId: contract.id, createdAt: contract.createdAt, origin: contract.origin, planChecks,
       continuationEvidence: contract.taskEvidence ?? '',
       currentValidation: {
@@ -182,7 +187,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         latestCheck: group.checks.length ? { id: group.checks.at(-1)!.id, result: group.checks.at(-1)!.result,
           decisionIds: [...group.checks.at(-1)!.decisionIds] } : null,
       })),
-      units: contract.units.filter(unit => evidenceGroups.has(unit.groupId)).map(unit => ({ id: unit.id, groupId: unit.groupId, goal: unit.goal, status: unit.status,
+      units: evidenceUnits.map(unit => ({ id: unit.id, groupId: unit.groupId, goal: unit.goal, status: unit.status,
         criteria: judged(unit.criteria).map(criterion => ({ id: criterion.id, text: criterion.text, verdict: criterion.status })),
         acceptedAnswer: unit.status === 'passed' ? unit.answer ?? '' : null,
         acceptedAnswerDigest: unit.status === 'passed' ? hashState(unit.answer ?? '') : null,
@@ -225,8 +230,30 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
           assertOwnedContractSource(contract);
           if (run.terminal) { review.recordAction('discarded: the contract already ended'); return null; }
           const readings = { unfinished: review.readings.unfinished, unsupported: review.readings.unsupported };
+          const passed = Object.values(readings).every(reading => criterionVerdict(reading) === 'met');
+          const candidates = [...new Intl.Segmenter(undefined, { granularity: 'sentence' }).segment(evidence.output)]
+            .filter(sentence => sentence.segment.trim()).map((sentence, index) => ({ id: `sentence-${index}`,
+              content: { reference: `current final answer at character ${sentence.index}`, quote: sentence.segment.trim() } }));
+          const findings = passed ? [] : await Promise.all((Object.keys(readings) as ('unfinished' | 'unsupported')[])
+            .filter(key => criterionVerdict(readings[key]) === 'unmet').map(async (key): Promise<CompletionFinding> => {
+              const finding = completionFinding(key);
+              try {
+                const selected = await responseFinding.select(
+                  meteredPort(nativeContractPort(contract, context.native, judgmentPort('contract.check.final-answer-finding'), run.abort.signal), reviewUsage),
+                  { issue: finding.issue, evidence: state }, candidates, { site: 'contract.check.final-answer-finding', signal: run.abort.signal },
+                );
+                const passage = candidates.find(candidate => candidate.id === selected.pick.choice)?.content;
+                selected.recordAction('Localize a rejected final-answer finding; no publication permission is granted.');
+                return { ...finding, localization: passage ? selected.outcome === 'act' ? 'established' : 'candidate-to-investigate' : 'unavailable', ...(passage ? { passage } : {}) };
+              } catch {
+                run.abort.signal.throwIfAborted();
+                return { ...finding, localization: 'unavailable' };
+              }
+            }));
+          assertOwnedContractSource(contract);
+          if (run.terminal) return null;
           answerReview = { schemaVersion: 1, evidenceDigest, outputDigest,
-            passed: Object.values(readings).every(reading => criterionVerdict(reading) === 'met'),
+            passed, ...(findings.length ? { findings } : {}),
             readings: Object.fromEntries(Object.entries(readings).map(([key, { probability, verdict, outcome }]) => [key, { probability, verdict, outcome }])) as FinalAnswerReviewReceipt['readings'],
             decisionIds: review.result.decisionId ? [review.result.decisionId] : [],
           };

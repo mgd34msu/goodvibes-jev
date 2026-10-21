@@ -16,6 +16,8 @@ export interface BaseCompletionReport {
   version: 1;
   archetype: string;
   summary: string;
+  /** A complete replacement user-facing answer from a deliverable repair. Supporting results do not replace the final answer. */
+  finalAnswer?: string;
 }
 
 /** Engineer agent completion report. */
