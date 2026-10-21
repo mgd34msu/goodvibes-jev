@@ -12,18 +12,18 @@ function largeEvidence(output: string): UnitEvidence {
 }
 
 test('receipt quotations are removed without losing full scope, input, report, raw evidence or real finding citations', async () => {
-  const evidence = largeEvidence('Read receipts: src/parser.ts:1-5000 returned completely.\n\nFinding: src/parser.ts:42-44 has an unchecked decode.');
+  const evidence = largeEvidence('Read receipts: src/parser.ts:1-5000 returned completely. Finding: src/parser.ts:42-44 has an unchecked decode.');
   const raw = JSON.stringify(evidence), owner = {};
-  const { port, requests } = fakePort((_, __, state) => noulAnswer(String((state as { paragraph: string }).paragraph).startsWith('Read receipts:') ? 0.99 : 0.01));
+  const { port, requests } = fakePort((name, _, state) => noulAnswer((state as { citations: { start: number }[] }).citations[Number(name.split('_').at(-1))]!.start === 1 ? 0.99 : 0.01));
   const selected = await selectSourceCitationEvidence(owner, evidence, port);
   expect(selected.evidence.output).toBe(evidence.output);
   expect(selected.evidence.sourceReads![0]).toMatchObject({ returnedRanges: ['1-5000'], returnedLines: 5000 });
   expect(selected.evidence.sourceReads![0]!.returnedContent!.split('\n').map(row => row.split(' | ')[0])).toEqual(['42', '43', '44']);
   expect(selected.evidence.sourceReads![1]).toEqual(evidence.sourceReads![1]);
   expect(JSON.stringify(evidence)).toBe(raw);
-  expect(selected.usage.calls).toBe(2);
+  expect(selected.usage.calls).toBe(1);
   await selectSourceCitationEvidence(owner, evidence, port);
-  expect(requests).toHaveLength(2);
+  expect(requests).toHaveLength(1);
 });
 
 test.each([0.5, 0.01])('uncertain or substantive citation contexts retain every source byte (%s)', async probability => {
@@ -46,4 +46,14 @@ test('small evidence requires no extra judgment', async () => {
   const { port, requests } = fakePort(() => { throw new Error('no call expected'); });
   expect((await selectSourceCitationEvidence({}, evidence, port)).evidence).toBe(evidence);
   expect(requests).toEqual([]);
+});
+
+test('old primary quotations are not retransmitted after the report removes its old citations', async () => {
+  const evidence = largeEvidence('The revised read ledger lists paths and intervals in separate fields; no old source citations remain.');
+  const { port, requests } = fakePort(() => { throw new Error('no current citations to classify'); });
+  const selected = await selectSourceCitationEvidence({}, evidence, port);
+  expect(selected.evidence.sourceReads![0]).toEqual({ path: 'src/parser.ts', returnedRanges: ['1-5000'], returnedLines: 5000 });
+  expect(selected.evidence.sourceReads![1]).toEqual(evidence.sourceReads![1]);
+  expect(requests).toEqual([]);
+  expect(evidence.sourceReads![0]!.returnedContent!.length).toBeGreaterThan(100000);
 });

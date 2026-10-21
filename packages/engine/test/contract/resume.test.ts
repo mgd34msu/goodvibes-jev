@@ -11,6 +11,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node
 import { join } from 'node:path';
 import { uptime } from 'node:os';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { JudgmentError } from '@goodvibes-jev/judgment';
 import type { Contract, ContractView } from '../../sdk/src/platform/contract/index.js';
 import { contractPath } from '../../sdk/src/platform/contract/index.js';
 import type { DecompositionRunner } from '../../sdk/src/platform/core/plan-decomposition.js';
@@ -96,6 +97,43 @@ async function ended(h: Harness, id: string): Promise<ContractView> {
 }
 
 const running = (contract: ContractView) => contract.units[0]?.status === 'running' && (contract.units[0]?.checks.length ?? 0) >= 1;
+
+test.each([false, true])('a rejected verifier request cannot cancel a sibling or pass unchecked work (persistent=%s)', async persistent => {
+  const plan = twoUnitPlan();
+  const firstUnit = plan.groups[0]!.units[0]!;
+  firstUnit.role = 'research';
+  plan.groups[0]!.units.push({ ...firstUnit, id: 'u3', files: ['src/independent.ts'], title: 'Independent review', criteria: [{ ...firstUnit.criteria[0]!, id: 'u3.c1' }] });
+  plan.groups[1]!.units[0]!.title = 'Integration fixture';
+  let failures = 0;
+  const h = makeHarness({ plan, contract: { isolation: 'worktree', maxParallelUnits: 2 }, scripts: {
+    u1: () => [{ text: 'First private report.' }, { text: 'Repaired private report.' }, { text: 'Bounded private report.' }],
+    u3: () => [{ text: 'Independent source assessment.' }],
+    u2: () => [{ files: { 'src/convert.ts': 'export const convert = () => true;\n' }, text: 'Integrated the parser.' }],
+  }, port: context => {
+    if (context.name === 'role') return choiceAnswer(context.question, (context.state['unit'] as { title?: string })?.title === 'Integration fixture' ? 'implement' : 'research', 0.98);
+    if (judgeOf(context) === 'unit' && String(context.state['output']).includes('private report') && context.name === 'goal' && (persistent || failures === 0)) {
+      failures++; throw new JudgmentError('rejected', 'fixture request rejection', { status: 400 });
+    }
+    return undefined;
+  } });
+  roots.push(h.root); harnesses.push(h);
+  mkdirSync(join(h.root, 'src'), { recursive: true });
+  writeFileSync(join(h.root, 'src/csv.ts'), 'export const parser = true;\n');
+  writeFileSync(join(h.root, 'src/independent.ts'), 'export const independent = true;\n');
+  const { contract } = startContract(h);
+  if (persistent) {
+    await waitFor(() => unitIn(h, contract.id, 'u3')?.status === 'passed' && failures === 3 && unitIn(h, contract.id, 'u1')?.status === 'held', 'only verifier-failing unit to wait');
+    expect(contractIn(h, contract.id).status).toBe('running');
+    expect(unitIn(h, contract.id, 'u1').checks).toEqual([]);
+    expect(unitIn(h, contract.id, 'u1').criteria[0]!.status).toBe('unread');
+  } else {
+    expect((await ended(h, contract.id)).status).toBe('passed');
+    expect(failures).toBe(1);
+    expect(unitIn(h, contract.id, 'u1').checks).toHaveLength(1);
+  }
+  expect(eventsOf(h, 'CONTRACT_FAILED')).toEqual([]);
+  expect(unitIn(h, contract.id, 'u3').status).toBe('passed');
+});
 
 test('read observations are persisted before a candidate or acceptance check exists', async () => {
   const root = makeRepo(); roots.push(root);

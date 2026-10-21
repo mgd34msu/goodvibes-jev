@@ -3,7 +3,7 @@ import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { selectSourceCitationEvidence } from './source-citation-selection.js';
 import { getContractActionSource } from '../tools/agent/contract-binding.js';
 import { assertOwnedContractSource } from './owned-source.js';
-import { hashState } from '@goodvibes-jev/judgment';
+import { hashState, JudgmentError } from '@goodvibes-jev/judgment';
 import { judgeState } from './evidence.js';
 import { nativeRecordedCheck } from './check.js';
 import type { AutonomousToolSource } from '../permissions/autonomous.js';
@@ -217,6 +217,7 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
 
   async function checkUnit(run: ContractRun, unit: ContractUnit, trigger: CheckTrigger, given?: string): Promise<void> {
     const runtime = run.runtime(unit);
+    runtime.verificationRetryCancel?.();
     const config = run.env.config();
     const check: InFlightCheck = { trigger, abort: new AbortController(), superseded: false };
     runtime.check = check;
@@ -267,10 +268,36 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
       if (runtime.check === check) runtime.check = null;
       if (check.superseded || isAbortError(error, signal) || run.terminal) return;
       const failure = failureFromError(error);
+      if (error instanceof JudgmentError || failure.kind === 'judgment-unavailable') {
+        // A verifier request failure says nothing about work correctness. Keep
+        // this candidate held and let unrelated units continue to completion.
+        const repairs = runtime.verificationRepairs ?? 0;
+        if (trigger !== 'turn-end' && error instanceof JudgmentError && error.kind === 'rejected' && error.status === 400 && repairs < 2) {
+          runtime.verificationRepairs = repairs + 1;
+          const message = 'Jev rejected the verification request without returning a verdict. Preserve all completed reads, findings and assessments. Repair only the private report evidence format: put returned-read receipts in a distinct ledger and give substantive claims precise, bounded source citations. Do not repeat the review or claim approval. Return the repaired candidate for a fresh mandatory check.';
+          run.decide('resumed', unit.id, `verification request rejected; bounded report repair ${repairs + 1}/2, no acceptance verdict`);
+          const hold = runtime.hold;
+          runtime.hold = null;
+          run.moveUnit(unit, 'nudged');
+          if (hold) hold.resolve({ kind: 'continue', message, nudgeId: `${unit.id}.verification-${repairs + 1}` });
+          else deps.respawnUnit(run, unit, 'repair the rejected verification request without repeating completed work', message);
+        } else {
+          run.moveUnit(unit, trigger === 'turn-end' ? 'running' : 'held');
+          run.decide('resumed', unit.id, `verification pending: ${failure.reason}; candidate retained, retry in 30 seconds, no acceptance verdict`);
+          const cancel = () => { clearTimeout(timer); runtime.abort.signal.removeEventListener('abort', cancel); delete runtime.verificationRetryCancel; };
+          const timer = setTimeout(() => { cancel(); if (!run.terminal && !isTerminalUnitStatus(unit.status)) void runCheck(run, unit, trigger === 'turn-end' ? 'turn-end' : 'resume', output); }, 30_000);
+          timer.unref?.();
+          runtime.verificationRetryCancel = cancel;
+          runtime.abort.signal.addEventListener('abort', cancel, { once: true });
+        }
+        logger.warn('contract verifier request failed; work retained', { contractId: run.id, unitId: unit.id, reason: failure.reason });
+        return;
+      }
       deps.failContract(run, failure.kind, `the check of unit ${unit.id} could not run: ${failure.reason}`);
       return;
     }
     if (runtime.check === check) runtime.check = null;
+    runtime.verificationRepairs = 0;
     addJudgmentUsage(run.contract.judgmentUsage, outcome.usage);
     if (outcome.discarded) return;
     if (check.superseded || run.terminal || isTerminalUnitStatus(unit.status)) {
