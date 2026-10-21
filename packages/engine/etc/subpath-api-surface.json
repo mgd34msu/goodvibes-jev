@@ -22483,7 +22483,7 @@
     {
       "name": "ownerReply",
       "kind": "const",
-      "text": "ownerReply: import(\"@goodvibes-jev/judgment\").ReplyReader<\"reject\" | \"approve\" | \"amend\" | \"unclear\">"
+      "text": "ownerReply: import(\"@goodvibes-jev/judgment\").ReplyReader<\"reject\" | \"amend\" | \"approve\" | \"unclear\">"
     },
     {
       "name": "parseAmendment",

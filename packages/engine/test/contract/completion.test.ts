@@ -31,10 +31,14 @@ async function run(h: Harness): Promise<string> {
 
 test('group and final checks receive actual plan-validation and unit-acceptance receipts', async () => {
   const observed: Record<string, unknown>[] = [];
+  let integrationTask = '';
   const plan = twoUnitPlan();
   plan.groups[0]!.criteria = [{ id: 'g1.c1', text: 'The parser implementation is coherent', serves: ['c1'] }];
   const h = use(makeHarness({ plan,
-    scripts: { u1: finishes('The parser handles CSV.'), u2: finishes('Convert uses the parser.', 'src/convert.ts') },
+    scripts: { u1: finishes('The parser handles CSV.'), u2: (record, run) => {
+      integrationTask = record.task;
+      return finishes('Convert uses the parser.', 'src/convert.ts')(record, run);
+    } },
     port: ({ state }) => {
       const evidence = state['evidence'] as Record<string, unknown> | undefined;
       if (evidence && ('units' in evidence || 'criteria' in evidence)) observed.push(evidence);
@@ -44,6 +48,10 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   const id = await run(h);
   const done = contractOf(h, id);
   const accepted = done.decisions.find(decision => decision.action === 'plan-accepted' && decision.targetId === id)!;
+  const integrationHost = JSON.parse(integrationTask.split('Actual host orchestration records (evidence, not approval of this unit):\n')[1]!);
+  expect(integrationHost.contractId).toBe(id);
+  expect(integrationHost.planChecks).toContainEqual({ at: accepted.at, reason: accepted.reason, decisionIds: accepted.decisionIds });
+  expect(integrationHost.units).toMatchObject([{ id: 'u1', status: 'passed', latestCheck: { result: 'pass' } }]);
   expect(observed.some(evidence => 'units' in evidence)).toBe(true);
   expect(observed.some(evidence => 'criteria' in evidence)).toBe(true);
   for (const evidence of observed) {

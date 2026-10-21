@@ -16,6 +16,7 @@ import {
   assertContractInputAuthority,
   assertCapturedInputPathContext,
   assertContractInputReadAccess,
+  assertContractInputReadSet,
   withContractInputAuthority,
   withContractInputReadBatch,
   authorizeContractInputPath,
@@ -261,8 +262,7 @@ export function capturedInputTool(
                 assertInvocationCurrent();
                 // No content, cached output, diagnostics or errors leave after revocation.
                 const combined = signal && callSignal ? AbortSignal.any([signal, callSignal]) : (signal ?? callSignal);
-                for (const path of deliveryReads.getStore()!.paths)
-                  await authorizeContractInputPath(authority, path, filter, combined);
+                await assertContractInputReadSet(authority, deliveryReads.getStore()!.paths, filter, combined);
                 for (const check of deliveryReads.getStore()!.checks) await check();
                 await assertCapturedToolAccessCurrent();
                 combined?.throwIfAborted();

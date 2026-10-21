@@ -14,8 +14,8 @@ import {
   contractInputAuthoritySourceRoot,
   assertContractInputAuthority,
   isCapturedInputPath,
-  authorizeContractInputPath,
   assertContractInputReadAccess,
+  assertContractInputReadSet,
   withContractInputReadBatch,
   type ContractInputAuthority,
 } from '../contract/input-authority.js';
@@ -807,7 +807,7 @@ export class AgentOrchestrator {
                 await withContractInputReadBatch(authority, async () => {
                   await assertContractInputAuthority(authority, cwd, signal);
                   await assertContractInputReadAccess(authority, ownerReadAccess, signal);
-                  for (const path of delivered) await authorizeContractInputPath(authority, path, ownerReadAccess, signal);
+                  await assertContractInputReadSet(authority, delivered, ownerReadAccess, signal);
                 });
               }
               autonomousSource?.();

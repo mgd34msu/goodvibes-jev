@@ -15,6 +15,7 @@ import {
 } from './input-snapshot.js';
 import type { ReadAccessFilter } from '../tools/shared/read-access.js';
 import { executePolicyCheck } from '../gate/execute-policy-check.js';
+import { checkCapturedInputsInBatches } from '../tools/exec/captured-exec-validation.js';
 
 /** Only tokens minted in this module are accepted; serialization cannot create one. */
 export interface ContractInputAuthority {
@@ -323,6 +324,27 @@ export function registerContractInputReadAssertion(token: ContractInputAuthority
   stateOf(token).readAssertions.add(assertion);
 }
 
+/** Recheck every recorded path, including paths added by a callback during
+ * this sweep. Bounded parallelism changes no permission or identity checks. */
+export async function assertContractInputReadSet(
+  token: ContractInputAuthority,
+  paths: ReadonlySet<string>,
+  filter: ReadAccessFilter | undefined,
+  signal?: AbortSignal,
+): Promise<void> {
+  if (!filter) throw new Error('captured input requires original-owner read authorization');
+  await withContractInputReadBatch(token, async () => {
+    let checked = 0;
+    while (checked < paths.size) {
+      const pending = [...paths].slice(checked);
+      await checkCapturedInputsInBatches(pending, async (path, current) => {
+        await authorizeContractInputPath(token, path, filter, current);
+      }, signal);
+      checked += pending.length;
+    }
+  });
+}
+
 export async function assertContractInputReadAccess(
   token: ContractInputAuthority,
   filter: ReadAccessFilter | undefined,
@@ -332,7 +354,7 @@ export async function assertContractInputReadAccess(
   // Runtime/dependency assertions belong to this same bracketed sweep. Leaving
   // them outside it serializes the complete receipt again for every entry.
   await withContractInputReadBatch(token, async () => {
-    for (const path of stateOf(token).reads) await authorizeContractInputPath(token, path, filter, signal);
+    await assertContractInputReadSet(token, stateOf(token).reads, filter, signal);
     for (const assertion of [...stateOf(token).readAssertions]) {
       signal?.throwIfAborted();
       await executePolicyCheck(assertion, signal);
