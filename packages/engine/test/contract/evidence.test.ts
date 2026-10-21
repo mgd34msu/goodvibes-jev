@@ -20,6 +20,8 @@ import {
   collectChanges,
   collectUnitEvidence,
   commandsFromTurns,
+  commandReceiptsFromTurns,
+  mergeCommandReceipts,
   sourceReadsFromTurns,
   judgeEvidence,
   DIFF_FILE_CAP_CHARS,
@@ -91,6 +93,25 @@ const TURNS: readonly ContractTurnRecord[] = [
 ];
 
 describe('what the agent did, from its turns', () => {
+  test('primary executions survive restart without merging repeated command text or duplicating replayed receipts', async () => {
+    const turn: ContractTurnRecord = { turn: 1, assistantText: '',
+      toolCalls: [1, 2].map(() => ({ name: 'exec', arguments: { commands: [{ cmd: 'unzip -t review.zip' }] } })),
+      results: [1, 2].map(id => ({ callId: `call-${id}`, success: true, output: 'No errors detected.' })),
+    };
+    const receipts = commandReceiptsFromTurns('agent-1', [turn]);
+    const sameCallFromAnotherAgent = commandReceiptsFromTurns('agent-2', [turn]);
+    const laterTurn = commandReceiptsFromTurns('agent-1', [{ ...turn, turn: 2 }]);
+    const saved = JSON.parse(JSON.stringify(mergeCommandReceipts(receipts, [...receipts, ...sameCallFromAnotherAgent, ...laterTurn])));
+    expect(saved).toHaveLength(6);
+    expect(saved.map((receipt: { callId: string }) => receipt.callId)).toEqual(['call-1', 'call-2', 'call-1', 'call-2', 'call-1', 'call-2']);
+    const evidence = await collectUnitEvidence(makeContract(), makeUnit({ commandEvidence: saved }), 'resume', {
+      cwd: dir, output: 'Archive verified.', report: null, mustWrite: false, turns: [], configManager: noGates(), runtimeBus: new RuntimeEventBus(),
+    });
+    expect(evidence.commands).toEqual(saved);
+    expect(() => mergeCommandReceipts(receipts, [{ ...receipts[0]!, head: 'Contradictory output' }])).toThrow('Conflicting command execution receipts');
+    expect(commandReceiptsFromTurns('agent-1', [{ ...turn, results: [] }])).toEqual([]);
+  });
+
   test('read evidence retains actual returned ranges and exposes them to both checks', async () => {
     const turn: ContractTurnRecord = { turn: 1, assistantText: '',
       toolCalls: [{ name: 'read', arguments: { files: [{ path: 'source.ts', range: { start: 1, end: 100 } }] } }],

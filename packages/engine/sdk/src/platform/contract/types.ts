@@ -326,6 +326,8 @@ export interface ContractUnit {
   lastOutput?: string | undefined;
   /** Captured read-only observations retained for fresh checks after restart; never an approval. */
   readEvidence?: readonly import('./evidence.js').SourceReadEvidence[] | undefined;
+  /** Actual command results retained across restarts and worker-worktree cleanup; never approval. */
+  commandEvidence?: readonly import('./evidence.js').CommandExecutionReceipt[] | undefined;
   /**
    * The completion report parsed from the output of the unit's last completion
    * check, whole. `lastOutput` is capped head and tail, so a long report is cut

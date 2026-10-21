@@ -49,7 +49,7 @@ export interface StepContext {
 }
 
 export interface ContractStepsWithReplies extends ContractSteps {
-  /** Reconstruct an interrupted native fix planner from its existing target and spent counters. */
+  /** Reconstruct an interrupted fix planner from its existing target, findings and spent counters. */
   resumeNative(run: ContractRun): Promise<void>;
   /** An owner's free-text reply to an open escalation, read with the reply pattern (design 6.3). */
   reply(run: ContractRun, escalationId: string, text: string): Promise<OwnerReplyOutcome>;

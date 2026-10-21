@@ -47,6 +47,10 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
         results: [{ callId: 'read', success: true, output: JSON.stringify({ success: true,
           files: [{ path: 'input.txt', extract: 'lines', content: '1 | first\n2 | second' }] }) }],
       });
+      h.runner.hooks().onTurnEnd(record, { turn: 2, assistantText: 'Checked the parser.',
+        toolCalls: [{ name: 'exec', arguments: { commands: [{ cmd: 'node --check src/csv.ts' }] } }],
+        results: [{ callId: 'parser-check', success: true, output: 'Parser syntax valid.' }],
+      });
       return [{ text: 'The existing parser handles CSV.' }];
     }, u2: (record, run) => {
       integrationTask = record.task;
@@ -100,6 +104,8 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   expect(integrationReceipts.groups).toMatchObject([{ id: 'g1', status: 'passed', latestCheck: { result: 'pass' } }]);
   expect(integrationReceipts.groups[0]!.criteria).toEqual([{ id: 'g1.c1', text: 'The parser implementation is coherent', verdict: 'met' }]);
   expect(integrationReceipts.groups.some(group => group.id === 'g2')).toBe(false);
+  expect(integrationEvidence['commands']).toEqual([{ agentId: done.units[0]!.agentIds[0], turn: 2, callIndex: 0, callId: 'parser-check',
+    command: 'node --check src/csv.ts', success: true, head: 'Parser syntax valid.' }]);
   expect(integrationReceipts.units.find(unit => unit.id === 'u1')!.readObservations).toEqual([
     { path: 'input.txt', returnedRanges: ['1-2'], returnedLines: 2, contentKind: 'declared-reference', returnedContent: '1 | first\n2 | second' },
   ]);

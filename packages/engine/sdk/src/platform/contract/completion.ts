@@ -50,7 +50,7 @@ import { readContractConfig } from './config.js';
 import { guarded, type Correction } from './correction.js';
 import { nativeContractPort } from './native-decisions.js';
 import { assertNativeContractSource } from './native-source.js';
-import { collectChanges, commandsFromTurns, judgeEvidence, trimEvidence, type ContractTurnRecord } from './evidence.js';
+import { collectChanges, commandsFromTurns, judgeEvidence, trimEvidence, type ContractTurnRecord, type EvidenceCommand } from './evidence.js';
 import { failedGates, runContractGates } from './gates.js';
 import type { ContractRun } from './run-context.js';
 import type { StepContext } from './steps.js';
@@ -170,7 +170,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     }
     const evidenceUnits = contract.units.filter(unit => evidenceGroups.has(unit.groupId));
     const evidence = trimEvidence({ output: input.output, changes, gates,
-      commands: commandsFromTurns(turnsOf(run, new Set(evidenceUnits.map(unit => unit.id)))), orchestration: {
+      commands: evidenceUnits.flatMap<EvidenceCommand>(unit => unit.commandEvidence ?? commandsFromTurns(turnsOf(run, new Set([unit.id])))), orchestration: {
       contractId: contract.id, createdAt: contract.createdAt, origin: contract.origin, planChecks,
       continuationEvidence: contract.taskEvidence ?? '',
       currentValidation: {

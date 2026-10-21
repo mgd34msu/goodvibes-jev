@@ -33,6 +33,7 @@ import { failedGates } from './gates.js';
 import { buildFixGroup, buildFixPlannerPrompt, buildFixPlannerRequest, buildFreshGroup, validateFixPlan, type FixBrief, type FixScope } from './fix-plan.js';
 import { nativeContractRoute, decideNativeContract, nativeContractPort, nativeDecisionState, nativeSpent, spendNative } from './native-decisions.js';
 import { assertNativeContractSource } from './native-source.js';
+import { renderContractAnswer } from './answer.js';
 import { runUnitShapeChecks } from './plan-checks.js';
 import { renderContractPlan, type ContractPlan, type PlanProblem } from './plan-schema.js';
 import { prepareFixPlannerInput, type FixPlannerInput } from './fix-planner-input.js';
@@ -603,8 +604,8 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
   }
 
   async function resumeNative(run: ContractRun): Promise<void> {
-    if (run.contract.nativeSource === undefined) return;
     const contract = run.contract;
+    if (contract.nativeSource === undefined && contract.status === 'awaiting-owner') return;
     const targets: { scope: 'unit' | 'group' | 'deliverable'; targetId: string; round: number }[] = [
       ...contract.units.filter(unit => unit.status === 'fixing' && unit.fixRounds > 0).map(unit => ({ scope: 'unit' as const, targetId: unit.id, round: unit.fixRounds })),
       ...contract.groups.filter(group => group.status === 'fixing' && group.fixRounds > 0).map(group => ({ scope: 'group' as const, targetId: group.id, round: group.fixRounds })),
@@ -615,15 +616,23 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
       if (contract.groups.some(group => group.id === `${target.targetId}.f${target.round}`)) continue;
       if (target.scope === 'unit') { const unit = run.unit(target.targetId); if (unit !== undefined) await planFix(run, unitBrief(run, unit), target.round); }
       else {
-        const criteria = target.scope === 'deliverable' ? contract.criteria : run.group(target.targetId)?.criteria ?? [];
-        const finding: TargetFinding = { unmet: criteria.filter(c => c.status === 'unmet').map(c => c.id), unshown: criteria.filter(c => c.status === 'unshown' || c.status === 'unread').map(c => c.id), gates: [], output: '', decisionIds: [] };
+        const group = target.scope === 'group' ? run.group(target.targetId) : undefined;
+        const criteria = group?.criteria ?? contract.criteria;
+        const check = (group?.checks ?? contract.checks).at(-1);
+        const review = target.scope === 'deliverable' ? contract.decisions.findLast(decision => decision.targetId === `${contract.id}.final-answer-review`) : undefined;
+        const output = target.scope === 'deliverable' ? renderContractAnswer(contract)
+          : contract.units.filter(unit => unit.groupId === target.targetId).map(unit => unit.answer ?? unit.lastOutput ?? '').join('\n\n');
+        const finding: TargetFinding = { unmet: criteria.filter(c => c.disposition === 'judged' && c.status === 'unmet').map(c => c.id),
+          unshown: criteria.filter(c => c.disposition === 'judged' && (c.status === 'unshown' || c.status === 'unread')).map(c => c.id),
+          gates: check?.gates ?? [], output: review ? `${output}\n\nNative final-answer review findings (not approval):\n${review.reason}` : output,
+          decisionIds: check?.decisionIds ?? [] };
         await planFix(run, targetBrief(run, target.scope, target.targetId, finding), target.round);
       }
     }
   }
 
   return {
-    resumeNative: run => guarded(run, 'native correction could not resume', () => resumeNative(run)),
+    resumeNative: run => guarded(run, 'interrupted correction could not resume', () => resumeNative(run)),
     unitStalled: (run, unitId, check) => guarded(run, `unit ${unitId}'s stall could not be routed`, () => unitStalled(run, unitId, check)),
     unitMergeConflict: (run, unitId, files) => guarded(run, `unit ${unitId}'s merge conflict could not be routed`, () => unitMergeConflict(run, unitId, files)),
     groupFailed: (run, groupId, finding) => guarded(run, `group ${groupId}'s failed check could not be routed`, () => groupFailed(run, groupId, finding)),

@@ -17,7 +17,7 @@ import { contractPath } from '../../sdk/src/platform/contract/index.js';
 import type { DecompositionRunner } from '../../sdk/src/platform/core/plan-decomposition.js';
 import { plannerOutput, type AnswerContext } from './plan-support.js';
 import { eventsOf, makeHarness, makeRepo, oneUnitPlan, startContract, twoUnitPlan, waitFor, type AgentScript, type Harness, type HarnessOptions } from './runner-support.js';
-import { answers, git, judgeOf, replyAnswers, terminal } from './steps-support.js';
+import { answers, fixPlan, git, judgeOf, replyAnswers, terminal } from './steps-support.js';
 
 const roots: string[] = [];
 const harnesses: Harness[] = [];
@@ -98,6 +98,38 @@ async function ended(h: Harness, id: string): Promise<ContractView> {
 
 const running = (contract: ContractView) => contract.units[0]?.status === 'running' && (contract.units[0]?.checks.length ?? 0) >= 1;
 
+test('an interrupted final-answer repair resumes the same round with its rejected draft and findings', async () => {
+  const plan = oneUnitPlan(1);
+  plan.groups[0]!.units[0]!.role = 'research';
+  let fixing = false;
+  const { root, ids: [id] } = await interrupt({ plan, scripts: { u1: () => [{ text: 'Original draft with an unsupported archive claim.' }] },
+    planner: { run: async request => {
+      if (!request.systemPrompt.startsWith('You plan a repair')) return { status: 'completed', output: plannerOutput(plan), elapsedMs: 0 };
+      fixing = true;
+      return new Promise(resolve => request.signal!.addEventListener('abort', () => resolve({ status: 'cancelled', output: '', elapsedMs: 0 }), { once: true }));
+    } },
+    port: context => context.name === 'role' ? choiceAnswer(context.question, 'research', 0.98)
+      : judgeOf(context) === 'deliverable' || context.name === 'unsupported' ? noulAnswer(0.98) : undefined,
+  }, contract => fixing && contract.status === 'fixing', 'the final repair planner');
+  let prompt = '';
+  const repair = fixPlan([{ serves: ['c1'] }]); repair.groups[0]!.units[0]!.role = 'research';
+  const second = restart(root, { plan, scripts: { u1: mustNotRun, [`${id}.f1.u1`]: () => [{ text: '```json\n' + JSON.stringify({
+    version: 1, archetype: 'research', summary: 'Corrected the final answer.', result: 'Removed the unsupported wording.', finalAnswer: 'Corrected complete answer.',
+  }) + '\n```' }] },
+    planner: { run: async request => { prompt = request.userPrompt; return { status: 'completed', output: plannerOutput(repair), elapsedMs: 0 }; } },
+    port: context => context.name === 'role' ? choiceAnswer(context.question, 'research', 0.98) : undefined,
+  });
+  await second.runner.resumeAll();
+  const done = await ended(second, id!);
+  expect(done.status).toBe('passed');
+  expect(done.fixRounds).toBe(1);
+  expect(done.units).toHaveLength(2);
+  expect(done.answer).toBe('Corrected complete answer.');
+  expect(prompt).toContain('Original draft with an unsupported archive claim.');
+  expect(prompt).toContain('Native final-answer review findings');
+  expect(done.units[0]!.answer).toBe('Original draft with an unsupported archive claim.');
+});
+
 test.each([false, true])('a rejected verifier request cannot cancel a sibling or pass unchecked work (persistent=%s)', async persistent => {
   const plan = twoUnitPlan();
   const firstUnit = plan.groups[0]!.units[0]!;
@@ -148,9 +180,14 @@ test('read observations are persisted before a candidate or acceptance check exi
   first.runner.hooks().onTurnEnd(record, { turn: 1, assistantText: 'Inspecting the source.',
     toolCalls: [{ name: 'read', arguments: { files: [{ path: 'src/review.ts' }] } }],
     results: [{ callId: 'read', success: true, output: JSON.stringify({ success: true, files: [{ path: 'src/review.ts', extract: 'lines', content: '1 | const a = 1;\n2 | const b = 2;' }] }) }] });
+  const commandTurn = { turn: 2, assistantText: 'Checked the archive.',
+    toolCalls: [{ name: 'exec', arguments: { commands: [{ cmd: 'unzip -t review.zip' }] } }],
+    results: [{ callId: 'verify-archive', success: true, output: 'No errors detected.' }] };
+  first.runner.hooks().onTurnEnd(record, commandTurn);
+  first.runner.hooks().onTurnEnd(record, commandTurn);
   await waitFor(() => {
     const disk = JSON.parse(readFileSync(contractPath(root, contract.id), 'utf8')).contract;
-    return disk.units[0]?.readEvidence?.[0]?.returnedRanges.join() === '1-2';
+    return disk.units[0]?.readEvidence?.[0]?.returnedRanges.join() === '1-2' && disk.units[0]?.commandEvidence?.length === 1;
   }, 'read evidence checkpoint before completion');
   const saved = JSON.parse(readFileSync(contractPath(root, contract.id), 'utf8')).contract;
   expect(saved.units[0].checks).toEqual([]);
@@ -160,6 +197,7 @@ test('read observations are persisted before a candidate or acceptance check exi
   await first.runner.join(contract.id);
   const restored = JSON.parse(readFileSync(contractPath(root, contract.id), 'utf8')).contract;
   expect(restored.units[0].readEvidence[0].returnedRanges).toEqual(['1-2']);
+  expect(restored.units[0].commandEvidence).toEqual([{ agentId: record.id, turn: 2, callIndex: 0, callId: 'verify-archive', command: 'unzip -t review.zip', success: true, head: 'No errors detected.' }]);
 });
 
 test('a held read-only candidate and its observed source survive restart and receive a fresh check', async () => {

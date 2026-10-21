@@ -43,7 +43,7 @@ import { summarizeError } from '../utils/error-display.js';
 import { applySeverities, applyUnitCheck, checkSettings, readUnmetSeverities, runUnitCheck, unitMustWrite, type DecidedCheck, type UnitCheckOutcome } from './check.js';
 import type { ContractConfigReader } from './config.js';
 import { parseUnitCompletionReport } from './claims.js';
-import { collectUnitEvidence, headAndTail, mergeSourceReads, sourceReadsFromTurns, OUTPUT_CAP_CHARS, type ContractTurnRecord } from './evidence.js';
+import { collectUnitEvidence, commandReceiptsFromTurns, headAndTail, mergeCommandReceipts, mergeSourceReads, sourceReadsFromTurns, OUTPUT_CAP_CHARS, type ContractTurnRecord } from './evidence.js';
 import { createNudge, dispatchNudge, type NudgeTargetState } from './nudge.js';
 import { engineItem, takeBaseline } from './group-runner.js';
 import { describeStall } from './progress.js';
@@ -100,7 +100,7 @@ export interface UnitCheckEscalations {
 }
 
 export interface UnitCheckLoopDeps {
-  /** Persist actual read observations independently of acceptance checks. */
+  /** Persist actual tool observations independently of acceptance checks. */
   readonly checkpoint?: ((run: ContractRun) => void) | undefined;
   readonly findRun: (contractId: string) => ContractRun | undefined;
   readonly agentManager: {
@@ -159,13 +159,20 @@ export function createUnitCheckLoop(deps: UnitCheckLoopDeps): UnitCheckLoop {
     const { run, unit, runtime } = found;
     runtime.turns.push(turn);
     if (turn.assistantText.trim().length > 0) runtime.lastAssistantText = turn.assistantText;
+    let observed = false;
+    const commands = commandReceiptsFromTurns(record.id, [turn]);
+    if (commands.length > 0) {
+      unit.commandEvidence = mergeCommandReceipts(unit.commandEvidence ?? [], commands);
+      observed = true;
+    }
     if (!unitMustWrite(run.contract, unit)) {
       const reads = sourceReadsFromTurns([turn], unit.files, runtime.lastAssistantText || unit.lastOutput || '');
       if (reads.length > 0) {
         unit.readEvidence = mergeSourceReads(unit.readEvidence ?? [], reads);
-        deps.checkpoint?.(run);
+        observed = true;
       }
     }
+    if (observed) deps.checkpoint?.(run);
     deps.watchdog.touch(record.id);
     if (!turn.toolCalls.some((call) => CHANGING_TOOLS.has(call.name))) return;
     if (!run.env.config().midRunChecks || !WORKING.has(unit.status)) return;

@@ -68,6 +68,14 @@ export interface EvidenceCommand {
   readonly head: string;
 }
 
+/** One observed execution, identified by its host agent and tool result. */
+export interface CommandExecutionReceipt extends EvidenceCommand {
+  readonly agentId: string;
+  readonly turn: number;
+  readonly callIndex: number;
+  readonly callId: string;
+}
+
 /** One changed path and its full diff (or text, for a new file or outside git). */
 export interface FileChange {
   readonly path: string;
@@ -234,6 +242,30 @@ export function commandsFromTurns(turns: readonly ContractTurnRecord[]): Evidenc
   return commands;
 }
 
+/** Keep distinct executions even when their command text and output are identical. */
+export function commandReceiptsFromTurns(agentId: string, turns: readonly ContractTurnRecord[]): CommandExecutionReceipt[] {
+  return turns.flatMap(turn => turn.toolCalls.flatMap((call, index) => {
+    const result = turn.results[index];
+    if (call.name !== 'exec' || !result) return [];
+    return commandsFromTurns([{ ...turn, toolCalls: [call], results: [result] }])
+      .map(command => ({ ...command, agentId, turn: turn.turn, callIndex: index, callId: result.callId }));
+  }));
+}
+
+/** Merge by execution identity; replaying a receipt does not repeat a command. */
+export function mergeCommandReceipts(previous: readonly CommandExecutionReceipt[], current: readonly CommandExecutionReceipt[]): CommandExecutionReceipt[] {
+  const receipts = new Map<string, CommandExecutionReceipt>();
+  for (const receipt of [...previous, ...current]) {
+    const key = JSON.stringify([receipt.agentId, receipt.turn, receipt.callIndex, receipt.callId]);
+    const retained = receipts.get(key);
+    if (retained && (retained.command !== receipt.command || retained.success !== receipt.success || retained.head !== receipt.head)) {
+      throw new Error('Conflicting command execution receipts');
+    }
+    receipts.set(key, receipt);
+  }
+  return [...receipts.values()];
+}
+
 /** The paths the turns' `write` and `edit` calls named, in first-seen order. */
 export function writtenPaths(turns: readonly ContractTurnRecord[]): string[] {
   const paths = new Set<string>();
@@ -356,7 +388,7 @@ export async function collectChanges(unit: Pick<ContractUnit, 'baseline'>, sourc
  */
 export async function collectUnitEvidence(
   contract: Pick<ContractView, 'id' | 'sessionId'> & Partial<Pick<ContractView, 'status' | 'decisions' | 'createdAt' | 'origin' | 'units' | 'proposedUnits'>>,
-  unit: Pick<ContractUnit, 'id' | 'goal' | 'brief' | 'files' | 'baseline' | 'readEvidence'>,
+  unit: Pick<ContractUnit, 'id' | 'goal' | 'brief' | 'files' | 'baseline' | 'readEvidence' | 'commandEvidence'>,
   trigger: CheckTrigger,
   sources: UnitEvidenceSources,
 ): Promise<UnitEvidence> {
@@ -382,7 +414,7 @@ export async function collectUnitEvidence(
     .map(decision => ({ at: decision.at, reason: decision.reason, decisionIds: [...decision.decisionIds] })) ?? [];
   const firstUnitStartedAt = contract.decisions?.find(decision => decision.action === 'spawned' && contract.units?.some(unit => unit.id === decision.targetId))?.at;
   const currentReads = sourceReadsFromTurns(sources.turns, sources.mustWrite ? [] : unit.files, sources.output);
-  return trimEvidence({ output: sources.output, changes, claims, gates, commands: commandsFromTurns(sources.turns),
+  return trimEvidence({ output: sources.output, changes, claims, gates, commands: unit.commandEvidence ?? commandsFromTurns(sources.turns),
     sourceReads: sources.mustWrite ? currentReads : mergeSourceReads(unit.readEvidence ?? [], currentReads),
     ...(planChecks.length ? { orchestration: { contractId: contract.id, ...(contract.status === undefined ? {} : { status: contract.status }), planChecks,
       ...(contract.createdAt === undefined ? {} : { createdAt: contract.createdAt }),

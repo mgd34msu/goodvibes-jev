@@ -19533,6 +19533,17 @@
       "text": "export interface ClaimVerificationResult { claimedPaths: string[]; foundPaths: string[]; missingPaths: string[]; changesDetected: boolean; kind: ClaimVerificationKind; verified: boolean; summary: string; }"
     },
     {
+      "name": "CommandExecutionReceipt",
+      "kind": "interface",
+      "required": [
+        "agentId",
+        "callId",
+        "callIndex",
+        "turn"
+      ],
+      "text": "export interface CommandExecutionReceipt extends EvidenceCommand { readonly agentId: string; readonly turn: number; readonly callIndex: number; readonly callId: string; }"
+    },
+    {
       "name": "Completion",
       "kind": "interface",
       "required": [
@@ -20251,7 +20262,7 @@
         "transportRetries",
         "usage"
       ],
-      "text": "export interface ContractUnit { readonly id: string; readonly groupId: string; title: string; goal: string; brief: string; readonly role: UnitRole; readonly dependsOn: readonly string[]; readonly files: readonly string[]; readonly attempts: number; criteria: Criterion[]; status: UnitStatus; agentIds: string[]; activeAgentId?: string | undefined; route?: UnitRoute | undefined; checks: UnitCheck[]; nudges: Nudge[]; fixRounds: number; freshAgents: number; transportRetries: number; touchedPaths: string[]; baseline?: TreeBaseline | undefined; usage: WorkItemUsage; answer?: string | undefined; lastOutput?: string | undefined; readEvidence?: readonly import('./evidence.js').SourceReadEvidence[] | undefined; lastReport?: CompletionReport | undefined; failureReason?: string | undefined; attemptUnits?: ContractUnit[] | undefined; readonly attemptOf?: string | undefined; readonly attemptIndex?: number | undefined; attemptSelection?: AttemptSelectionRecord | undefined; } ;; via CompletionReport = export type CompletionReport = EngineerReport | TesterReport | GenericReport; ;; WorkItemUsage = export interface WorkItemUsage { readonly inputTokens: number; readonly outputTokens: number; readonly cacheReadTokens: number; readonly cacheWriteTokens: number; readonly reasoningTokens?: number | undefined; readonly llmCallCount: number; readonly turnCount: number; readonly toolCallCount: number; readonly costUsd: number | null; readonly costState: 'priced' | 'unpriced' | 'estimated'; readonly costSource?: WorkItemCostSource | undefined; readonly pricingAsOf?: string | undefined; }"
+      "text": "export interface ContractUnit { readonly id: string; readonly groupId: string; title: string; goal: string; brief: string; readonly role: UnitRole; readonly dependsOn: readonly string[]; readonly files: readonly string[]; readonly attempts: number; criteria: Criterion[]; status: UnitStatus; agentIds: string[]; activeAgentId?: string | undefined; route?: UnitRoute | undefined; checks: UnitCheck[]; nudges: Nudge[]; fixRounds: number; freshAgents: number; transportRetries: number; touchedPaths: string[]; baseline?: TreeBaseline | undefined; usage: WorkItemUsage; answer?: string | undefined; lastOutput?: string | undefined; readEvidence?: readonly import('./evidence.js').SourceReadEvidence[] | undefined; commandEvidence?: readonly import('./evidence.js').CommandExecutionReceipt[] | undefined; lastReport?: CompletionReport | undefined; failureReason?: string | undefined; attemptUnits?: ContractUnit[] | undefined; readonly attemptOf?: string | undefined; readonly attemptIndex?: number | undefined; attemptSelection?: AttemptSelectionRecord | undefined; } ;; via CompletionReport = export type CompletionReport = EngineerReport | TesterReport | GenericReport; ;; WorkItemUsage = export interface WorkItemUsage { readonly inputTokens: number; readonly outputTokens: number; readonly cacheReadTokens: number; readonly cacheWriteTokens: number; readonly reasoningTokens?: number | undefined; readonly llmCallCount: number; readonly turnCount: number; readonly toolCallCount: number; readonly costUsd: number | null; readonly costState: 'priced' | 'unpriced' | 'estimated'; readonly costSource?: WorkItemCostSource | undefined; readonly pricingAsOf?: string | undefined; }"
     },
     {
       "name": "ContractUnitView",
@@ -21928,7 +21939,7 @@
     {
       "name": "collectUnitEvidence",
       "kind": "function",
-      "text": "export declare function collectUnitEvidence(contract: Pick<ContractView, 'id' | 'sessionId'> & Partial<Pick<ContractView, 'status' | 'decisions' | 'createdAt' | 'origin' | 'units' | 'proposedUnits'>>, unit: Pick<ContractUnit, 'id' | 'goal' | 'brief' | 'files' | 'baseline' | 'readEvidence'>, trigger: CheckTrigger, sources: UnitEvidenceSources): Promise<UnitEvidence>; ;; via Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
+      "text": "export declare function collectUnitEvidence(contract: Pick<ContractView, 'id' | 'sessionId'> & Partial<Pick<ContractView, 'status' | 'decisions' | 'createdAt' | 'origin' | 'units' | 'proposedUnits'>>, unit: Pick<ContractUnit, 'id' | 'goal' | 'brief' | 'files' | 'baseline' | 'readEvidence' | 'commandEvidence'>, trigger: CheckTrigger, sources: UnitEvidenceSources): Promise<UnitEvidence>; ;; via Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; Promise = interface Promise<T> { then<TResult1 = T, TResult2 = never>(onfulfilled?: ((value: T) => TResult1 | PromiseLike<TResult1>) | undefined | null, onrejected?: ((reason: any) => TResult2 | PromiseLike<TResult2>) | undefined | null): Promise<TResult1 | TResult2>; catch<TResult = never>(onrejected?: ((reason: any) => TResult | PromiseLike<TResult>) | undefined | null): Promise<T | TResult>; }"
     },
     {
       "name": "commandsFromTurns",
@@ -22483,7 +22494,7 @@
     {
       "name": "ownerReply",
       "kind": "const",
-      "text": "ownerReply: import(\"@goodvibes-jev/judgment\").ReplyReader<\"reject\" | \"amend\" | \"approve\" | \"unclear\">"
+      "text": "ownerReply: import(\"@goodvibes-jev/judgment\").ReplyReader<\"reject\" | \"approve\" | \"amend\" | \"unclear\">"
     },
     {
       "name": "parseAmendment",

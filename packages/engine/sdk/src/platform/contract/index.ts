@@ -220,7 +220,7 @@ export {
   trimEvidence,
   writtenPaths,
 } from './evidence.js';
-export type { CheckState, ContractTurnRecord, EvidenceCommand, FileChange, RawUnitEvidence, UnitEvidence, UnitEvidenceSources } from './evidence.js';
+export type { CheckState, CommandExecutionReceipt, ContractTurnRecord, EvidenceCommand, FileChange, RawUnitEvidence, UnitEvidence, UnitEvidenceSources } from './evidence.js';
 export {
   CHECK_SITES,
   applySeverities,
