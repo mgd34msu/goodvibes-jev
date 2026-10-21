@@ -7,7 +7,7 @@ const CONTEXT = 'This is the native final-CONTENT gate for a staged deliverable,
 function finalAnswerReview(stakes: ContractAcceptanceStakes) {
   return defineBattery({
     name: stakes === 'high' ? 'contract.final-answer-review' : 'contract.final-answer-review.critical',
-    version: 7,
+    version: 8,
     description: 'Reviews proposed deliverable content and factual support independently of pending host acceptance and publication.',
     accuracyFloor: 0.95,
     items: {

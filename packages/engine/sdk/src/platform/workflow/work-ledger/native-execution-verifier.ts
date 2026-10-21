@@ -16,6 +16,7 @@ import type { ReadAccessFilter } from '../../tools/shared/read-access.js';
 import { emptyWorkItemUsage } from '../../orchestration/types.js';
 import { parseNativeWorkExecutionRecord, type NativeWorkExecutionRecord } from './native-execution-types.js';
 import type { WorkEvidenceReference } from './types.js';
+import { nativeJudgeBatches, nativeQuestionBatches } from './native-judge-proof.js';
 import { nativeSettlementDigest, type NativeWorkAttestation } from './native-settlement-types.js';
 export type { NativeWorkAttestation } from './native-settlement-types.js';
 
@@ -114,22 +115,16 @@ export async function verifyNativeWorkExecution(options: {
     const reading = readYesNo({ type: 'noul', noul: probability }, band);
     return reading.verdict === 'no' && reading.outcome === 'act' ? probability : null;
   };
-  function priorJudge(check: ContractView['checks'][number], criteria: ContractView['criteria'], site: string, id = check.decisionIds[0]): boolean {
-    const entry = id ? options.decisionLog.get(id) : null;
-    if (!entry || entry.status !== 'answered' || entry.context.site !== site) return false;
-    const answers = object(entry.answers); const questions = object(entry.questions);
-    const judged = criteria.filter(criterion => criterion.disposition === 'judged');
-    // Prior acceptance may have used a stricter band. At minimum its raw answer
-    // must truly pass the shared high-stakes band and match the stored reading.
-    const goal = answers ? rawNo(answers['goal'], UNIT_JUDGE_BANDS.high) : null;
-    if (!answers || !questions || Object.keys(answers).length !== judged.length + 1
-      || goal === null || goal !== check.goal.probabilityUnmet) return false;
-    return judged.every((criterion, index) => {
-      const raw = rawNo(answers[`criterion_${index}`], UNIT_JUDGE_BANDS.high);
-      const reading = criterion.readings.find(value => value.checkId === check.id && value.decisionId === id);
-      const question = object(questions[`criterion_${index}`]); const instructions = object(question?.['instructions']);
-      return raw !== null && reading?.probabilityUnmet === raw && reading.verdict === 'met' && reading.outcome === 'act'
-        && instructions?.['criterion'] === criterion.text;
+  function priorJudge(check: ContractView['checks'][number], criteria: ContractView['criteria'], site: string, ids = check.decisionIds.slice(0, 1)): boolean {
+    const readings = nativeJudgeBatches(ids, criteria, site, options.decisionLog);
+    if (!readings) return false;
+    const goal = rawNo(readings.get('goal')!.answer, UNIT_JUDGE_BANDS.high);
+    if (goal === null || goal !== check.goal.probabilityUnmet) return false;
+    return criteria.filter(criterion => criterion.disposition === 'judged').every((criterion, index) => {
+      const source = readings.get(`criterion_${index}`)!;
+      const raw = rawNo(source.answer, UNIT_JUDGE_BANDS.high);
+      const reading = criterion.readings.find(value => value.checkId === check.id && value.decisionId === source.decisionId);
+      return raw !== null && reading?.probabilityUnmet === raw && reading.verdict === 'met' && reading.outcome === 'act';
     });
   }
   function genuine(unit: ContractView['units'][number]): boolean {
@@ -145,9 +140,16 @@ export async function verifyNativeWorkExecution(options: {
   if (units.length === 0 || units.some(unit => unit.status !== 'passed' || !genuine(unit))) throw new Error('Native execution lacks genuine unit and quality checks');
   const deliverable = contract.checks.at(-1);
   const deliverableSite = 'contract.check.deliverable-judge';
-  const deliverableJudgeId = deliverable?.decisionIds.find(id => priorJudge(deliverable, contract.criteria, deliverableSite, id));
+  const judgeGroups = new Map<string, string[]>();
+  for (const id of deliverable?.decisionIds ?? []) {
+    const entry = options.decisionLog.get(id);
+    if (entry?.status !== 'answered' || entry.context.site !== deliverableSite) continue;
+    const ids = judgeGroups.get(entry.stateHash) ?? [];
+    ids.push(id); judgeGroups.set(entry.stateHash, ids);
+  }
+  const deliverableJudgeIds = deliverable ? [...judgeGroups.values()].find(ids => priorJudge(deliverable, contract.criteria, deliverableSite, ids)) : undefined;
   if (!deliverable || deliverable.result !== 'pass' || deliverable.goal.verdict !== 'met' || deliverable.goal.outcome !== 'act'
-    || !deliverableJudgeId) throw new Error('Native execution lacks a genuine deliverable check');
+    || !deliverableJudgeIds) throw new Error('Native execution lacks a genuine deliverable check');
   // The independent content review is part of completion, not an extra ID that
   // makes an otherwise genuine requirements check invalid. Verify its actual
   // recorded answers and input binding; a checkpoint's passed label is no proof.
@@ -158,26 +160,25 @@ export async function verifyNativeWorkExecution(options: {
   try { content = contentDecision ? object(JSON.parse(contentDecision.reason)) : null; } catch { /* Missing valid evidence fails below. */ }
   const contentIds = content?.['decisionIds'];
   const fulfillmentIds = content?.['fulfillmentDecisionIds'];
-  const contentId = Array.isArray(contentIds) && contentIds.length === 1 && typeof contentIds[0] === 'string' ? contentIds[0] : undefined;
-  const contentEntry = contentId ? options.decisionLog.get(contentId) : null;
+  const contentEntries = Array.isArray(contentIds) && contentIds.every(id => typeof id === 'string')
+    ? contentIds.map(id => options.decisionLog.get(id)) : [];
   const contentReadings = object(content?.['readings']);
-  const contentAnswers = contentEntry?.status === 'answered' ? object(contentEntry.answers) : null;
-  const contentQuestions = contentEntry ? object(contentEntry.questions) : null;
-  const battery = contentEntry?.context.battery === FINAL_ANSWER_REVIEWS.critical.name ? FINAL_ANSWER_REVIEWS.critical : FINAL_ANSWER_REVIEWS.high;
-  const expectedIds = Array.isArray(fulfillmentIds) ? [...new Set([...fulfillmentIds, ...(Array.isArray(contentIds) ? contentIds : []), deliverableJudgeId])] : [];
+  const contentQuestions = Array.isArray(contentIds) && contentIds.every(id => typeof id === 'string')
+    ? nativeQuestionBatches(contentIds, ['unfinished', 'unsupported'], 'contract.check.final-answer-review', options.decisionLog) : null;
+  const battery = contentEntries[0]?.context.battery === FINAL_ANSWER_REVIEWS.critical.name ? FINAL_ANSWER_REVIEWS.critical : FINAL_ANSWER_REVIEWS.high;
+  const expectedIds = Array.isArray(fulfillmentIds) ? [...new Set([...fulfillmentIds, ...(Array.isArray(contentIds) ? contentIds : []), ...deliverableJudgeIds])] : [];
   if (content?.['schemaVersion'] !== 2 || content['passed'] !== true || content['outputDigest'] !== hashState(contract.answer ?? '')
-    || !contentEntry || contentEntry.status !== 'answered' || contentEntry.context.site !== 'contract.check.final-answer-review'
-    || contentEntry.context.battery !== battery.name || contentEntry.context.batteryVersion !== battery.version
-    || contentEntry.stateHash !== content['stateHash'] || !contentReadings || !contentAnswers || !contentQuestions
-    || Object.keys(contentAnswers).length !== 2 || Object.keys(contentQuestions).length !== 2
+    || !contentQuestions || !contentReadings || !contentEntries.length
+    || !contentEntries.every(entry => entry?.status === 'answered' && entry.context.battery === battery.name
+      && entry.context.batteryVersion === battery.version && entry.stateHash === content['stateHash'])
     || !['unfinished', 'unsupported'].every(key => {
       const reading = object(contentReadings[key]); const item = battery.items[key as 'unfinished' | 'unsupported'];
-      const raw = rawNo(contentAnswers[key], item.band);
+      const source = contentQuestions.get(key)!;
+      const raw = rawNo(source.answer, item.band);
       return raw !== null && reading?.['probability'] === raw && reading['verdict'] === 'no' && reading['outcome'] === 'act'
-        && nativeSettlementDigest(contentQuestions[key]) === nativeSettlementDigest(item.question);
-    }) || !Array.isArray(fulfillmentIds) || fulfillmentIds.length !== 1
-    || !fulfillmentIds.every(id => typeof id === 'string' && options.decisionLog.get(id)?.status === 'answered'
-      && options.decisionLog.get(id)?.context.site === deliverableSite)
+        && nativeSettlementDigest(source.question) === nativeSettlementDigest(item.question);
+    }) || !Array.isArray(fulfillmentIds) || !fulfillmentIds.every(id => typeof id === 'string')
+    || !nativeJudgeBatches(fulfillmentIds, contract.criteria, deliverableSite, options.decisionLog)
     || !contentDecision || nativeSettlementDigest(contentDecision.decisionIds) !== nativeSettlementDigest(contentIds)
     || deliverable.decisionIds.length !== expectedIds.length || !expectedIds.every(id => typeof id === 'string' && deliverable.decisionIds.includes(id))) {
     throw new Error('Native execution lacks a genuine final-answer content review');

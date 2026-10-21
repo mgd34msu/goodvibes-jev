@@ -1,3 +1,4 @@
+import { JudgmentContextLimitError } from '../../judgment/src/port/errors.ts';
 import { checkSettings } from '../sdk/src/platform/contract/check.js';
 import { CONTRACT_CONFIG_DEFAULTS } from '../sdk/src/platform/contract/config.js';
 import { verifyNativeWorkExecution } from '../sdk/src/platform/workflow/work-ledger/native-execution-verifier.js';
@@ -128,6 +129,70 @@ test('native settlement refuses missing, failing or mismatched final-content pro
   }
   expect(f.storage.current(f.key).ledger.revision).toBe(2);
   expect(f.storage.current(f.key).settlement).toBeNull();
+});
+
+test('native settlement proves every original question across actual deliverable batches and refuses incomplete or mixed proof', async () => {
+  let refused = false, refusedContent = false;
+  const f = await fixture({ harness: { port: context => {
+    const evidence = context.state['evidence'] as { orchestration?: { currentValidation?: { scope: string } } } | undefined;
+    if (!refusedContent && context.name === 'unfinished') { refusedContent = true; throw new JudgmentContextLimitError(); }
+    if (!refused && context.name === 'goal' && evidence?.orchestration?.currentValidation?.scope === 'deliverable') {
+      refused = true; throw new JudgmentContextLimitError();
+    }
+    return undefined;
+  } } });
+  const started = await f.host.start(f.target, f.authority);
+  const contract = await completed(f.harness, started.admission.contractId);
+  expect(contract.status).toBe('passed');
+  const rootCheck = contract.checks.at(-1)!;
+  const rootIds = rootCheck.decisionIds.filter(id => f.log.get(id)?.context.site === 'contract.check.deliverable-judge');
+  expect(rootIds).toHaveLength(2);
+  expect(rootCheck.decisionIds).toHaveLength(4);
+  expect(new Set(rootIds.map(id => f.log.get(id)!.stateHash)).size).toBe(1);
+  for (const [index, criterion] of contract.criteria.entries()) {
+    const id = criterion.readings.find(reading => reading.checkId === rootCheck.id)!.decisionId!;
+    expect(f.log.get(id)!.questions).toHaveProperty(`criterion_${index}`);
+  }
+  const targetId = rootIds.find(id => Object.hasOwn(f.log.get(id)!.questions as object, 'criterion_1'))!;
+  for (const mutation of ['missing-entry', 'missing-question', 'extra-question', 'duplicate-question', 'wrong-state', 'wrong-criterion'] as const) {
+    await expect(verifyNativeWorkExecution({ execution: f.storage.current(f.key).record!, runner: f.harness.runner,
+      port: f.hostOptions.port, decisionLog: { get(id) {
+        const entry = f.log.get(id);
+        if (id !== targetId || entry?.status !== 'answered') return entry;
+        if (mutation === 'missing-entry') return undefined;
+        if (mutation === 'wrong-state') return { ...entry, stateHash: 'different-batch-state' as typeof entry.stateHash };
+        const questions = JSON.parse(JSON.stringify(entry.questions)), answers = JSON.parse(JSON.stringify(entry.answers));
+        if (mutation === 'missing-question') { delete questions.criterion_1; delete answers.criterion_1; }
+        if (mutation === 'extra-question') { questions.criterion_99 = questions.criterion_1; answers.criterion_99 = answers.criterion_1; }
+        if (mutation === 'duplicate-question') {
+          const source = f.log.get(rootIds.find(id => id !== targetId)!)!;
+          questions.goal = (source.questions as Record<string, unknown>)['goal']; answers.goal = noulAnswer(0.03);
+        }
+        if (mutation === 'wrong-criterion') questions.criterion_1.instructions.criterion = 'A replacement requirement';
+        return { ...entry, questions, answers };
+      } }, settings: checkSettings(CONTRACT_CONFIG_DEFAULTS), readAccessFilter: async () => true,
+      signal: new AbortController().signal, assertCurrent() {} })).rejects.toThrow('genuine deliverable check');
+  }
+  const contentIds = rootCheck.decisionIds.filter(id => f.log.get(id)?.context.site === 'contract.check.final-answer-review');
+  expect(contentIds).toHaveLength(2);
+  for (const mutation of ['missing-entry', 'missing-question', 'duplicate-question', 'wrong-state'] as const) {
+    await expect(verifyNativeWorkExecution({ execution: f.storage.current(f.key).record!, runner: f.harness.runner,
+      port: f.hostOptions.port, decisionLog: { get(id) {
+        const entry = f.log.get(id);
+        if (id !== contentIds[1] || entry?.status !== 'answered') return entry;
+        if (mutation === 'missing-entry') return undefined;
+        if (mutation === 'wrong-state') return { ...entry, stateHash: 'different-content-state' as typeof entry.stateHash };
+        const questions = JSON.parse(JSON.stringify(entry.questions)), answers = JSON.parse(JSON.stringify(entry.answers));
+        if (mutation === 'missing-question') { delete questions.unsupported; delete answers.unsupported; }
+        else { questions.unfinished = (f.log.get(contentIds[0]!)!.questions as Record<string, unknown>)['unfinished']; answers.unfinished = noulAnswer(0.03); }
+        return { ...entry, questions, answers };
+      } }, settings: checkSettings(CONTRACT_CONFIG_DEFAULTS), readAccessFilter: async () => true,
+      signal: new AbortController().signal, assertCurrent() {} })).rejects.toThrow('genuine final-answer content review');
+  }
+  expect(f.storage.current(f.key).ledger.revision).toBe(2);
+  const receipt = await f.host.settle(f.key, f.authority);
+  expect(receipt.attestation.outcome).toBe('verified');
+  expect(f.harness.agentsOf('u1')).toHaveLength(1);
 });
 
 test('an unmet original criterion cannot be hidden by planner success', async () => {

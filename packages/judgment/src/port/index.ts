@@ -10,7 +10,7 @@ export {
   validEndpointURL,
   isPinnedJudgmentModel,
 } from './config.ts';
-export { JudgmentError, type JudgmentErrorKind } from './errors.ts';
+export { JudgmentError, JudgmentContextLimitError, type JudgmentErrorKind } from './errors.ts';
 export { LIMITS, estimateTokens, validateContextBudget, validateQuestions } from './limits.ts';
 export { createModelCatalog, type ModelCatalog } from './models.ts';
 export { createSystemOnePort } from './transport.ts';

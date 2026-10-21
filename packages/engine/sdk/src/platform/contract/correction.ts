@@ -23,6 +23,7 @@ import { nativeContractActionSource } from './native-decisions.js';
  * builds on it; its re-check then reads the contract branch, limited to the
  * files the unit and its fixes touched.
  */
+import { waitForTaskRecovery } from '../core/response-completion.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { hashState } from '@goodvibes-jev/judgment';
 import type { StallRoute } from '../../events/contract.js';
@@ -297,6 +298,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
         return;
       }
       repair = { problems: checked.problems, previousPlan: checked.plan === undefined ? output : renderContractPlan(checked.plan) };
+      await waitForTaskRecovery(0, run.abort.signal);
     }
   }
 
@@ -347,6 +349,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
       if (decision.decision.outcome === 'reject') { run.control.fail('planning', 'Jev refused the native fix plan'); return; }
       if (!canRepair || decision.continuationId !== 'repair-fix-plan') throw new Error('Native fix continuation is no longer eligible');
       decision.assertCurrent(); repair = { problems: checked.problems, previousPlan: checked.plan === undefined ? output! : renderContractPlan(checked.plan) }; needsPlan = true;
+      await waitForTaskRecovery(0, run.abort.signal);
     }
   }
 

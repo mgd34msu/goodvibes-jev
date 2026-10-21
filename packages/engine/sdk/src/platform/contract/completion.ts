@@ -16,8 +16,8 @@ import { assertOwnedContractSource, hasDerivedAcceptanceChecks } from './owned-s
  *   fixed the deliverable, the contract's diff, gates, and the unit verdicts
  *   behind each criterion. Pass at act commits; anything else goes to
  *   correction. A plan whose every criterion is excluded or met by structure
- *   has none of the user's words left to judge (the judge pattern needs at
- *   least one criterion), so it commits without a deliverable check.
+ *   still has its original goal and final content judged; dispositions never
+ *   bypass whole-task acceptance.
  * - Commit: worktree mode merges the contract branch into the project's branch
  *   (no fast-forward) or applies it as uncommitted changes; shared mode commits
  *   exactly the touched paths (or everything, or nothing, by
@@ -36,7 +36,7 @@ import { contractSourceScope } from './work-receipts.js';
 
 import { spawnSync } from 'node:child_process';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { hashState, type JsonValue, type YesNoReading } from '@goodvibes-jev/judgment';
+import { hashState, JudgmentContextLimitError, type JsonValue, type YesNoReading } from '@goodvibes-jev/judgment';
 import { AgentWorktree, IsolatedWorktree } from '../agents/worktree.js';
 import { excludeUntouchedLaunchResidue } from '../orchestration/dirty-guard.js';
 import { GitService } from '../git/service.js';
@@ -299,7 +299,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     const judgedCriteria = judged(input.criteria);
     const site = input.scope === 'group' ? COMPLETION_SITES.group : COMPLETION_SITES.deliverable;
     const judges = input.scope === 'group' ? GROUP_JUDGES : DELIVERABLE_JUDGES;
-    const fulfillmentEvidence = { ...acceptanceEvidence, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }),
+    const fulfillmentEvidence = { ...acceptanceEvidence, ...(input.scope === 'deliverable' ? { originalRequest: contract.ask } : {}), ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }),
       ...(contract.originalSource ? { originalSource: { goal: contract.originalSource.goal, criteria: [...contract.originalSource.criteria] },
         acceptanceChecksOrigin: hasDerivedAcceptanceChecks(contract.originalSource) ? 'planner-derived' : 'original-source' } : {}),
       ...(input.scope === 'group' ? { units: input.summaries } : primary === undefined ? { criteria: input.summaries } : {}) };
@@ -328,7 +328,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
                 goal: { probabilityUnmet: previous!.goal.probability, verdict: criterionVerdict(previous!.goal) },
                 criteria: judgedCriteria.map((criterion, index) => ({ id: criterion.id, probabilityUnmet: previous!.criteria[index]!.probability,
                   verdict: criterionVerdict(previous!.criteria[index]!) })),
-                decisionIds: previous!.decisionId ? [previous!.decisionId] : [],
+                decisionIds: [...previous!.decisionIds],
                 meaning: 'Actual initial assessment of the identical output, original requirements and primary facts. The only new evidence is the completed independent content-review receipt. Reconsider a failed requirement only to the extent that this new receipt actually resolves it. Content approval does not repair missing substantive work, supply unshown execution or undo a factual failure. All original obligations still apply.',
               } } },
           { site, signal: run.abort.signal },
@@ -344,7 +344,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         goal: { probabilityUnmet: judgment.goal.probability, verdict: criterionVerdict(judgment.goal), outcome: judgment.goal.outcome },
         criteria: judgedCriteria.map((criterion, index) => ({ id: criterion.id, probabilityUnmet: judgment.criteria[index]!.probability,
           verdict: criterionVerdict(judgment.criteria[index]!), outcome: judgment.criteria[index]!.outcome })),
-        decisionIds: judgment.decisionId === undefined ? [] : [judgment.decisionId],
+        decisionIds: [...judgment.decisionIds],
         meaning: 'Actual just-completed native original-requirements assessment of this exact output and primary evidence. These readings establish only the requirements and work they assessed. They are not permission to publish, approval of this separate final-content review, proof of unshown execution, or acceptance of a later rewritten answer. Every requirement reading, every gate and the final-content review must all pass before owner publication.' };
       const state = { goal: input.goal, criteria: judged(input.criteria).map(criterion => criterion.text), output: evidence.output,
         evidence: { ...fulfillmentEvidence, fulfillmentAssessment }, ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) };
@@ -372,16 +372,26 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
           const rawReviewPort = judgmentPort(site);
           let reviewStateHash: string | undefined;
           const boundReviewPort: typeof rawReviewPort = { ...rawReviewPort, ask(request) {
-            reviewStateHash = hashState(request.state);
+            const currentHash = hashState(request.state);
+            if (reviewStateHash !== undefined && reviewStateHash !== currentHash) throw new Error('Final-answer evidence changed between content batches');
+            reviewStateHash = currentHash;
             return rawReviewPort.ask(request);
           } };
-          const review = await reviewBattery.run(
-            meteredPort(nativeContractPort(contract, context.native, boundReviewPort, run.abort.signal), reviewUsage), state,
-            { site, signal: run.abort.signal },
-          );
+          const reviewPort = meteredPort(nativeContractPort(contract, context.native, boundReviewPort, run.abort.signal), reviewUsage);
+          const readContent = async () => {
+            try { return [await reviewBattery.run(reviewPort, state, { site, signal: run.abort.signal })]; }
+            catch (error) {
+              if (!(error instanceof JudgmentContextLimitError)) throw error;
+              const unfinished = await reviewBattery.run(reviewPort, state, { site, signal: run.abort.signal, only: ['unfinished'] });
+              const unsupported = await reviewBattery.run(reviewPort, state, { site, signal: run.abort.signal, only: ['unsupported'] });
+              return [unfinished, unsupported];
+            }
+          };
+          const reviews = await readContent();
           assertOwnedContractSource(contract);
-          if (run.terminal) { review.recordAction('discarded: the contract already ended'); return null; }
-          const readings = { unfinished: review.readings.unfinished, unsupported: review.readings.unsupported };
+          if (run.terminal) { for (const review of reviews) review.recordAction('discarded: the contract already ended'); return null; }
+          const readings = Object.assign({}, ...reviews.map(review => review.readings)) as typeof reviews[number]['readings'];
+          if (!readings.unfinished || !readings.unsupported) throw new Error('Final-answer review is missing a required reading');
           const passed = Object.values(readings).every(reading => criterionVerdict(reading) === 'met');
           const segments = new Intl.Segmenter(undefined, { granularity: 'sentence' });
           const passages = new Map<string, { reference: string; quote: string }>();
@@ -434,10 +444,10 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
           answerReview = { schemaVersion: 2, policy: reviewPolicy, stateHash: reviewStateHash, fulfillmentDecisionIds: fulfillmentAssessment.decisionIds, evidenceDigest, outputDigest,
             passed, ...(findings.length ? { findings } : {}),
             readings: Object.fromEntries(Object.entries(readings).map(([key, { probability, verdict, outcome }]) => [key, { probability, verdict, outcome }])) as FinalAnswerReviewReceipt['readings'],
-            decisionIds: review.result.decisionId ? [review.result.decisionId] : [],
+            decisionIds: reviews.flatMap(review => review.result.decisionId ? [review.result.decisionId] : []),
           };
           run.decide('checked', targetId, JSON.stringify(answerReview), [...answerReview.decisionIds]);
-          review.recordAction(answerReview.passed ? 'final answer content passed; original-requirement readings and gates must also pass before publication' : 'final answer content rejected; publication remains held');
+          for (const review of reviews) review.recordAction(answerReview.passed ? 'final answer content passed; original-requirement readings and gates must also pass before publication' : 'final answer content rejected; publication remains held');
         } finally { addJudgmentUsage(contract.judgmentUsage, reviewUsage); }
       }
     }
@@ -461,7 +471,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     const failing = failedGates(evidence.gates);
     judgedCriteria.forEach((criterion, index) => {
       const reading = judgment.criteria[index]!;
-      const recorded: CriterionReading = { checkId, at: now, probabilityUnmet: reading.probability, verdict: verdicts.get(criterion.id)!, outcome: reading.outcome, decisionId: judgment.decisionId };
+      const recorded: CriterionReading = { checkId, at: now, probabilityUnmet: reading.probability, verdict: verdicts.get(criterion.id)!, outcome: reading.outcome, decisionId: judgment.criteriaDecisionIds[index] };
       criterion.readings.push(recorded);
       criterion.status = recorded.verdict;
     });
@@ -483,7 +493,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       result: passed ? 'pass' : 'stall',
       problems,
       qualityProblems: [],
-      decisionIds: [...new Set([...(answerReview?.fulfillmentDecisionIds ?? []), ...(answerReview?.decisionIds ?? []), ...(judgment.decisionId === undefined ? [] : [judgment.decisionId])])],
+      decisionIds: [...new Set([...(answerReview?.fulfillmentDecisionIds ?? []), ...(answerReview?.decisionIds ?? []), ...judgment.decisionIds])],
       evidenceDigest: digest,
     };
     input.checks.push(check);
@@ -576,7 +586,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     const judgedCriteria = judged(contract.criteria);
     const answer = renderContractAnswer(contract);
     if (hasDerivedAcceptanceChecks(contract.originalSource) && judgedCriteria.length === 0) throw new Error('Goal-only repair cannot complete without judged acceptance checks');
-    if (judgedCriteria.length > 0) {
+    {
       const reading = await readTarget(run, {
         scope: 'deliverable',
         targetId: contract.id,

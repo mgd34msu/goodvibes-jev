@@ -1,15 +1,20 @@
 import { concludedAnswer, readingSignal } from '../batteries/battery.ts';
 import { checkEachFixture, decisionHeader, fixtureCheck, type FixtureCheck, type NamedDecision } from '../batteries/decision.ts';
-import { noul, type JsonValue, type JudgmentPort, type NoulQuestion, type NoulResponse } from '../port/types.ts';
+import { noul, toJson, type EntryType, type JsonValue, type JudgmentPort, type JudgmentResult, type NoulQuestion, type NoulResponse } from '../port/types.ts';
 import { assertBand, type Outcome, type YesNoBand } from '../readings/bands.ts';
 import { readYesNo, type YesNoReading } from '../readings/readings.ts';
+import { JudgmentContextLimitError, JudgmentError } from '../port/errors.ts';
 import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader } from '../batteries/asking.ts';
 
-/** Judging output against a goal: one yes/no per acceptance criterion and one on the goal itself, all in one request. */
+/** Judging output against a goal: one yes/no per acceptance criterion and one on the goal itself. */
 export interface JudgeSpec extends PatternHeader {
   /** Band on each criterion and goal reading. */
   readonly band: YesNoBand;
   readonly fixtures: readonly JudgeFixture[];
+  /** Partition questions only after an explicit endpoint token-limit refusal. Every batch retains the complete identical state. */
+  readonly partitionOnContextLimit?: boolean;
+  /** Permit a goal-only assessment without manufacturing an acceptance criterion. */
+  readonly allowGoalOnly?: boolean;
 }
 
 export interface JudgeInput {
@@ -41,7 +46,12 @@ export interface Judgment {
   readonly goal: YesNoReading;
   /** Criteria read as unmet, by index. */
   readonly unmet: readonly number[];
+  /** Actual decision containing the goal reading; never an invented aggregate ID. */
   readonly decisionId: string | undefined;
+  /** Every actual answered decision used by this judgment, in request order. */
+  readonly decisionIds: readonly string[];
+  /** Actual decision containing each criterion reading, in criterion order. */
+  readonly criteriaDecisionIds: readonly (string | undefined)[];
   recordAction(action: string): void;
 }
 
@@ -61,7 +71,7 @@ const CRITERION_QUESTION = (criterion: string): NoulQuestion =>
     },
   );
 
-const GOAL_QUESTION: NoulQuestion = noul('Does the work shown by `output` AND `evidence` fail to achieve `goal`? Judge this assigned goal independently of other units and later orchestration stages. Original-source and parent-plan evidence interprets referenced obligations; it does not replace the assigned goal with the entire parent task. Evaluate the substantive work submitted for this check, without requiring earlier approval of this same check or later host-owned steps outside this assigned goal. Missing substantive work still fails, even when every explicit criterion is met. For an actual host-recorded deliverable validation in evidence.orchestration.currentValidation, application of the staged artifacts and release of this same checked answer are mandatory later host operations. Assess their substantive staged result here without claiming those later operations already happened; the host cannot finish until they actually succeed. Independently requested project-side deployment, publication, execution or validation still requires real evidence; a pending host step does not establish it.', {
+const GOAL_QUESTION: NoulQuestion = noul('Does the work shown by `output` AND `evidence` fail to achieve `goal`? Judge this assigned goal independently of other units and later orchestration stages. Original-source and parent-plan evidence interprets referenced obligations; it does not replace the assigned goal with the entire parent task. Evaluate the substantive work submitted for this check, without requiring earlier approval of this same check or later host-owned steps outside this assigned goal. Missing substantive work still fails, even when every explicit criterion is met. For an actual host-recorded deliverable validation in evidence.orchestration.currentValidation, assess the complete original obligation source as well as the assigned goal: use the literal native/original source when supplied, otherwise evidence.originalRequest. A planner rephrasing cannot narrow that original request; a display label cannot replace or extend an authoritative native source. In this deliverable validation, application of the staged artifacts and release of this same checked answer are mandatory later host operations. Assess their substantive staged result here without claiming those later operations already happened; the host cannot finish until they actually succeed. Independently requested project-side deployment, publication, execution or validation still requires real evidence; a pending host step does not establish it.', {
   true: 'The work falls short of the goal or does something other than the goal asks.',
   false: 'The work shown by the output and evidence achieves what the goal asks.',
 });
@@ -132,12 +142,12 @@ function fixtureChecks(fixture: JudgeFixture, judgment: Judgment): FixtureCheck[
 }
 
 /** Throws unless there is at least one criterion to judge against. */
-function assertHasCriteria(judge: string, input: JudgeInput): void {
-  if (input.criteria.length === 0) throw new RangeError(`judge ${judge}: nothing to judge without criteria`);
+function assertHasCriteria(judge: string, input: JudgeInput, allowGoalOnly = false): void {
+  if (input.criteria.length === 0 && !allowGoalOnly) throw new RangeError(`judge ${judge}: nothing to judge without criteria`);
 }
 
-function assertJudgeFixture(judge: string, fixture: JudgeFixture): void {
-  assertHasCriteria(judge, fixture);
+function assertJudgeFixture(judge: string, fixture: JudgeFixture, allowGoalOnly = false): void {
+  assertHasCriteria(judge, fixture, allowGoalOnly);
   const unmet = fixture.expect.unmet ?? [];
   const missing = unmet.find((index) => fixture.criteria[index] === undefined);
   if (missing !== undefined) throw new RangeError(`judge ${judge}: fixture ${fixture.name} names criterion ${missing}, which does not exist`);
@@ -152,20 +162,53 @@ function judgeQuestions(criteria: readonly string[]): Record<string, NoulQuestio
 export function defineJudge(spec: JudgeSpec): Judge {
   const header = decisionHeader(spec);
   assertBand(spec.band);
-  for (const fixture of spec.fixtures) assertJudgeFixture(spec.name, fixture);
+  for (const fixture of spec.fixtures) assertJudgeFixture(spec.name, fixture, spec.allowGoalOnly);
 
   const judge: Judge = {
     ...header,
     async judge(port, input, options = {}) {
-      assertHasCriteria(spec.name, input);
-      const state = { goal: input.goal, output: input.output, ...(input.evidence === undefined ? {} : { evidence: input.evidence }) };
-      const result = await askAs(port, spec, 'judge', state, judgeQuestions(input.criteria), options);
-      const answers = result.answers as Readonly<Record<string, NoulResponse>>;
-      const criteria = input.criteria.map((_, index) => readYesNo(answers[criterionKey(index)]!, spec.band));
+      assertHasCriteria(spec.name, input, spec.allowGoalOnly);
+      const criterionTexts = [...input.criteria];
+      // Capture once so an overflow cannot cause later batches to judge changed
+      // borrowed evidence. Each transport receives its own identical JSON image.
+      const state = toJson({ goal: input.goal, output: input.output, ...(input.evidence === undefined ? {} : { evidence: input.evidence }) }) as EntryType;
+      type Result = JudgmentResult<Record<string, NoulQuestion>>;
+      const read = async (questions: Record<string, NoulQuestion>): Promise<Result[]> => {
+        options.signal?.throwIfAborted();
+        try {
+          const result = await askAs(port, header, 'judge', structuredClone(state), structuredClone(questions), options);
+          if (JSON.stringify(Object.keys(result.answers).sort()) !== JSON.stringify(Object.keys(questions).sort())) {
+            throw new JudgmentError('invalid-response', 'The judge response does not match its exact question batch.');
+          }
+          return [result];
+        }
+        catch (error) {
+          const entries = Object.entries(questions);
+          if (!(error instanceof JudgmentContextLimitError) || !spec.partitionOnContextLimit || entries.length < 2) throw error;
+          const middle = Math.ceil(entries.length / 2);
+          const first = await read(Object.fromEntries(entries.slice(0, middle)));
+          const rest = await read(Object.fromEntries(entries.slice(middle)));
+          return [...first, ...rest];
+        }
+      };
+      const results = await read(judgeQuestions(criterionTexts));
+      const answers = Object.assign({}, ...results.map(result => result.answers)) as Record<string, NoulResponse>;
+      const owner = new Map(results.flatMap(result => Object.keys(result.answers).map(key => [key, result.decisionId] as const)));
+      const criteria = criterionTexts.map((_, index) => readYesNo(answers[criterionKey(index)]!, spec.band));
       const goal = readYesNo(answers['goal']!, spec.band);
+      const decisionIds = results.flatMap(result => result.decisionId ? [result.decisionId] : []);
+      if (new Set(decisionIds).size !== decisionIds.length) throw new JudgmentError('unrecorded', 'Distinct judge batches must have distinct recorded decision identities.');
+      const criteriaDecisionIds = criterionTexts.map((_, index) => owner.get(criterionKey(index)));
       const { verdict, outcome, unmet } = aggregateJudgment({ criteria, goal });
-      recordReadings(port, result, { verdict, outcome, goal, criteria });
-      return { verdict, outcome, criteria, goal, unmet, decisionId: result.decisionId, recordAction: (action) => recordAction(port, result.decisionId, action) };
+      for (const result of results) {
+        if (results.length === 1) recordReadings(port, result, { verdict, outcome, goal, criteria });
+        else recordReadings(port, result, {
+          questions: Object.fromEntries(Object.keys(result.answers).map(key => [key, key === 'goal' ? goal : criteria[Number(key.slice('criterion_'.length))]])),
+          aggregate: { verdict, outcome, decisionIds },
+        });
+      }
+      return { verdict, outcome, criteria, goal, unmet, decisionId: owner.get('goal'), decisionIds, criteriaDecisionIds,
+        recordAction(action) { for (const result of results) recordAction(port, result.decisionId, action); } };
     },
     checkFixtures: (port, options = {}) =>
       checkEachFixture(spec.fixtures, options, async (fixture, run) => fixtureChecks(fixture, await judge.judge(port, fixture, run))),

@@ -35,6 +35,31 @@ async function run(h: Harness): Promise<string> {
   return contract.id;
 }
 
+test.each(['none', 'goal', 'content'])('an excluded-only root still needs original-goal and content approval (failure=%s)', async failure => {
+  const rootQuestions: string[] = [], originalRequests: string[] = []; let reviews = 0;
+  const h = use(makeHarness({ plan: oneUnitPlan(1), scripts: { u1: finishes('The retained parser result.') }, port: context => {
+    if (context.name === 'topology_only') return noulAnswer(0.98);
+    if (judgeOf(context) === 'deliverable') {
+      rootQuestions.push(context.name);
+      originalRequests.push((context.state['evidence'] as { originalRequest: string }).originalRequest);
+      return noulAnswer(failure === 'goal' ? 0.98 : 0.03);
+    }
+    if (context.name === 'unfinished') { reviews++; return noulAnswer(failure === 'content' ? 0.98 : 0.03); }
+    return undefined;
+  } }));
+  const { contract } = startContract(h);
+  await waitFor(() => (h.runner.get(contract.id)?.checks.length ?? 0) > 0, 'root goal and content checks');
+  if (failure === 'none') await waitFor(() => terminal(h, contract.id), 'checked completion');
+  const current = contractOf(h, contract.id);
+  expect(current.criteria[0]!.disposition).toBe('excluded');
+  expect(originalRequests.every(request => request === contract.ask)).toBe(true);
+  expect(rootQuestions.length).toBeGreaterThan(0);
+  expect(rootQuestions.every(key => key === 'goal')).toBe(true);
+  expect(reviews).toBe(1);
+  if (failure === 'none') expect(current.status).toBe('passed');
+  else { expect(current.status).not.toBe('passed'); expect(current.commit).toBeUndefined(); expect(current.checks[0]!.result).toBe('stall'); }
+});
+
 test('original owner observations reach worker admission, unit checking and original fulfillment', async () => {
   const owner = { kind: 'original-owner-read-observations', ownerSessionId: 'session-1',
     sourceReads: [{ path: 'original.ts', returnedRanges: ['1-10'], returnedLines: 10 }],

@@ -100,6 +100,63 @@ describe('judge', () => {
     expect(got.unmet).toEqual([1]);
   });
 
+  test('explicit overflow partitions every original question with complete stable evidence and exact decision provenance', async () => {
+    using log = new SqliteDecisionLog(':memory:');
+    const judge = defineJudge({ ...header, name: 'test.batched-judge', band: STAKES_BANDS.high.yesNo, partitionOnContextLimit: true,
+      fixtures: [{ name: 'ordinary', goal: 'g', criteria: ['c'], output: 'o', expect: { verdict: 'pass' } }] });
+    const evidence = { complete: 'Original source and execution evidence.' };
+    const attempted: { state: unknown; questions: Record<string, Question> }[] = [];
+    const port = withDecisionLog(createSystemOnePort({
+      endpoint: { kind: 'hosted', baseURL: 'https://judge.test', apiKey: 'test-key' }, model: 'jev-latest', timeoutMs: 0, retry: {},
+      fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body)); attempted.push(body);
+        if (Object.keys(body.questions).length > 2) {
+          evidence.complete = 'A later borrowed mutation must not change other batches.';
+          return new Response(JSON.stringify({ detail: { error_type: 'max_tokens_exceeded' } }), { status: 400 });
+        }
+        return new Response(JSON.stringify({ model: 'jev-1.13.0', answers: Object.fromEntries(Object.keys(body.questions).map(key => [key, noulAnswer(key === 'criterion_2' ? 0.95 : 0.03)])),
+          usage: { input_tokens: 100, output_tokens: 10 } }), { status: 200 });
+      },
+    }), log);
+    const result = await judge.judge(port, { goal: 'g', criteria: ['first', 'second', 'third', 'fourth'], output: 'o', evidence }, { site: 'test.batch-proof' });
+    expect(result.verdict).toBe('fail');
+    expect(result.unmet).toEqual([2]);
+    expect(result.decisionIds).toHaveLength(3);
+    expect(attempted.every(request => JSON.stringify(request.state) === JSON.stringify({ goal: 'g', output: 'o', evidence: { complete: 'Original source and execution evidence.' } }))).toBe(true);
+    const entries = result.decisionIds.map(id => log.get(id)!);
+    expect(new Set(entries.map(entry => entry.stateHash)).size).toBe(1);
+    expect(entries.flatMap(entry => Object.keys(entry.questions as object)).sort()).toEqual(['criterion_0', 'criterion_1', 'criterion_2', 'criterion_3', 'goal']);
+    expect(log.get(result.decisionId!)!.questions).toHaveProperty('goal');
+    for (const [index, id] of result.criteriaDecisionIds.entries()) expect(log.get(id!)!.questions).toHaveProperty(`criterion_${index}`);
+    result.recordAction('Use every recorded batch.');
+    expect(entries.every(entry => log.get(entry.id)?.status === 'answered')).toBe(true);
+  });
+
+  test('goal-only judging is explicit and still asks the original goal', async () => {
+    const judge = defineJudge({ ...header, name: 'test.goal-only', allowGoalOnly: true, band: STAKES_BANDS.high.yesNo,
+      fixtures: [{ name: 'missing answer', goal: 'Answer the question.', criteria: [], output: '', expect: { verdict: 'fail' } }] });
+    const { port, requests } = fakePort(() => noulAnswer(0.99));
+    const result = await judge.judge(port, { goal: 'Answer the question.', criteria: [], output: '' });
+    expect(result.verdict).toBe('fail'); expect(result.criteria).toEqual([]);
+    expect(Object.keys(requests[0]!.questions)).toEqual(['goal']);
+    expect(requests[0]!.state).toMatchObject({ goal: 'Answer the question.' });
+  });
+
+  test.each(['ordinary-refusal', 'irreducible', 'duplicate-identities'])('batching cannot approve %s', async mode => {
+    const judge = defineJudge({ ...header, name: 'test.batch-refusal', partitionOnContextLimit: true, band: STAKES_BANDS.high.yesNo,
+      fixtures: [{ name: 'ordinary', goal: 'g', criteria: ['c'], output: 'o', expect: { verdict: 'pass' } }] });
+    const { port: inner } = fakePort(() => noulAnswer(0.03));
+    let calls = 0;
+    const port: JudgmentPort = { ...inner, async ask(request) {
+      calls++;
+      if (mode === 'ordinary-refusal') throw new JudgmentError('rejected', 'Invalid question', { status: 400 });
+      if (mode === 'irreducible' || Object.keys(request.questions).length > 1) throw new JudgmentContextLimitError();
+      return { ...await inner.ask(request), decisionId: 'copied-id' };
+    } };
+    await expect(judge.judge(port, { goal: 'g', criteria: ['c'], output: 'o' })).rejects.toThrow();
+    expect(calls).toBe(mode === 'ordinary-refusal' ? 1 : mode === 'irreducible' ? 2 : 3);
+  });
+
   test('refuses a passing fixture with unmet criteria', () => {
     expect(() =>
       defineJudge({
