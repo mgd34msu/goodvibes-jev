@@ -11,6 +11,7 @@ import { mapLimit } from './common.ts';
 export { NONE };
 
 const MAX_CANDIDATES = LIMITS.maxChoiceOptions - 1;
+const FIT_REFERENCE = 'Apply the complete selectionFitInstructions in state to this exact candidate.';
 
 /** The selection settings a selector or a compound's recheck pass needs. */
 export interface SelectionConfig {
@@ -78,7 +79,7 @@ function selectionQuestions(config: SelectionConfig, ids: readonly string[]): Re
   const options: Record<string, EntryType> = { ...Object.fromEntries(ids.map((id) => [id, null])), [NONE]: 'None of the candidates does what is needed.' };
   const questions: Record<string, Question> = { pick: choice(config.instructions, options) };
   ids.forEach((id, index) => {
-    questions[`fits_${index}`] = noul({ question: config.fitInstructions, candidate: `\`candidates[${index}]\` (id ${JSON.stringify(id)})` });
+    questions[`fits_${index}`] = noul({ question: FIT_REFERENCE, candidate: `\`candidates[${index}]\` (id ${JSON.stringify(id)})` });
   });
   return questions;
 }
@@ -108,11 +109,11 @@ async function selectCandidates(port: JudgmentPort, request: SelectionRequest, p
   // Candidate fit questions also consume context. Keep all evidence and all
   // candidates, partitioning by both provider limits rather than choice count alone.
   const groups: Candidate[][] = [];
-  const baseTokens = estimateTokens({ context: request.context, candidates: [] }) + estimateTokens(selectionQuestions(config, []));
+  const baseTokens = estimateTokens({ context: request.context, candidates: [], selectionFitInstructions: config.fitInstructions }) + estimateTokens(selectionQuestions(config, []));
   let group: Candidate[] = [], tokens = baseTokens;
   for (const candidate of candidates) {
     const added = estimateTokens(candidate) + estimateTokens({ [candidate.id]: null })
-      + estimateTokens(noul({ question: config.fitInstructions, candidate: `\`candidates[${MAX_CANDIDATES}]\` (id ${JSON.stringify(candidate.id)})` })) + 4;
+      + estimateTokens(noul({ question: FIT_REFERENCE, candidate: `\`candidates[${MAX_CANDIDATES}]\` (id ${JSON.stringify(candidate.id)})` })) + 4;
     if (group.length && (group.length >= MAX_CANDIDATES || tokens + added > LIMITS.maxLongContextTokens)) {
       groups.push(group); group = []; tokens = baseTokens;
     }
@@ -165,7 +166,7 @@ async function selectGroups(port: JudgmentPort, request: SelectionRequest, group
 async function askSelection(port: JudgmentPort, request: SelectionRequest, partitionOnOverflow = true, parallel = true): Promise<Selection> {
   const { header, config, candidates } = request;
   const ids = candidates.map(candidate => candidate.id);
-  const state = { context: request.context, candidates: candidates.map(({ id, content }) => ({ id, content })) };
+  const state = { context: request.context, candidates: candidates.map(({ id, content }) => ({ id, content })), selectionFitInstructions: config.fitInstructions };
   let result: JudgmentResult<Record<string, Question>>;
   try { result = await askAs(port, header, request.pattern, state, selectionQuestions(config, ids), request.options); }
   catch (error) {

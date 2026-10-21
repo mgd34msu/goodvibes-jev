@@ -340,6 +340,47 @@ test('a rejected native answer review holds publication even when fulfillment re
   expect(review.readings.unfinished.probability).toBe(0.98);
 });
 
+test.each([false, true])('a long finding uses complete shared evidence and retries a lookup failure without another draft (failure=%s)', async retry => {
+  const output = 'A complete factual claim and its necessary qualification '.repeat(400).trim();
+  const plan = oneUnitPlan(1);
+  plan.groups[0]!.units[0]!.role = 'research';
+  let lookups = 0, reviews = 0, workers = 0;
+  const h = use(makeHarness({ plan, scripts: { u1: () => { workers++; return [{ text: output }]; } },
+    port: context => {
+      if (context.name === 'role') return choiceAnswer(context.question, 'research', 0.98);
+      if (context.name === 'unsupported') { reviews++; return noulAnswer(0.98); }
+      const selection = context.state['context'] as { evidence?: { output: string }; candidateReferenceMeaning?: string } | undefined;
+      if (selection?.evidence) {
+        const candidates = context.state['candidates'] as { id: string; content: { quotePrefix: string; source: string; start: number; end: number } }[];
+        expect(selection.evidence.output).toBe(output);
+        expect(selection.candidateReferenceMeaning).toContain('No original answer or artifact text has been truncated');
+        expect(candidates).toHaveLength(1);
+        expect(candidates[0]!.content.quotePrefix).toBe(output.slice(0, 200));
+        expect(candidates[0]!.content.source).toBe('context.evidence.output');
+        expect(selection.evidence.output.slice(candidates[0]!.content.start, candidates[0]!.content.end).trim()).toBe(output);
+        if (context.name === 'pick') {
+          lookups++;
+          if (retry && lookups === 1) throw new JudgmentError('unavailable', 'fixture lookup transport failure', { status: 503 });
+          return choiceAnswer(context.question, candidates[0]!.id, 0.99);
+        }
+        if (context.name.startsWith('fits_')) return noulAnswer(0.99);
+      }
+      return undefined;
+    },
+  }));
+  const { contract } = startContract(h);
+  await waitFor(() => (h.runner.get(contract.id)?.checks.length ?? 0) > 0, 'successful finding lookup before correction');
+  const current = contractOf(h, contract.id);
+  const receipt = JSON.parse(current.decisions.findLast(decision => decision.targetId === `${contract.id}.final-answer-review`)!.reason);
+  expect(receipt.passed).toBe(false);
+  expect(receipt.findings[0]).toMatchObject({ localization: 'established', passage: { quote: output } });
+  expect(lookups).toBe(retry ? 2 : 1);
+  expect(reviews).toBe(retry ? 2 : 1);
+  expect(workers).toBe(1);
+  expect(current.checks).toHaveLength(1);
+  expect(current.commit).toBeUndefined();
+});
+
 test('a final-content receipt resolves its own pending requirement through a genuine original-requirements recheck', async () => {
   using log = new SqliteDecisionLog(':memory:');
   const order: string[] = [];

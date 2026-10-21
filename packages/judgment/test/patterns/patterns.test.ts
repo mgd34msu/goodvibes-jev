@@ -311,11 +311,25 @@ describe('selector', () => {
     expect(got.outcome).toBe('act');
     expect(requests[0]!.state).toEqual({
       context: 'the question',
+      selectionFitInstructions: 'Does this candidate fully answer `context`?',
       candidates: [
         { id: 'draft.1', content: 'first answer' },
         { id: 'draft.2', content: 'second answer' },
       ],
     });
+  });
+
+  test('complete fit instructions are supplied once and referenced by every candidate question', async () => {
+    const instructions = { requirement: 'A long but complete policy. '.repeat(300), preserve: ['every clause', 'every qualification'] };
+    const selector = defineSelector({ ...header, name: 'test.shared-fit', instructions: 'Choose the matching candidate.', fitInstructions: instructions,
+      band: { actAt: 0.7, confirmAt: 0.5 }, fitBand: STAKES_BANDS.medium.yesNo,
+      fixtures: [{ name: 'first matching draft', context: 'Complete evidence.', candidates, expect: 'draft.1' }] });
+    const { port, requests } = fakePort((name, question) => name === 'pick' ? choiceAnswer(question, 'draft.1', 0.99) : noulAnswer(0.99));
+    await selector.select(port, 'Complete evidence.', candidates);
+    expect((requests[0]!.state as { selectionFitInstructions: unknown }).selectionFitInstructions).toEqual(instructions);
+    expect(JSON.stringify(requests[0]!.questions)).not.toContain('A long but complete policy.');
+    expect(JSON.stringify(requests[0]!.questions.fits_0)).toContain('selectionFitInstructions');
+    expect(JSON.stringify(requests[0]!.questions.fits_1)).toContain('selectionFitInstructions');
   });
 
   test('a winner whose fit is not a yes is no selection', async () => {

@@ -122,6 +122,8 @@ export function planningPort(override: (context: AnswerContext) => unknown = () 
         return choiceAnswer(question, choices.includes('act') ? 'act' : choices.find(key => key.startsWith('revise_')) ?? 'reject', 0.99);
       }
       case 'refuse': return noulAnswer(0.99);
+      case 'pick': return question.type === 'choice' && Object.hasOwn(question.criteria, 'none')
+        ? choiceAnswer(question, 'none', 0.99) : noulAnswer(0.03);
       case 'relation': return choiceAnswer(question, 'supports', 0.95);
       case 'role': return choiceAnswer(question, 'implement', 0.95);
       case 'checkable': return noulAnswer(0.95);

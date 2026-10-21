@@ -384,31 +384,50 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
           const readings = { unfinished: review.readings.unfinished, unsupported: review.readings.unsupported };
           const passed = Object.values(readings).every(reading => criterionVerdict(reading) === 'met');
           const segments = new Intl.Segmenter(undefined, { granularity: 'sentence' });
-          const candidates = [...segments.segment(evidence.output)]
-            .filter(sentence => sentence.segment.trim()).map((sentence, index) => ({ id: `sentence-${index}`,
-              content: { reference: `current final answer at character ${sentence.index}`, quote: sentence.segment.trim() } }));
-          for (const artifact of primary?.artifacts ?? []) {
-            for (const sentence of segments.segment(artifact.content)) {
-              if (sentence.segment.trim()) candidates.push({ id: `artifact-${candidates.length}`,
-                content: { reference: `current artifact ${artifact.path} at character ${sentence.index}`, quote: sentence.segment.trim() } });
+          const passages = new Map<string, { reference: string; quote: string }>();
+          const candidates: { id: string; content: { reference: string; quotePrefix: string; source: string; start: number; end: number } }[] = [];
+          const addPassages = (text: string, source: string, reference: string) => {
+            for (const sentence of segments.segment(text)) {
+              const quote = sentence.segment.trim();
+              if (!quote) continue;
+              const id = `passage-${candidates.length}`;
+              const location = `${reference} at character ${sentence.index}`;
+              passages.set(id, { reference: location, quote });
+              // Complete source text is already supplied in the shared state.
+              // A bounded search prefix avoids duplicating a very long sentence.
+              candidates.push({ id, content: { reference: location, quotePrefix: quote.slice(0, 200),
+                source, start: sentence.index, end: sentence.index + sentence.segment.length } });
             }
-          }
-          const findings = passed ? [] : await Promise.all((Object.keys(readings) as ('unfinished' | 'unsupported')[])
+          };
+          addPassages(evidence.output, 'context.evidence.output', 'current final answer');
+          (primary?.artifacts ?? []).forEach((artifact, index) => addPassages(artifact.content,
+            `context.evidence.evidence.currentArtifacts[${index}].content`, `current artifact ${artifact.path}`));
+          const findingAbort = new AbortController();
+          const findingSignal = AbortSignal.any([run.abort.signal, findingAbort.signal]);
+          const pendingFindings = passed ? [] : (Object.keys(readings) as ('unfinished' | 'unsupported')[])
             .filter(key => criterionVerdict(readings[key]) === 'unmet').map(async (key): Promise<CompletionFinding> => {
               const finding = completionFinding(key);
               try {
                 const selected = await responseFinding.select(
                   meteredPort(nativeContractPort(contract, context.native, judgmentPort('contract.check.final-answer-finding'), run.abort.signal), reviewUsage),
-                  { issue: finding.issue, evidence: state }, candidates, { site: 'contract.check.final-answer-finding', signal: run.abort.signal },
+                  { issue: finding.issue, evidence: state, candidateReferenceMeaning: 'Each candidate locates an exact complete passage in the supplied shared evidence. source is its path in this selection request; start/end are UTF-16 offsets into that original string, before trimming surrounding whitespace. quotePrefix is only a bounded search aid. Inspect the entire referenced passage and its context, including qualifiers after the prefix. No original answer or artifact text has been truncated or removed.' }, candidates, { site: 'contract.check.final-answer-finding', signal: findingSignal },
                 );
-                const passage = candidates.find(candidate => candidate.id === selected.pick.choice)?.content;
+                const passage = passages.get(selected.pick.choice);
                 selected.recordAction('Localize a rejected final-answer finding; no publication permission is granted.');
                 return { ...finding, localization: passage ? selected.outcome === 'act' ? 'established' : 'candidate-to-investigate' : 'unavailable', ...(passage ? { passage } : {}) };
-              } catch {
+              } catch (error) {
                 run.abort.signal.throwIfAborted();
-                return { ...finding, localization: 'unavailable' };
+                // A failed lookup is a verifier failure, not a new task defect.
+                // The outer native retry retains this candidate and accepted work.
+                findingAbort.abort(error);
+                throw error;
               }
-            }));
+            });
+          const localized = await Promise.allSettled(pendingFindings);
+          if (findingAbort.signal.aborted) throw findingAbort.signal.reason;
+          const lookupFailure = localized.find(result => result.status === 'rejected');
+          if (lookupFailure?.status === 'rejected') throw lookupFailure.reason;
+          const findings = localized.flatMap(result => result.status === 'fulfilled' ? [result.value] : []);
           assertOwnedContractSource(contract);
           if (run.terminal) return null;
           if (reviewStateHash === undefined) throw new Error('Final-answer review has no recorded input binding');
