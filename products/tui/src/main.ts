@@ -29,6 +29,7 @@ import { CommandRegistry } from './input/command-registry.ts';
 import type { CommandContext } from './input/command-registry.ts';
 import { requestedEffortLevel } from './providers/reasoning-effort-surface.ts';
 import { wireWorkTree } from './core/work-tree-wiring.ts';
+import { createSessionContractViews } from './core/session-contract-views.ts';
 import { registerBuiltinCommands } from './input/commands.ts';
 import { ScheduleManager } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { InputHistory } from './input/input-history.ts';
@@ -253,8 +254,10 @@ async function main() {
     render();
   }));
   const fleetNodes = (): FleetNodes => currentFleet;
+  const sessionContractViews = createSessionContractViews(ctx.services.contractRunner, () => runtime.sessionId);
+  unsubs.push(sessionContractViews.dispose);
   // The work tree's live facts: call/turn timings, agent lanes, the call a permission prompt holds, fold persistence (work-tree-wiring.ts).
-  unsubs.push(...wireWorkTree({ conversation, events: uiServices.events, agentManager, listContracts: () => ctx.services.contractRunner.list({ sessionId: runtime.sessionId, includeTerminal: true, includeInputSnapshot: false }), onContractsChanged: (listener) => ctx.services.contractRunner.on(listener), fleetNodes, pendingCallId: () => pendingPermission?.callId, turnActive: () => orchestrator.isThinking, sessionsDir: ctx.services.surface.sessionsDir, sessionId: () => runtime.sessionId, requestRender: () => render() }).unsubs);
+  unsubs.push(...wireWorkTree({ conversation, events: uiServices.events, agentManager, listContracts: sessionContractViews.read, onContractsChanged: (listener) => ctx.services.contractRunner.on(listener), fleetNodes, pendingCallId: () => pendingPermission?.callId, turnActive: () => orchestrator.isThinking, sessionsDir: ctx.services.surface.sessionsDir, sessionId: () => runtime.sessionId, requestRender: () => render() }).unsubs);
   let recoveryInterval: ReturnType<typeof setInterval> | null = null;
   let stopSpokenOutputForExit: (() => Promise<void>) | null = null;
   // The optional "used N memories" provenance chip (default OFF), see interaction-seams.ts.
@@ -549,7 +552,7 @@ async function main() {
       : (transcript.scrolledBack && !conversation.isSplashShowing() ? { escKey: promptEmpty && !conversation.workTree.focused && !input.indicatorFocused } : null);
     const managerAgents = agentManager.list().filter((a) => a.status === 'running' || a.status === 'pending');
     const runtimeAgents = agentSnapshot.active;
-    const sessionContracts = ctx.services.contractRunner.list({ sessionId: runtime.sessionId, includeTerminal: true, includeInputSnapshot: false });
+    const sessionContracts = sessionContractViews.read();
     const runningAgentSummary = summarizeRunningAgents(managerAgents, runtimeAgents, sessionContracts);
     const runningAgentCount = runningAgentSummary.count;
     const runningProcessCount = processManager.list().filter((p) => processManager.getStatus(p.id)?.done === false).length;
