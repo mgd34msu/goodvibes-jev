@@ -35,6 +35,7 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   let integrationTask = '';
   const plan = twoUnitPlan();
   plan.groups[0]!.units[0]!.role = 'research';
+  plan.groups[0]!.units[0]!.files.push('input.txt');
   plan.groups[0]!.criteria = [{ id: 'g1.c1', text: 'The parser implementation is coherent', serves: ['c1'] }];
   plan.groups[1]!.criteria = [{ id: 'g2.c1', text: 'Integration retains the accepted parser read receipts', serves: ['c2'] }];
   const h = use(makeHarness({ plan,
@@ -78,7 +79,7 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   expect(integrationReceipts.groups[0]!.criteria).toEqual([{ id: 'g1.c1', text: 'The parser implementation is coherent', verdict: 'met' }]);
   expect(integrationReceipts.groups.some(group => group.id === 'g2')).toBe(false);
   expect(integrationReceipts.units.find(unit => unit.id === 'u1')!.readObservations).toEqual([
-    { path: 'input.txt', returnedRanges: ['1-2'], returnedLines: 2 },
+    { path: 'input.txt', returnedRanges: ['1-2'], returnedLines: 2, contentKind: 'declared-reference', returnedContent: '1 | first\n2 | second' },
   ]);
   for (const evidence of observed) {
     const host = evidence['orchestration'] as { contractId: string; planChecks: unknown[]; firstUnitStartedAt: number; units: { id: string; status: string; latestCheck: { id: string; result: string; decisionIds: string[] } }[] };

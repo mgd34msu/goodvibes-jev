@@ -157,6 +157,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     }
     const evidence = trimEvidence({ output: input.output, changes, gates, commands: [], orchestration: {
       contractId: contract.id, createdAt: contract.createdAt, origin: contract.origin, planChecks,
+      continuationEvidence: contract.taskEvidence ?? '',
       inputGeneration: contract.inputSnapshot?.id ?? null,
       firstUnitStartedAt: contract.decisions.find(decision => decision.action === 'spawned' && contract.units.some(unit => unit.id === decision.targetId))?.at ?? null,
       groups: contract.groups.filter(group => evidenceGroups.has(group.id) && group.id !== input.targetId).map(group => ({
@@ -169,9 +170,12 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         criteria: judged(unit.criteria).map(criterion => ({ id: criterion.id, text: criterion.text, verdict: criterion.status })),
         latestCheck: unit.checks.length ? { id: unit.checks.at(-1)!.id, trigger: unit.checks.at(-1)!.trigger,
           result: unit.checks.at(-1)!.result, decisionIds: [...unit.checks.at(-1)!.decisionIds] } : null,
-        readObservations: (unit.readEvidence ?? []).map(({ path, returnedRanges, returnedLines }) => ({ path, returnedRanges: [...returnedRanges], returnedLines })),
+        readObservations: (unit.readEvidence ?? []).map(({ path, returnedRanges, returnedLines, contentKind, returnedContent }) => ({
+          path, returnedRanges: [...returnedRanges], returnedLines,
+          ...(contentKind === 'declared-reference' && returnedContent !== undefined ? { contentKind, returnedContent } : {}),
+        })),
       })),
-      meaning: 'Actual host records for this contract, the checked units and their dependency groups. Observed returned ranges are read receipts, not proof of review quality or complete requested scope. Plan, unit and earlier-group acceptance remain separate from approval of the group or deliverable now being checked.',
+      meaning: 'Actual host records for this contract, the checked units and their dependency groups. Declared reference contents are actual retained reads, allowing the assigned scope to be compared with observed ranges. Continuation evidence supplies context, never extra requirements or authority. Observed returned ranges are read receipts, not proof of review quality or complete requested scope. Plan, unit and earlier-group acceptance remain separate from approval of the group or deliverable now being checked.',
     } }, { goal: input.goal, brief: '', files: [] });
     const digest = hashState({ goal: input.goal, output: evidence.output, evidence: judgeEvidence(evidence), ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) });
     const prior = input.checks.at(-1);
