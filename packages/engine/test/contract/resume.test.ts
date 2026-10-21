@@ -100,6 +100,38 @@ async function ended(h: Harness, id: string): Promise<ContractView> {
 
 const running = (contract: ContractView) => contract.units[0]?.status === 'running' && (contract.units[0]?.checks.length ?? 0) >= 1;
 
+test('a denied worktree publication survives restart, revalidates and publishes without repeating completed work', async () => {
+  const root = makeRepo(); roots.push(root);
+  writeFileSync(join(root, 'README.md'), '# Pre-existing owner edit\n');
+  const head = git(root, 'rev-parse', 'HEAD').trim();
+  const plan = oneUnitPlan(1);
+  const first = makeHarness({ root, plan, contract: { isolation: 'auto', autoCommit: false },
+    scripts: { u1: () => [{ files: { 'src/csv.ts': 'export const parse = 7;\n' }, text: 'The parser result.' }] },
+    readAccessFilter: async () => !first.runner.list({ includeTerminal: true }).some(contract => contract.status === 'committing'),
+  });
+  harnesses.push(first);
+  const { contract } = startContract(first);
+  await waitFor(() => contractIn(first, contract.id).commit?.status === 'failed', 'the denied publication');
+  expect(contractIn(first, contract.id).status).toBe('committing');
+  expect(existsSync(join(root, 'src/csv.ts'))).toBe(false);
+  first.dispose();
+  await first.runner.join(contract.id);
+  expect(JSON.parse(readFileSync(contractPath(root, contract.id), 'utf8')).contract.status).toBe('committing');
+  let resumedChecks = 0;
+  const second = restart(root, { plan, contract: { isolation: 'auto', autoCommit: false }, scripts: { u1: mustNotRun },
+    port: context => { if (judgeOf(context) === 'deliverable' && context.name === 'goal') resumedChecks++; return undefined; },
+  });
+  await second.runner.resumeAll();
+  const done = await ended(second, contract.id);
+  expect(done.status).toBe('passed');
+  expect(done.commit?.status).toBe('applied');
+  expect(resumedChecks).toBeGreaterThan(0);
+  expect(second.agentsOf('u1')).toEqual([]);
+  expect(readFileSync(join(root, 'src/csv.ts'), 'utf8')).toBe('export const parse = 7;\n');
+  expect(readFileSync(join(root, 'README.md'), 'utf8')).toBe('# Pre-existing owner edit\n');
+  expect(git(root, 'rev-parse', 'HEAD').trim()).toBe(head);
+}, 20_000);
+
 test.each(['interrupted', 'privacy-refused', 'verifier-refused'])('an %s final-answer repair resumes the same round with its rejected draft and findings', async condition => {
   const plan = oneUnitPlan(1);
   plan.groups[0]!.units[0]!.role = 'research';
@@ -669,7 +701,7 @@ describe('the deliverable steps run again', () => {
     expect(eventsOf(h, 'CONTRACT_COMMITTED')).toHaveLength(1);
   }, 30_000);
 
-  test('a contract stopped while committing commits again without another check', async () => {
+  test('a contract stopped while committing revalidates the current deliverable before publication', async () => {
     const { root, ids: [id] } = await interrupt({ plan: oneUnitPlan(1), scripts }, finished, 'the contract to pass');
     editContract(root, id!, (contract) => rewind(contract, 'committing'));
     const h = restart(root, { plan: oneUnitPlan(1), scripts: { u1: mustNotRun } });
@@ -677,7 +709,7 @@ describe('the deliverable steps run again', () => {
     expect(report.resumed).toEqual([{ contractId: id!, step: 'commit' }]);
     const done = await ended(h, id!);
     expect(done.status).toBe('passed');
-    expect(done.checks.some((check) => check.trigger === 'resume')).toBe(false);
+    expect(done.checks.some((check) => check.trigger === 'resume')).toBe(true);
     expect(eventsOf(h, 'CONTRACT_COMMITTED')).toHaveLength(1);
     expect(done.decisions.some((decision) => decision.action === 'resumed' && decision.reason.includes('the commit runs again'))).toBe(true);
   }, 30_000);

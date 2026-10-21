@@ -533,7 +533,7 @@ export const CONTRACT_TRANSITIONS: Readonly<Record<ContractStatus, readonly Cont
   running: ['judging', 'awaiting-owner', 'queued', 'failed', 'cancelled'],
   judging: ['committing', 'fixing', 'awaiting-owner', 'queued', 'failed', 'cancelled'],
   fixing: ['judging', 'awaiting-owner', 'queued', 'failed', 'cancelled'],
-  committing: ['passed', 'queued', 'failed', 'cancelled'],
+  committing: ['judging', 'passed', 'queued', 'failed', 'cancelled'],
   'awaiting-owner': ['planning', 'running', 'judging', 'fixing', 'failed', 'cancelled'],
   passed: [],
   failed: [],

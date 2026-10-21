@@ -42,6 +42,19 @@ test('content review receives only byte-matched current primary artifact text an
   expect(view.evidence['fullSourceEvidence']).toMatchObject({ digest: hashState(f.evidence), bytes: Buffer.byteLength(JSON.stringify(f.evidence)) });
 });
 
+test('root projection retains actual scope calculations and repair-plan admissions rather than replacing them with acceptance labels', () => {
+  const f = fixture();
+  const sourceJsonReferenceComparisons = [{ source: 'native-host-interval-comparison', referencePath: 'input.json',
+    referenceSha256: 'bound-reference', groups: [{ referencedLines: 12, coveredReferencedLines: 11, missingReferencedLines: 1,
+      missing: [{ path: 'source.ts', ranges: [[7, 7]] }] }] }];
+  const repairPlanAdmissions = [{ id: 'repair-plan', decisionIds: ['native-repair-validation'] }];
+  const native = { ...f.evidence, orchestration: { ...f.evidence.orchestration, sourceJsonReferenceComparisons, repairPlanAdmissions } };
+  const result = finalAnswerEvidence(f.contract, native, {})!;
+  expect(result.evidence['orchestration']).toMatchObject({ sourceJsonReferenceComparisons, repairPlanAdmissions });
+  expect(JSON.stringify(result.evidence)).toContain('"missingReferencedLines":1');
+  expect(result.evidence).not.toHaveProperty('passed');
+});
+
 test('stale reads and unaccepted observations never replace full original evidence', () => {
   const f = fixture();
   f.evidence.orchestration.currentFiles[0].sha256 = digest('Changed.\n');

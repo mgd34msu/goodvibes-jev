@@ -14,6 +14,8 @@ import { CONTRACT_PASSED_WITHOUT_OUTPUT, describeCommitOutcome, describeContract
 import { makeHarness, oneUnitPlan, startContract, twoUnitPlan, waitFor, type AgentScript, type Harness } from './runner-support.js';
 import { contractOf, finishes, git, judgeOf, terminal } from './steps-support.js';
 import { plannerOutput } from './plan-support.js';
+import { ReadTool } from '../../sdk/src/platform/tools/read/index.js';
+import { ProjectIndex } from '../../sdk/src/platform/state/project-index.js';
 
 let harness: Harness | undefined;
 afterEach(() => {
@@ -58,6 +60,39 @@ test('original owner observations reach worker admission, unit checking and orig
   expect(task).toContain('original-owner-read-observations');
   expect(plannerTask).toContain(JSON.stringify(owner));
   expect(seen).toEqual(new Set(['unit', 'content', 'original-fulfillment']));
+});
+
+test('original fulfillment receives native arithmetic over complete unchanged reference inputs', async () => {
+  const plan = oneUnitPlan(1);
+  plan.groups[0]!.units[0]!.role = 'research';
+  plan.groups[0]!.units[0]!.files = ['scope.json', 'source.ts'];
+  let rootScope: unknown;
+  const h = use(makeHarness({ plan, scripts: { u1: record => [{
+    before: async () => {
+      const index = new ProjectIndex(record.workingDirectory ?? h.root);
+      const args = { files: [{ path: 'scope.json', extract: 'lines', range: { start: 1, end: 1 } },
+        { path: 'source.ts', extract: 'lines', range: { start: 1, end: 3 } }] };
+      try {
+        const result = await new ReadTool(index).execute(args);
+        expect(result.success).toBe(true);
+        h.runner.hooks().onTurnEnd(record, { turn: 1, assistantText: 'Reviewed the assigned source.',
+          toolCalls: [{ name: 'read', arguments: args }], results: [{ callId: 'real-source-return', ...result }] });
+      } finally { await index.dispose(); }
+    }, text: 'Reviewed source.ts:1-3 and its complete assignment input. No file edits or test execution claimed.',
+  }] }, port: context => {
+    if (context.name === 'role') return choiceAnswer(context.question, 'research', 0.99);
+    if (judgeOf(context) === 'deliverable' && context.name === 'goal') {
+      const evidence = context.state['evidence'] as { orchestration: { sourceJsonReferenceComparisons: unknown } };
+      rootScope = evidence.orchestration.sourceJsonReferenceComparisons;
+    }
+    return undefined;
+  } }));
+  writeFileSync(join(h.root, 'scope.json'), '{"files":[{"path":"source.ts","ranges":[[1,3]]}]}\n');
+  writeFileSync(join(h.root, 'source.ts'), 'export function parse(value) {\n  return value;\n}\n');
+  const id = await run(h);
+  expect(contractOf(h, id).status).toBe('passed');
+  expect(rootScope).toMatchObject([{ source: 'native-host-interval-comparison', referencePath: 'scope.json',
+    groups: [{ referencedLines: 3, coveredReferencedLines: 3, missingReferencedLines: 0, missing: [] }] }]);
 });
 
 test('group and final checks receive actual plan-validation and unit-acceptance receipts', async () => {
@@ -292,6 +327,41 @@ describe('the commit (6.5)', () => {
     expect(readFileSync(join(h.root, 'src/csv.ts'), 'utf-8')).toBe('export const parse = 2;\n');
     expect(git(h.root, 'status', '--porcelain')).toContain('?? src/');
     expect(git(h.root, 'diff', '--cached', '--name-only').trim()).toBe('');
+  }, 20_000);
+
+  test('failed owner publication retains checked work and retries without delivering or rerunning the unit', async () => {
+    let publicationAllowed = false, denied = 0, deliverableChecks = 0;
+    const h = use(makeHarness({ plan: oneUnitPlan(1), contract: { isolation: 'auto', autoCommit: false },
+      scripts: { u1: finishes('export const parse = 9;') },
+      port: context => { if (judgeOf(context) === 'deliverable' && context.name === 'goal') deliverableChecks++; return undefined; },
+      readAccessFilter: async () => {
+        if (!publicationAllowed && h.runner.list({ includeTerminal: true }).some(contract => contract.status === 'committing')) {
+          denied++; return false;
+        }
+        return true;
+      },
+    }));
+    writeFileSync(join(h.root, 'README.md'), '# Owner changes must survive\n');
+    const head = git(h.root, 'rev-parse', 'HEAD').trim();
+    const { contract, owner } = startContract(h);
+    await waitFor(() => denied > 0 && contractOf(h, contract.id).commit?.status === 'failed', 'the failed publication to be recorded');
+    expect(contractOf(h, contract.id).status).toBe('committing');
+    expect(h.manager.getStatus(owner.id)?.status).not.toBe('completed');
+    expect(existsSync(join(h.root, 'src/csv.ts'))).toBe(false);
+    expect(contractOf(h, contract.id).units[0]?.status).toBe('passed');
+    const agents = h.agentsOf('u1');
+    const previousChecks = deliverableChecks;
+    publicationAllowed = true;
+    await waitFor(() => terminal(h, contract.id), 'the retained result to be published automatically', 10_000);
+    const done = contractOf(h, contract.id);
+    expect(done.status).toBe('passed');
+    expect(done.commit?.status).toBe('applied');
+    expect(readFileSync(join(h.root, 'src/csv.ts'), 'utf8')).toBe('export const parse = 9;\n');
+    expect(readFileSync(join(h.root, 'README.md'), 'utf8')).toBe('# Owner changes must survive\n');
+    expect(git(h.root, 'rev-parse', 'HEAD').trim()).toBe(head);
+    expect(h.agentsOf('u1')).toEqual(agents);
+    expect(deliverableChecks).toBeGreaterThan(previousChecks);
+    expect(h.manager.getStatus(owner.id)?.fullOutput).toBe('export const parse = 9;');
   }, 20_000);
 
   test('shared mode: exactly the touched paths are committed; a file already dirty at launch and untouched stays out', async () => {

@@ -70,6 +70,8 @@ export function finalAnswerEvidence(contract: Pick<ContractView, 'ask' | 'units'
     gates: evidence['gates'] ?? [],
     criteria: object(summaries) ? summaries['checks'] ?? summaries : summaries,
     orchestration: { contractId: host['contractId'] ?? null, planChecks: host['planChecks'] ?? [],
+      repairPlanAdmissions: host['repairPlanAdmissions'] ?? [], referenceOperations: host['referenceOperations'] ?? [],
+      sourceReferenceComparisons: host['sourceReferenceComparisons'] ?? [], sourceJsonReferenceComparisons: host['sourceJsonReferenceComparisons'] ?? [],
       currentValidation: host['currentValidation'] ?? null, groups: host['groups'] ?? [], units,
       createdAt: host['createdAt'] ?? null, origin: host['origin'] ?? null,
       ownerPriorReads: host['ownerPriorReads'] ?? null,

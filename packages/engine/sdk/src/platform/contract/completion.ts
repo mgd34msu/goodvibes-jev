@@ -21,8 +21,10 @@ import { assertOwnedContractSource, hasDerivedAcceptanceChecks } from './owned-s
  * - Commit: worktree mode merges the contract branch into the project's branch
  *   (no fast-forward) or applies it as uncommitted changes; shared mode commits
  *   exactly the touched paths (or everything, or nothing, by
- *   `contract.commitScope`). A commit that fails is a warning on a passing
- *   contract, never a failure. Outside git the commit is skipped with a note.
+ *   `contract.commitScope`). A failed worktree publication retains the checked
+ *   work and retries after revalidation. An optional shared-tree Git commit
+ *   failure is a warning because those files already reached the owner tree.
+ *   Outside git the commit is skipped with a note.
  * - The answer goes to the owner record; the status line to the operator
  *   audience only.
  *
@@ -30,6 +32,7 @@ import { assertOwnedContractSource, hasDerivedAcceptanceChecks } from './owned-s
  */
 import { assertContractInputOwner, assertContractInputObjects, assertContractExecutionView } from './input-snapshot.js';
 import { applyCapturedInputDelta } from './input-apply.js';
+import { compareJsonReadReferences, compareReadReferences } from './read-reference-comparison.js';
 
 import { spawnSync } from 'node:child_process';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
@@ -47,10 +50,10 @@ import { responseFinding } from '../core/batteries/response-finding.js';
 import { completionFinding, type CompletionFinding } from '../core/response-completion-findings.js';
 import { criterionVerdict, emptyJudgmentUsage, meteredPort } from './check.js';
 import { readContractConfig } from './config.js';
-import { guarded, type Correction } from './correction.js';
+import type { Correction } from './correction.js';
 import { nativeContractPort } from './native-decisions.js';
 import { assertNativeContractSource } from './native-source.js';
-import { collectChanges, commandsFromTurns, currentFileObservations, judgeEvidence, trimEvidence, type ContractTurnRecord, type EvidenceCommand } from './evidence.js';
+import { collectChanges, commandsFromTurns, currentFileObservations, judgeEvidence, trimEvidence, type ContractTurnRecord, type EvidenceCommand, type SourceReadEvidence } from './evidence.js';
 import { failedGates, runContractGates } from './gates.js';
 import { failureFromError, isAbortError, type ContractRun } from './run-context.js';
 import type { StepContext } from './steps.js';
@@ -128,12 +131,16 @@ export function buildContractCommitMessage(contract: Contract): string {
   ].join('\n');
 }
 
+class PublicationPending extends Error {
+  constructor() { super('The checked result has not reached the owner workspace.'); }
+}
+
 export function createCompletion(context: StepContext, correction: Pick<Correction, 'groupFailed' | 'deliverableFailed'>): Completion {
   const config = () => readContractConfig(context.configManager);
   const pendingVerifications = new WeakMap<ContractRun, Map<string, Promise<void>>>();
 
-  /** Request failures provide no verdict. Retain the candidate and retry only
-   * its check; the owned wait ends immediately when the contract is stopped. */
+  /** Retain work on an unavailable check or unpublished result. Retries validate
+   * the current evidence; the owned wait ends immediately when stopped. */
   function verify(run: ContractRun, targetId: string, what: string, step: () => Promise<void>): Promise<void> {
     let pending = pendingVerifications.get(run);
     if (pending === undefined) { pending = new Map(); pendingVerifications.set(run, pending); }
@@ -145,14 +152,18 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         try { await step(); return; }
         catch (error) {
           if (run.terminal || isAbortError(error, run.abort.signal)) return;
+          const publicationPending = error instanceof PublicationPending;
           const failure = failureFromError(error);
-          if (failure.kind !== 'judgment-unavailable') {
+          if (!publicationPending && failure.kind !== 'judgment-unavailable') {
             run.control.fail(failure.kind, `${what}: ${failure.reason}`);
             return;
           }
           const delay = Math.min(30_000, 1_000 * 2 ** Math.min(failures++, 5));
-          run.decide('resumed', targetId, `verification pending: ${failure.reason}; accepted work and candidate retained, retry in ${delay / 1_000} seconds, no acceptance verdict`);
-          logger.warn('contract verifier request failed; work retained', { contractId: run.id, targetId, reason: failure.reason });
+          run.decide('resumed', targetId, publicationPending
+            ? `publication pending: ${run.contract.commit?.note ?? failure.reason}; checked work retained, revalidate before retry in ${delay / 1_000} seconds; no answer delivered`
+            : `verification pending: ${failure.reason}; accepted work and candidate retained, retry in ${delay / 1_000} seconds, no acceptance verdict`);
+          logger.warn(publicationPending ? 'contract publication pending; work retained' : 'contract verifier request failed; work retained',
+            { contractId: run.id, targetId, reason: publicationPending ? run.contract.commit?.note : failure.reason });
           await new Promise<void>(resolve => {
             const done = (): void => { clearTimeout(timer); run.abort.signal.removeEventListener('abort', done); resolve(); };
             const timer = setTimeout(done, delay);
@@ -214,11 +225,32 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       for (const dependency of contract.groups.find(group => group.id === id)?.dependsOn ?? []) evidenceGroups.add(dependency);
     }
     const evidenceUnits = contract.units.filter(unit => evidenceGroups.has(unit.groupId));
+    const ownerPriorReads = context.readOwnerEvidence?.(contract, input.output + '\n' + changes.map(change => change.diff).join('\n')) ?? null;
+    const ownerReads = ownerPriorReads && typeof ownerPriorReads === 'object' && !Array.isArray(ownerPriorReads)
+      && Array.isArray(ownerPriorReads['sourceReads']) ? ownerPriorReads['sourceReads'].flatMap(read =>
+        read && typeof read === 'object' && !Array.isArray(read) && typeof read['path'] === 'string'
+          && Array.isArray(read['returnedRanges']) && read['returnedRanges'].every(range => typeof range === 'string')
+          ? [{ path: read['path'], returnedRanges: read['returnedRanges'] as string[] }] : []) : [];
+    const sourceObservations: { source: string; reads: readonly Pick<SourceReadEvidence, 'path' | 'returnedRanges'>[] }[] = [
+      ...evidenceUnits.filter(unit => unit.status === 'passed').map(unit => ({ source: `passed unit ${unit.id}`, reads: unit.readEvidence ?? [] })),
+      { source: 'qualified original-owner observations', reads: ownerReads },
+    ];
+    const referenceReads = [...new Map(evidenceUnits.filter(unit => unit.status === 'passed').flatMap(unit => unit.readEvidence ?? [])
+      .filter(read => read.contentKind === 'declared-reference' && read.returnedContent !== undefined && read.path.toLowerCase().endsWith('.json'))
+      .map(read => [JSON.stringify([read.path, hashState(read.returnedContent!)]), read])).values()];
+    const referenceOperations = currentFileObservations(tree, referenceReads.map(read => read.path));
     const evidence = trimEvidence({ output: input.output, changes, gates,
       commands: evidenceUnits.flatMap<EvidenceCommand>(unit => unit.commandEvidence ?? commandsFromTurns(turnsOf(run, new Set([unit.id])))), orchestration: {
       contractId: contract.id, createdAt: contract.createdAt, origin: contract.origin, planChecks,
       continuationEvidence: contract.taskEvidence ?? '',
-      ownerPriorReads: context.readOwnerEvidence?.(contract, input.output + '\n' + changes.map(change => change.diff).join('\n')) ?? null,
+      ownerPriorReads,
+      referenceOperations,
+      sourceJsonReferenceComparisons: compareJsonReadReferences(referenceReads, referenceOperations, sourceObservations),
+      sourceReferenceComparisons: compareReadReferences(input.criteria.map(criterion => ({ field: `criterion ${criterion.id}`, text: criterion.text })),
+        sourceObservations.flatMap(source => source.reads), sourceObservations),
+      repairPlanAdmissions: contract.decisions.filter(decision => decision.action === 'fix-planned' && decision.decisionIds.length > 0)
+        .map(decision => ({ id: decision.id, targetId: decision.targetId, at: decision.at, reason: decision.reason, decisionIds: [...decision.decisionIds],
+          meaning: 'Actual host admission of this repair plan with its validation decision identities; this is not approval of the repaired result or final answer.' })),
       currentFiles: currentFileObservations(tree, changes.map(change => change.path), { includeText: input.scope === 'deliverable' }),
       privateArtifacts: readPrivateReceiptArchives(contract),
       currentValidation: {
@@ -515,6 +547,10 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     contract.commit = commit;
     run.decide('committed', contract.id, commit.note);
     run.emit({ type: 'CONTRACT_COMMITTED', contractId: contract.id, status: commit.status, ...(commit.hash === undefined ? {} : { hash: commit.hash }), note: commit.note });
+    if (commit.status === 'failed' && contract.isolation === 'worktree') {
+      context.ownerProgress(run);
+      throw new PublicationPending();
+    }
     run.control.finishPassed({ answer: answer.length > 0 ? answer : CONTRACT_PASSED_WITHOUT_OUTPUT, statusLine: describeContractOutcome(contract) });
   }
 
@@ -585,7 +621,8 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       : { status: 'committed', hash: result.hash, note: describeCommitOutcome(result.hash, result.skippedIgnored, false) };
   }
 
-  /** Commits or applies the contract's work. Any failure is recorded as a warning; the contract still passes. */
+  /** Publish worktree results or optionally commit files already in the owner tree.
+   * Only an optional shared-tree Git commit failure may remain a warning. */
   async function commitContract(run: ContractRun): Promise<NonNullable<Contract['commit']>> {
     const { contract } = run;
     if (!GitService.isGitRepo(contract.projectRoot)) return { status: 'skipped', note: 'commit skipped: not a git repository' };
@@ -614,7 +651,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     groupsPassed: (run) => verify(run, run.id, 'the deliverable could not be judged', () => groupsPassed(run)),
     judgeGroup: (run, groupId, trigger) => verify(run, groupId, `group ${groupId} could not be judged`, () => judgeGroup(run, groupId, trigger)),
     judgeDeliverable: (run, trigger) => verify(run, run.id, 'the deliverable could not be judged', () => judgeDeliverable(run, trigger)),
-    commitDeliverable: (run) => guarded(run, 'the deliverable could not be committed', () => commitDeliverable(run)),
+    commitDeliverable: (run) => verify(run, run.id, 'the deliverable could not be published', () => judgeDeliverable(run, 'resume')),
   };
 }
 

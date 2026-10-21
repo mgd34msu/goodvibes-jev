@@ -68,7 +68,8 @@ export function buildUnitBrief(
       ...others.map((other) => `- ${other.id} "${other.title}": ${other.answer?.trim() || '(no answer recorded)'}`),
     ].join('\n'));
   }
-  sections.push(readOnly ? READ_ONLY_LINE : WRITE_LINE, BRIEF_CHECKED_PARAGRAPH);
+  sections.push(readOnly ? READ_ONLY_LINE : WRITE_LINE, BRIEF_CHECKED_PARAGRAPH,
+    'For a completed user delivery, put internal pending-check diagnostics in completion metadata rather than finalAnswer. Write finalAnswer for the point when the host releases the approved delivery, without claiming approval in advance. Keep substantive unresolved requirements and relevant evidence limits accurate.');
   // All spawn paths rebuild this brief, including restart recovery and fresh
   // retries. Integrators and repair workers need the accepted work they build on.
   const repairing = unit.criteria.some(criterion => criterion.origin === 'fix');
