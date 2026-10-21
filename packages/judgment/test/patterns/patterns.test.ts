@@ -18,6 +18,7 @@ import {
   type YesNoReading,
 } from '../../src/index.ts';
 import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '../../src/testing/fake-port.ts';
+import { estimateTokens, LIMITS } from '../../src/port/limits.ts';
 
 const header = { version: 1, description: 'test', accuracyFloor: 0.8 };
 
@@ -333,6 +334,36 @@ describe('selector', () => {
       const question = request.questions.pick!;
       expect(question.type === 'choice' && Object.keys(question.criteria).length <= 255).toBe(true);
     }
+  });
+
+  test('large shared evidence partitions fit questions without dropping candidates or context', async () => {
+    const context = { completeEvidence: 'x'.repeat(730_000) };
+    const candidates = Array.from({ length: 80 }, (_, index) => ({ id: `passage-${index}`, content: 'evidence '.repeat(200) }));
+    const { port, requests } = fakePort((name, question) => {
+      if (name !== 'pick') return noulAnswer(0.99);
+      if (question.type !== 'choice') throw new Error('Expected choice');
+      return choiceAnswer(question, Object.keys(question.criteria).filter(id => id !== 'none').at(-1)!, 0.99);
+    });
+    const result = await selector.select(port, context, candidates);
+    expect(result.chosen).toBe('passage-79');
+    expect(Object.keys(result.fits)).toHaveLength(80);
+    expect(requests.length).toBeGreaterThan(1);
+    for (const request of requests) {
+      expect((request.state as { context: unknown }).context).toEqual(context);
+      expect(estimateTokens(request.state) + Object.values(request.questions).reduce((sum, question) => sum + estimateTokens(question), 0))
+        .toBeLessThanOrEqual(LIMITS.maxLongContextTokens);
+    }
+  });
+
+  test('a pessimistic context estimate does not recurse forever or discard evidence', async () => {
+    const { port, requests } = fakePort((name, question) => {
+      if (name !== 'pick') return noulAnswer(0.99);
+      if (question.type !== 'choice') throw new Error('Expected choice');
+      return choiceAnswer(question, Object.keys(question.criteria).filter(id => id !== 'none').at(-1)!, 0.99);
+    });
+    const result = await selector.select(port, { evidence: 'x'.repeat(800_000) }, candidates);
+    expect(result.chosen).toBe('draft.2');
+    expect(requests).toHaveLength(3);
   });
 
   test('later confident selection cannot erase an unresolved group winner', async () => {

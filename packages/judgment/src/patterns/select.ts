@@ -1,7 +1,7 @@
 import { checkEachFixture, decisionHeader, fixtureCheck, NONE, type NamedDecision } from '../batteries/decision.ts';
 import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader, type PatternName } from '../batteries/asking.ts';
 import { choice, noul, type EntryType, type JsonValue, type JudgmentPort, type Question } from '../port/types.ts';
-import { LIMITS } from '../port/limits.ts';
+import { estimateTokens, LIMITS } from '../port/limits.ts';
 import { assertBand, type ConfidenceBand, type Outcome, type YesNoBand } from '../readings/bands.ts';
 import { readChoice, readYesNo, type ChoiceReading, type YesNoReading } from '../readings/readings.ts';
 import type { Candidate } from './rerank.ts';
@@ -99,20 +99,34 @@ export async function runSelection(port: JudgmentPort, request: SelectionRequest
   const { header, config, candidates } = request;
   const ids = candidates.map((candidate) => candidate.id);
   assertCandidates(header.name, ids);
-  // A Choice has 255 wire options, including NONE. Process every candidate in
-  // rounds instead of treating the endpoint's per-request limit as a work cap.
-  if (candidates.length > MAX_CANDIDATES) {
+  // Candidate fit questions also consume context. Keep all evidence and all
+  // candidates, partitioning by both provider limits rather than choice count alone.
+  const groups: Candidate[][] = [];
+  const baseTokens = estimateTokens({ context: request.context, candidates: [] }) + estimateTokens(selectionQuestions(config, []));
+  let group: Candidate[] = [], tokens = baseTokens;
+  for (const candidate of candidates) {
+    const added = estimateTokens(candidate) + estimateTokens({ [candidate.id]: null })
+      + estimateTokens(noul({ question: config.fitInstructions, candidate: `\`candidates[${MAX_CANDIDATES}]\` (id ${JSON.stringify(candidate.id)})` })) + 4;
+    if (group.length && (group.length >= MAX_CANDIDATES || tokens + added > LIMITS.maxLongContextTokens)) {
+      groups.push(group); group = []; tokens = baseTokens;
+    }
+    group.push(candidate); tokens += added;
+  }
+  if (group.length) groups.push(group);
+  if (groups.length > 1) {
     const rounds: Selection[] = [];
     const winners: Candidate[] = [];
-    for (let offset = 0; offset < candidates.length; offset += MAX_CANDIDATES) {
+    for (const group of groups) {
       request.options?.signal?.throwIfAborted();
-      const group = candidates.slice(offset, offset + MAX_CANDIDATES);
       const result = await runSelection(port, { ...request, candidates: group });
       rounds.push(result);
       const winner = group.find(candidate => candidate.id === result.pick.choice);
       if (winner) winners.push(winner);
     }
-    const final = winners.length ? await runSelection(port, { ...request, candidates: winners }) : rounds.at(-1)!;
+    // When the shared evidence leaves room for only one candidate, estimates
+    // cannot reduce this further. Let the endpoint tokenize the final comparison
+    // once, rather than recursively repeating an unchanged tournament forever.
+    const final = winners.length ? await (winners.length < candidates.length ? runSelection : askSelection)(port, { ...request, candidates: winners }) : rounds.at(-1)!;
     // Every group participates in elimination; unresolved evidence cannot be
     // upgraded by the final comparison between its surviving candidates.
     const unresolved = rounds.filter(round => round.outcome !== 'act');
@@ -121,6 +135,12 @@ export async function runSelection(port: JudgmentPort, request: SelectionRequest
     return { ...final, outcome, fits: Object.assign({}, ...rounds.map(round => round.fits), final.fits),
       recordAction(action) { for (const round of rounds) round.recordAction(action); if (winners.length) final.recordAction(action); } };
   }
+  return askSelection(port, request);
+}
+
+async function askSelection(port: JudgmentPort, request: SelectionRequest): Promise<Selection> {
+  const { header, config, candidates } = request;
+  const ids = candidates.map(candidate => candidate.id);
   const state = { context: request.context, candidates: candidates.map(({ id, content }) => ({ id, content })) };
   const result = await askAs(port, header, request.pattern, state, selectionQuestions(config, ids), request.options);
   const answers = result.answers as Record<string, unknown>;
