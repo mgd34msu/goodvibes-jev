@@ -57,3 +57,25 @@ export function readPrivateReceiptArchives(contract: ArchiveOwner) {
     meaning: 'The native host has preserved these actual earlier read observations and complete retained reference contents in private storage outside the disposable worktree. Reserved .goodvibes writes and reads remain unavailable to captured workers. Use this storage receipt and the supplied host records to remove public raw ledgers; do not try to write reserved state. Substantive findings and citations remain public. This is not acceptance of this unit or final answer.',
   }];
 }
+
+/** Only a native check of the private-storage obligation receives relevant
+ * primary contents. Worker prompts keep the metadata-only projection above. */
+export function readNativePrivateReceiptArchives(contract: ArchiveOwner, files: readonly string[]) {
+  const receipts = readPrivateReceiptArchives(contract);
+  if (!receipts.length || !files.includes(`.goodvibes/reviews/${contract.id}/source-receipts.json`)) return receipts;
+  const bytes = readFileSync(archivePath(contract)!);
+  const digest = `sha256-base64url:${createHash('sha256').update(bytes).digest('base64url')}`;
+  if (digest !== receipts[0]!.digest) throw new Error('Private receipt archive changed while preparing native evidence');
+  const archive = JSON.parse(bytes.toString('utf8')) as { units: { id: string; latestCheckId: string | null;
+    observations: { path: string; returnedRanges: string[]; returnedLines: number; contentKind?: string; returnedContent?: string }[] }[] };
+  const references = new Map<string, { unitId: string; checkedAt: string | null; path: string; returnedRanges: string[]; returnedLines: number; returnedContent: string }>();
+  for (const unit of archive.units) for (const read of unit.observations) {
+    if (read.contentKind !== 'declared-reference' || read.returnedContent === undefined) continue;
+    const path = files.find(path => !path.startsWith('.goodvibes/') && (read.path === path || read.path.endsWith('/' + path)));
+    if (path) references.set(path, { unitId: unit.id, checkedAt: unit.latestCheckId, path: read.path,
+      returnedRanges: read.returnedRanges, returnedLines: read.returnedLines, returnedContent: read.returnedContent });
+  }
+  return receipts.map(receipt => ({ ...receipt, retainedPrivateReferences: [...references.values()],
+    nativeEvidenceMeaning: 'Actual primary reference contents freshly loaded from the private archive whose bytes match this storage receipt. Compare the removed public ledger and attribution with these retained snapshots. They establish what was preserved, not a new source inspection or approval of this candidate. These private contents are supplied only to this native check, never worker prompts or public delivery artifacts.',
+  }));
+}

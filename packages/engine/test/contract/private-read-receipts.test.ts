@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import { existsSync, lstatSync, mkdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { preserveDeclaredReadReceipts, readPrivateReceiptArchives } from '../../sdk/src/platform/contract/private-read-receipts.js';
+import { preserveDeclaredReadReceipts, readPrivateReceiptArchives, readNativePrivateReceiptArchives } from '../../sdk/src/platform/contract/private-read-receipts.js';
 import type { ContractView } from '../../sdk/src/platform/contract/types.js';
 import { makeRepo } from './runner-support.js';
 import { git } from './steps-support.js';
@@ -35,6 +35,10 @@ test('declared read receipts are archived privately by the host and survive work
     retainedReferences: ['review-artifacts/repository-review/findings.json'] }] });
   expect(JSON.stringify(receipt)).not.toContain('private original receipt provenance');
   expect(JSON.stringify(receipt)).not.toContain('11-23');
+  const native = readNativePrivateReceiptArchives(f.contract, [f.relativePath, 'review-artifacts/repository-review/findings.json']);
+  expect(native[0]).toMatchObject({ retainedPrivateReferences: [{ unitId: 'u1', checkedAt: 'u1.k3',
+    path: f.observations[0]!.path, returnedRanges: ['1-2'], returnedLines: 2, returnedContent: f.observations[0]!.returnedContent }] });
+  expect(readNativePrivateReceiptArchives(f.contract, ['review-artifacts/repository-review/findings.json'])).toEqual(receipt);
   expect(f.contract.units[0]!.readEvidence).toEqual(f.observations);
   preserveDeclaredReadReceipts(f.contract);
   expect(readFileSync(f.path)).toEqual(stored);
