@@ -34,6 +34,7 @@ import { buildFixGroup, buildFixPlannerPrompt, buildFixPlannerRequest, buildFres
 import { nativeContractRoute, decideNativeContract, nativeContractPort, nativeDecisionState, nativeSpent, spendNative } from './native-decisions.js';
 import { assertNativeContractSource } from './native-source.js';
 import { renderContractAnswer } from './answer.js';
+import { contractWorkReceipts } from './work-receipts.js';
 import { runUnitShapeChecks } from './plan-checks.js';
 import { renderContractPlan, type ContractPlan, type PlanProblem } from './plan-schema.js';
 import { prepareFixPlannerInput, type FixPlannerInput } from './fix-planner-input.js';
@@ -361,7 +362,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
       requiredIds: [...finding.unmet, ...finding.unshown],
       lastNudges: [],
       gateFailures: gateFailureLines(finding.gates),
-      output: finding.output,
+      output: `${finding.output}\n\nActual host work records (not approval of this repair):\n${JSON.stringify(contractWorkReceipts(contract, { readObservations: true }))}`,
       touchedPaths: [...new Set(target.units.flatMap((unit) => unit.touchedPaths))],
     };
   }

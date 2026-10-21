@@ -599,8 +599,9 @@ describe('WorktreeIsolationManager: empty integration (no commits beyond base)',
     const engine = makeEngine(root, h);
     engine.on((e) => events.push(e));
 
-    const items: WorkItemSpec[] = [{ id: 'item-noop', title: 'noop', task: 't' }];
-    const ws = engine.createWorkstream({ id: 'ws-empty', title: 'empty', phases: [offPhase], items, isolation: 'worktree' });
+    const items: WorkItemSpec[] = [{ id: 'item-noop', title: 'noop', task: 't' },
+      { id: 'item-next', title: 'dependent', task: 'Continue after the read-only result.', dependsOn: ['item-noop'] }];
+    const ws = engine.createWorkstream({ id: 'ws-empty', title: 'empty', phases: [offPhase], items, isolation: 'worktree', releasePolicy: 'reviewed-and-merged' });
     engine.start(ws.id);
 
     await waitForAgents(ws, h, 1);
@@ -615,6 +616,13 @@ describe('WorktreeIsolationManager: empty integration (no commits beyond base)',
     expect(item.worktreePath).toBeUndefined();
     // No item-merged event, there is no merge commit to report for a true no-op.
     expect(events.some((e) => e.type === 'item-merged' && e.itemId === 'item-noop')).toBe(false);
+
+    await waitForAgents(ws, h, 2);
+    expect(events.some(event => event.type === 'item-dependency-cleared' && event.itemId === 'item-next')).toBe(true);
+    h.completeAgent(h.spawnedIds[1]!, engineerReportOutput({}));
+    await waitUntil(() => events.some(event => event.type === 'item-worktree-removed' && event.itemId === 'item-next'), { label: 'dependent no-op integration' });
+    expect(ws.items[1]!.state).toBe('passed');
+    engine.dispose(); await engine.join();
 
     rmSync(root, { recursive: true, force: true });
   }, WAIT_TEST_TIMEOUT_MS);

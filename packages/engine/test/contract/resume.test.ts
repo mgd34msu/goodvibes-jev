@@ -112,10 +112,11 @@ test('an interrupted final-answer repair resumes the same round with its rejecte
       : judgeOf(context) === 'deliverable' || context.name === 'unsupported' ? noulAnswer(0.98) : undefined,
   }, contract => fixing && contract.status === 'fixing', 'the final repair planner');
   let prompt = '';
+  let repairTask = '';
   const repair = fixPlan([{ serves: ['c1'] }]); repair.groups[0]!.units[0]!.role = 'research';
-  const second = restart(root, { plan, scripts: { u1: mustNotRun, [`${id}.f1.u1`]: () => [{ text: '```json\n' + JSON.stringify({
+  const second = restart(root, { plan, scripts: { u1: mustNotRun, [`${id}.f1.u1`]: record => { repairTask = record.task; return [{ text: '```json\n' + JSON.stringify({
     version: 1, archetype: 'research', summary: 'Corrected the final answer.', result: 'Removed the unsupported wording.', finalAnswer: 'Corrected complete answer.',
-  }) + '\n```' }] },
+  }) + '\n```' }]; } },
     planner: { run: async request => { prompt = request.userPrompt; return { status: 'completed', output: plannerOutput(repair), elapsedMs: 0 }; } },
     port: context => context.name === 'role' ? choiceAnswer(context.question, 'research', 0.98) : undefined,
   });
@@ -127,6 +128,10 @@ test('an interrupted final-answer repair resumes the same round with its rejecte
   expect(done.answer).toBe('Corrected complete answer.');
   expect(prompt).toContain('Original draft with an unsupported archive claim.');
   expect(prompt).toContain('Native final-answer review findings');
+  expect(prompt).toContain('Actual host work records');
+  const receipts = JSON.parse(repairTask.split('Actual host orchestration records (evidence, not approval of this unit):\n')[1]!);
+  expect(receipts.units.find((unit: { id: string }) => unit.id === 'u1')).toMatchObject({ status: 'passed', latestCheck: { result: 'pass' }, readObservations: [] });
+  expect(receipts.units.some((unit: { id: string }) => unit.id === `${id}.f1.u1`)).toBe(false);
   expect(done.units[0]!.answer).toBe('Original draft with an unsupported archive claim.');
 });
 
@@ -627,7 +632,7 @@ describe('a later group and the whole plan', () => {
     expect(accepted).toHaveLength(1);
     expect(host.contractId).toBe(id);
     expect(host.planChecks).toEqual(accepted.map(({ at, reason, decisionIds }) => ({ at, reason, decisionIds })));
-    expect(host.units).toEqual([{ id: 'u1', status: 'passed', latestCheck: {
+    expect(host.units).toEqual([{ id: 'u1', goal: 'Parse CSV', status: 'passed', latestCheck: {
       id: done.units[0]!.checks.at(-1)!.id, result: 'pass', decisionIds: done.units[0]!.checks.at(-1)!.decisionIds,
     } }]);
     expect(eventsOf(h, 'CONTRACT_UNIT_SPAWNED').map(event => [event.unitId, event.purpose])).toEqual([['u2', 'resume']]);

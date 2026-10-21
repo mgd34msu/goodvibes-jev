@@ -210,6 +210,11 @@ export function createOrchestrationEngine(deps: OrchestrationEngineDeps): Orches
 
   function emit(event: OrchestrationEvent): void {
     dispatch(event);
+    // Integration can finish after the phase's final scheduling tick. Empty
+    // branches emit removal without a merge commit; both outcomes can release dependencies.
+    if (event.type === 'item-merged' || event.type === 'item-worktree-removed') {
+      queueMicrotask(() => { if (!disposed) tick(event.workstreamId); });
+    }
     // An integration conflict adds serialization edges (dynamic graph).
     if (event.type === 'item-merge-conflict') {
       const workstream = workstreams.get(event.workstreamId);

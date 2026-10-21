@@ -35,6 +35,7 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   const observed: Record<string, unknown>[] = [];
   const checkedOutputs = new Map<Record<string, unknown>, string>();
   let integrationTask = '';
+  let integrationCheckHost: { plannedUnits: { id: string; readObservations?: unknown[]; acceptedAnswer?: string }[] } | undefined;
   const plan = twoUnitPlan();
   plan.groups[0]!.units[0]!.role = 'research';
   plan.groups[0]!.units[0]!.files.push('input.txt');
@@ -57,6 +58,7 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
       return finishes('Convert uses the parser.', 'src/convert.ts')(record, run);
     } },
     port: ({ name, question, state }) => {
+      if (name === 'goal' && state['goal'] === 'Use the parser in convert') integrationCheckHost = (state['evidence'] as { orchestration?: typeof integrationCheckHost } | undefined)?.orchestration;
       if (name === 'role' && (state['unit'] as { title?: string })?.title === 'CSV parser') return choiceAnswer(question, 'research', 0.98);
       const evidence = state['evidence'] as Record<string, unknown> | undefined;
       if (evidence && ('units' in evidence || 'criteria' in evidence) && (name === 'goal' || name.startsWith('criterion_'))) {
@@ -104,6 +106,10 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   expect(integrationReceipts.groups).toMatchObject([{ id: 'g1', status: 'passed', latestCheck: { result: 'pass' } }]);
   expect(integrationReceipts.groups[0]!.criteria).toEqual([{ id: 'g1.c1', text: 'The parser implementation is coherent', verdict: 'met' }]);
   expect(integrationReceipts.groups.some(group => group.id === 'g2')).toBe(false);
+  expect(integrationCheckHost?.plannedUnits.find(unit => unit.id === 'u1')?.readObservations).toEqual([
+    { path: 'input.txt', returnedRanges: ['1-2'], returnedLines: 2 },
+  ]);
+  expect(integrationCheckHost?.plannedUnits.find(unit => unit.id === 'u1')?.acceptedAnswer).toBe(done.units[0]!.answer);
   expect(integrationEvidence['commands']).toEqual([{ agentId: done.units[0]!.agentIds[0], turn: 2, callIndex: 0, callId: 'parser-check',
     command: 'node --check src/csv.ts', success: true, head: 'Parser syntax valid.' }]);
   expect(integrationReceipts.units.find(unit => unit.id === 'u1')!.readObservations).toEqual([

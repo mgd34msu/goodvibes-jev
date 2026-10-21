@@ -1,4 +1,5 @@
 import { nativeContractTaskSource } from './native-source.js';
+import { contractWorkReceipts } from './work-receipts.js';
 /**
  * The unit brief (docs/design/contract-runner.md section 6.1): the task a
  * unit's agent receives, built in code from the contract tree. Sections, in
@@ -7,7 +8,7 @@ import { nativeContractTaskSource } from './native-source.js';
  * sibling and dependency units (so the parts stay compatible with the whole);
  * for an integration unit, every other unit's answer; the tool contract; and
  * one fixed paragraph saying the work is checked while it runs; and current
- * host orchestration receipts for an integration unit.
+ * host orchestration receipts for integration and repair units.
  *
  * The brief never asks the agent to enumerate constraints or review itself:
  * the criteria belong to the contract and Jev reads them continuously.
@@ -67,16 +68,13 @@ export function buildUnitBrief(
   }
   sections.push(readOnly ? READ_ONLY_LINE : WRITE_LINE, BRIEF_CHECKED_PARAGRAPH);
   // All spawn paths rebuild this brief, including restart recovery and fresh
-  // retries. Keep receipts here so a resumed integrator gets current evidence.
-  if (unit.role === 'integration' && contract.id !== undefined && contract.decisions !== undefined) {
-    sections.push('Actual host orchestration records (evidence, not approval of this unit):\n' + JSON.stringify({
-      contractId: contract.id,
-      planChecks: contract.decisions.filter(decision => decision.action === 'plan-accepted' && decision.targetId === contract.id)
-        .map(decision => ({ at: decision.at, reason: decision.reason, decisionIds: [...decision.decisionIds] })),
-      units: contract.units.filter(other => other.id !== unit.id).map(other => ({ id: other.id, status: other.status,
-        latestCheck: other.checks.length ? { id: other.checks.at(-1)!.id, result: other.checks.at(-1)!.result,
-          decisionIds: [...other.checks.at(-1)!.decisionIds] } : null })),
-    }));
+  // retries. Integrators and repair workers need the accepted work they build on.
+  const repairing = unit.criteria.some(criterion => criterion.origin === 'fix');
+  if ((unit.role === 'integration' || repairing) && contract.id !== undefined && contract.decisions !== undefined) {
+    sections.push('Actual host orchestration records (evidence, not approval of this unit):\n' + JSON.stringify(contractWorkReceipts(contract, {
+      excludeUnitId: unit.id, readObservations: repairing,
+      answerIds: new Set(contract.units.filter(other => repairing && (other.role === 'integration' || unit.dependsOn.includes(other.id))).map(other => other.id)),
+    })));
   }
   return sections.join('\n\n');
 }

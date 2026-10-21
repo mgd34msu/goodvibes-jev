@@ -414,6 +414,8 @@ export async function collectUnitEvidence(
     .map(decision => ({ at: decision.at, reason: decision.reason, decisionIds: [...decision.decisionIds] })) ?? [];
   const firstUnitStartedAt = contract.decisions?.find(decision => decision.action === 'spawned' && contract.units?.some(unit => unit.id === decision.targetId))?.at;
   const currentReads = sourceReadsFromTurns(sources.turns, sources.mustWrite ? [] : unit.files, sources.output);
+  const currentUnit = contract.units?.find(planned => planned.id === unit.id);
+  const repairing = currentUnit?.criteria.some(criterion => criterion.origin === 'fix') === true;
   return trimEvidence({ output: sources.output, changes, claims, gates, commands: unit.commandEvidence ?? commandsFromTurns(sources.turns),
     sourceReads: sources.mustWrite ? currentReads : mergeSourceReads(unit.readEvidence ?? [], currentReads),
     ...(planChecks.length ? { orchestration: { contractId: contract.id, ...(contract.status === undefined ? {} : { status: contract.status }), planChecks,
@@ -424,7 +426,12 @@ export async function collectUnitEvidence(
       ...(contract.units === undefined ? {} : { plannedUnits: contract.units.map(planned => ({ id: planned.id, title: planned.title, goal: planned.goal, role: planned.role, brief: planned.brief,
         ...(planned.id === unit.id ? {} : { status: planned.status,
           latestCheck: planned.checks.length ? { id: planned.checks.at(-1)!.id, trigger: planned.checks.at(-1)!.trigger,
-            result: planned.checks.at(-1)!.result, decisionIds: [...planned.checks.at(-1)!.decisionIds] } : null }),
+            result: planned.checks.at(-1)!.result, decisionIds: [...planned.checks.at(-1)!.decisionIds] } : null,
+          ...(planned.status === 'passed' ? { readObservations: (planned.readEvidence ?? []).map(read => ({ path: read.path,
+            returnedRanges: [...read.returnedRanges], returnedLines: read.returnedLines })),
+            commands: (planned.commandEvidence ?? []).map(({ agentId, turn, callIndex, callId, command, success, head }) => ({ agentId, turn, callIndex, callId, command, success, head })),
+            ...(currentUnit?.role === 'integration' || (repairing && (planned.role === 'integration' || currentUnit?.dependsOn.includes(planned.id)))
+              ? { acceptedAnswer: planned.answer ?? '' } : {}) } : {}) }),
         criteria: planned.criteria.map(criterion => ({ id: criterion.id, text: criterion.text, serves: [...criterion.serves] })) })) }),
       meaning: 'Host records for this current contract. Plan acceptance establishes its plan validation, not completion or approval of the unit now being checked.' } } : {}) }, unit);
 }
