@@ -113,8 +113,11 @@ test('an interrupted final-answer repair resumes the same round with its rejecte
   }, contract => fixing && contract.status === 'fixing', 'the final repair planner');
   let prompt = '';
   let repairTask = '';
-  const repair = fixPlan([{ serves: ['c1'] }]); repair.groups[0]!.units[0]!.role = 'research';
-  const second = restart(root, { plan, scripts: { u1: mustNotRun, [`${id}.f1.u1`]: record => { repairTask = record.task; return [{ text: '```json\n' + JSON.stringify({
+  const repair = fixPlan([{ serves: ['c1'] }, { serves: ['c1'], dependsOn: ['u1'] }]);
+  for (const unit of repair.groups[0]!.units) unit.role = 'research';
+  const second = restart(root, { plan, scripts: { u1: mustNotRun,
+    [`${id}.f1.u1`]: () => [{ text: 'Accepted scope reconciliation.' }],
+    [`${id}.f1.u2`]: record => { repairTask = record.task; return [{ text: '```json\n' + JSON.stringify({
     version: 1, archetype: 'research', summary: 'Corrected the final answer.', result: 'Removed the unsupported wording.', finalAnswer: 'Corrected complete answer.',
   }) + '\n```' }]; } },
     planner: { run: async request => { prompt = request.userPrompt; return { status: 'completed', output: plannerOutput(repair), elapsedMs: 0 }; } },
@@ -124,14 +127,15 @@ test('an interrupted final-answer repair resumes the same round with its rejecte
   const done = await ended(second, id!);
   expect(done.status).toBe('passed');
   expect(done.fixRounds).toBe(1);
-  expect(done.units).toHaveLength(2);
+  expect(done.units).toHaveLength(3);
   expect(done.answer).toBe('Corrected complete answer.');
   expect(prompt).toContain('Original draft with an unsupported archive claim.');
   expect(prompt).toContain('Native final-answer review findings');
   expect(prompt).toContain('Actual host work records');
   const receipts = JSON.parse(repairTask.split('Actual host orchestration records (evidence, not approval of this unit):\n')[1]!);
   expect(receipts.units.find((unit: { id: string }) => unit.id === 'u1')).toMatchObject({ status: 'passed', latestCheck: { result: 'pass' }, readObservations: [] });
-  expect(receipts.units.some((unit: { id: string }) => unit.id === `${id}.f1.u1`)).toBe(false);
+  expect(receipts.units.find((unit: { id: string }) => unit.id === `${id}.f1.u1`)).toMatchObject({ status: 'passed', acceptedAnswer: 'Accepted scope reconciliation.' });
+  expect(receipts.units.some((unit: { id: string }) => unit.id === `${id}.f1.u2`)).toBe(false);
   expect(done.units[0]!.answer).toBe('Original draft with an unsupported archive claim.');
 });
 

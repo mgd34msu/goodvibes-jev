@@ -36,6 +36,7 @@ import type { WrappedPromptInfo } from './handler-prompt-buffer.ts';
 import { getViewportBottomLine } from '../renderer/conversation-layout.ts';
 import { handleWorkTreeToken } from './handler-work-tree-route.ts';
 import { handleSessionViewToken } from './handler-session-view-route.ts';
+import { expandTextPastes } from './handler-content-actions.ts';
 import { handleModalTokenRoutes } from './handler-modal-token-routes.ts';
 import { handleCommandModeToken } from './handler-command-route.ts';
 import { handleGlobalShortcutToken } from './handler-shortcuts.ts';
@@ -283,6 +284,7 @@ export function feedInputTokens(context: InputFeedContext, tokens: readonly Inpu
     const sessionView = context.getSessionView();
     const viewState = {
       controls: sessionView,
+      expandPastes: (text: string) => expandTextPastes(context.pasteRegistry, text),
       prompt: context.prompt,
       cursorPos: context.cursorPos,
       commandMode: context.commandMode,

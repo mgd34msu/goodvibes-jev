@@ -3,6 +3,7 @@ import { getContractActionSource, getContractActionSignal } from '../tools/agent
 import { bindOwnedContractSource, assertOwnedContractSource } from './owned-source.js';
 import { pinContractInputAdmission } from './input-authority.js';
 import { inspectContractIntegration } from './integration-inspection.js';
+import { briefWithPreviousChecks, buildUnitBrief } from './brief.js';
 import type { ContractIntegrationInspection } from './integration-inspection-wire.js';
 /**
  * The contract runner (docs/design/contract-runner.md sections 1, 2.2, 6.5
@@ -355,7 +356,13 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
       if (run === undefined || unit === undefined || run.terminal || signal.aborted) return Promise.resolve(cancelled);
       const runtime = run.runtime(unit);
       const decided = runtime.preSpawn;
-      if (decided === null) return Promise.resolve({ kind: 'spawn' });
+      if (decided === null) {
+        const group = run.group(unit.groupId);
+        if (group === undefined) return Promise.resolve(cancelled);
+        // Items can wait behind peers, or survive a restart, with an old task.
+        // Bind current accepted results when the worker is actually admitted.
+        return Promise.resolve({ kind: 'spawn', task: briefWithPreviousChecks(buildUnitBrief(run.contract, group, unit), unit) });
+      }
       if (decided !== 'wait') {
         runtime.preSpawn = null;
         return Promise.resolve(decided);

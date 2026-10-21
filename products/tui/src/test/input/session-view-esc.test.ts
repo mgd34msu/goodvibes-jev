@@ -5,6 +5,7 @@
 import { describe, expect, test } from 'bun:test';
 import { handleEscape, type EscapeState } from '../../input/handler-modal-stack.ts';
 import { handleSessionViewToken, type SessionViewRouteState } from '../../input/handler-session-view-route.ts';
+import { expandTextPastes } from '../../input/handler-content-actions.ts';
 import type { InputToken } from '@goodvibes-jev/engine/sdk/platform/core';
 import { makeViewScene, type ViewScene } from '../helpers/session-view-scenes.ts';
 
@@ -153,6 +154,17 @@ describe('the session view keys', () => {
     expect(handleSessionViewToken(state, key('enter'))).toBe(true);
     expect(scene.log.steers).toEqual([{ id: 'eng', text: 'also cap the jitter' }]);
     expect(state.prompt).toBe('');
+  });
+
+  test('a folded multiline paste reaches the agent as its complete text', () => {
+    const scene = makeViewScene(); scene.views.open({ kind: 'agent', id: 'eng' });
+    const pasted = Array.from({ length: 12 }, (_, index) => `Requirement ${index + 1}`).join('\n');
+    const registry = new Map([['p1', pasted]]);
+    const state = { ...route(scene, '[TEXT: p1, 12 lines]'), expandPastes: (text: string) => expandTextPastes(registry, text) };
+    expect(handleSessionViewToken(state, key('enter'))).toBe(true);
+    expect(scene.log.steers).toEqual([{ id: 'eng', text: pasted }]);
+    expect(state.prompt).toBe('');
+    expect(registry.get('p1')).toBe(pasted);
   });
 
   test('in a process view letters are the view keys: / searches, y copies, other letters are refused', () => {

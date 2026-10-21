@@ -68,6 +68,7 @@ export interface SessionViewRouteState {
   readonly commandMode: boolean;
   readonly saveUndoState: () => void;
   readonly requestRender: () => void;
+  readonly expandPastes?: ((text: string) => string) | undefined;
 }
 
 function isBackTab(token: InputToken): boolean {
@@ -103,7 +104,7 @@ export function handleSessionViewToken(state: SessionViewRouteState, token: Inpu
     if (c.kind === 'agent' && name === 'enter' && !token.shift && !token.ctrl && !token.meta && !state.commandMode) {
       const text = state.prompt.trim();
       if (!text) return true; // an empty Enter in an agent view sends nothing (and never opens main's block actions)
-      if (c.steer(text)) {
+      if (c.steer(state.expandPastes?.(text) ?? text)) {
         state.saveUndoState();
         state.prompt = '';
         state.cursorPos = 0;

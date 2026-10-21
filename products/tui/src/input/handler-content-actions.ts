@@ -134,37 +134,26 @@ export function registerPaste(
   return { marker: `[TEXT: ${id}, ${lines.length} lines]`, nextPasteId: state.nextPasteId, nextImageId: state.nextImageId };
 }
 
+/** Expand folded text before either Main submission or an agent steer. */
+export function expandTextPastes(pasteRegistry: Map<string, string>, text: string): string {
+  const used = new Set<string>();
+  const expanded = text.replace(/\[TEXT: (p\d+), (\d+) lines\]/g, (marker, id: string) => {
+    const content = pasteRegistry.get(id);
+    if (!content) return marker;
+    used.add(id);
+    return content;
+  });
+  for (const id of pasteRegistry.keys()) if (!used.has(id)) pasteRegistry.delete(id);
+  return expanded;
+}
+
 export function expandPrompt(
   pasteRegistry: Map<string, string>,
   imageRegistry: Map<string, { data: string; mediaType: string }>,
   text: string,
   projectRoot: string,
 ): string | ContentPart[] {
-  const foundPasteIds = new Set<string>();
-  const markerRegex = /\[TEXT: (p\d+), (\d+) lines\]/g;
-
-  const replacements: { marker: string; index: number; content: string }[] = [];
-  let match;
-  while ((match = markerRegex.exec(text)) !== null) {
-    const id = match[1];
-    const content = pasteRegistry.get(id);
-    if (content) {
-      replacements.push({ marker: match[0], index: match.index, content });
-      foundPasteIds.add(id);
-    }
-  }
-
-  let expanded = text;
-  for (let i = replacements.length - 1; i >= 0; i--) {
-    const { marker, index, content } = replacements[i]!;
-    expanded = expanded.slice(0, index) + content + expanded.slice(index + marker.length);
-  }
-
-  for (const id of pasteRegistry.keys()) {
-    if (!foundPasteIds.has(id)) {
-      pasteRegistry.delete(id);
-    }
-  }
+  let expanded = expandTextPastes(pasteRegistry, text);
 
   const injectRegex = /(?:^|(?<=\s))!@(\S+)/g;
   let injectMatch;
