@@ -408,7 +408,7 @@ export function currentFileObservations(cwd: string, paths: readonly string[]): 
  * always; claims at completion and at resume; gates at every trigger but turn-end.
  */
 export async function collectUnitEvidence(
-  contract: Pick<ContractView, 'id' | 'sessionId'> & Partial<Pick<ContractView, 'status' | 'decisions' | 'createdAt' | 'origin' | 'units' | 'proposedUnits' | 'projectRoot' | 'inputSnapshot'>>,
+  contract: Pick<ContractView, 'id' | 'sessionId'> & Partial<Pick<ContractView, 'status' | 'decisions' | 'createdAt' | 'origin' | 'criteria' | 'groups' | 'units' | 'proposedUnits' | 'projectRoot' | 'inputSnapshot'>>,
   unit: Pick<ContractUnit, 'id' | 'goal' | 'brief' | 'files' | 'baseline' | 'readEvidence' | 'commandEvidence'>,
   trigger: CheckTrigger,
   sources: UnitEvidenceSources,
@@ -438,11 +438,25 @@ export async function collectUnitEvidence(
   const firstUnitStartedAt = contract.decisions?.find(decision => decision.action === 'spawned' && contract.units?.some(unit => unit.id === decision.targetId))?.at;
   const currentReads = sourceReadsFromTurns(sources.turns, sources.mustWrite ? [] : unit.files, sources.output);
   const currentUnit = contract.units?.find(planned => planned.id === unit.id);
+  // A derived check can name a root or another derived requirement by id.
+  // Supply that actual obligation, not just its id or the worker's summary.
+  const allCriteria = [...(contract.criteria ?? []), ...(contract.groups ?? []).flatMap(group => group.criteria),
+    ...(contract.units ?? []).flatMap(planned => planned.criteria)];
+  const referenced = new Set(currentUnit?.criteria.flatMap(criterion => criterion.serves) ?? []);
+  for (const id of referenced) for (const parent of allCriteria.find(criterion => criterion.id === id)?.serves ?? []) referenced.add(parent);
+  const requirements = { unitId: unit.id, brief: unit.brief,
+    referencedCriteria: allCriteria.filter(criterion => referenced.has(criterion.id)).map(criterion => ({
+      id: criterion.id, text: criterion.text, origin: criterion.origin, serves: [...criterion.serves],
+      ...(criterion.quote === undefined ? {} : { quote: criterion.quote }),
+    })),
+    meaning: 'Actual host-owned requirements referenced by this unit acceptance check, including transitive references. They resolve requirement ids; they do not expand this unit into the whole contract or approve its work. Judge the assigned unit goal and criteria against their referenced obligations and actual evidence.',
+  };
   const repairing = currentUnit?.criteria.some(criterion => criterion.origin === 'fix') === true;
   const privateArtifacts = readNativePrivateReceiptArchives(contract, unit.files);
   return trimEvidence({ output: sources.output, changes, claims, gates, commands: unit.commandEvidence ?? commandsFromTurns(sources.turns),
     sourceReads: sources.mustWrite ? currentReads : mergeSourceReads(unit.readEvidence ?? [], currentReads),
     ...(planChecks.length ? { orchestration: { contractId: contract.id, ...(contract.status === undefined ? {} : { status: contract.status }), planChecks,
+      requirements,
       ...(sources.ownerEvidence === undefined ? {} : { ownerPriorReads: sources.ownerEvidence }),
       currentFiles: currentFileObservations(sources.cwd, [...unit.files, ...changes.map(change => change.path),
         ...(contract.units ?? []).filter(planned => planned.status === 'passed').flatMap(planned => planned.touchedPaths ?? [])]),
