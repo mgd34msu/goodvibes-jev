@@ -158,6 +158,12 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     const evidence = trimEvidence({ output: input.output, changes, gates, commands: [], orchestration: {
       contractId: contract.id, createdAt: contract.createdAt, origin: contract.origin, planChecks,
       continuationEvidence: contract.taskEvidence ?? '',
+      currentValidation: {
+        scope: input.scope, targetId: input.targetId, outputDigest: hashState(input.output), status: 'in-progress',
+        publicationRule: input.scope === 'deliverable'
+          ? 'This native Jev judgment is reviewing this exact final contract answer now. The host only commits and delivers this checked answer after this judgment passes. A requirement for native Jev to validate this final answer is performed by this very check; it cannot require an earlier successful record of its own verdict. This is not approval and does not replace independently required project-side validations or checks of later rewritten answers.'
+          : 'This native Jev judgment is reviewing the combined group output now. The host advances the group only after this judgment passes. This is not approval or evidence of a later deliverable or rewritten-answer check.',
+      },
       inputGeneration: contract.inputSnapshot?.id ?? null,
       firstUnitStartedAt: contract.decisions.find(decision => decision.action === 'spawned' && contract.units.some(unit => unit.id === decision.targetId))?.at ?? null,
       groups: contract.groups.filter(group => evidenceGroups.has(group.id) && group.id !== input.targetId).map(group => ({

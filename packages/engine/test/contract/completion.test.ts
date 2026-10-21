@@ -9,6 +9,7 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import { hashState } from '@goodvibes-jev/judgment';
 import { CONTRACT_PASSED_WITHOUT_OUTPUT, describeCommitOutcome, describeContractOutcome, renderContractAnswer } from '../../sdk/src/platform/contract/index.js';
 import { makeHarness, oneUnitPlan, startContract, twoUnitPlan, waitFor, type AgentScript, type Harness } from './runner-support.js';
 import { contractOf, finishes, git, terminal } from './steps-support.js';
@@ -32,6 +33,7 @@ async function run(h: Harness): Promise<string> {
 
 test('group and final checks receive actual plan-validation and unit-acceptance receipts', async () => {
   const observed: Record<string, unknown>[] = [];
+  const checkedOutputs = new Map<Record<string, unknown>, string>();
   let integrationTask = '';
   const plan = twoUnitPlan();
   plan.groups[0]!.units[0]!.role = 'research';
@@ -53,7 +55,11 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
     port: ({ name, question, state }) => {
       if (name === 'role' && (state['unit'] as { title?: string })?.title === 'CSV parser') return choiceAnswer(question, 'research', 0.98);
       const evidence = state['evidence'] as Record<string, unknown> | undefined;
-      if (evidence && ('units' in evidence || 'criteria' in evidence)) observed.push(evidence);
+      if (evidence && ('units' in evidence || 'criteria' in evidence)) {
+        const output = state['output'];
+        if (typeof output !== 'string') throw new Error('The contract must check its exact string answer.');
+        observed.push(evidence); checkedOutputs.set(evidence, output);
+      }
       return undefined;
     },
   }));
@@ -69,6 +75,14 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   expect(integrationHost.units).toMatchObject([{ id: 'u1', status: 'passed', latestCheck: { result: 'pass' } }]);
   expect(observed.some(evidence => 'units' in evidence)).toBe(true);
   expect(observed.some(evidence => 'criteria' in evidence)).toBe(true);
+  for (const evidence of observed) {
+    const protocol = (evidence['orchestration'] as { currentValidation: { scope: string; targetId: string; outputDigest: string; status: string; publicationRule: string } }).currentValidation;
+    expect(protocol.scope).toBe('criteria' in evidence ? 'deliverable' : 'group');
+    expect(protocol.targetId).toBe('criteria' in evidence ? id : (evidence['units'] as { id: string }[])[0]!.id === 'u1' ? 'g1' : 'g2');
+    expect(protocol.outputDigest).toBe(hashState(checkedOutputs.get(evidence)!));
+    expect(protocol.status).toBe('in-progress');
+    if (protocol.scope === 'deliverable') expect(protocol.publicationRule).toContain('only commits and delivers this checked answer after this judgment passes');
+  }
   const integrationEvidence = observed.find(evidence => Array.isArray(evidence['units']) &&
     (evidence['units'] as { id: string }[]).some(unit => unit.id === 'u2'))!;
   const integrationReceipts = integrationEvidence['orchestration'] as {
