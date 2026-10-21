@@ -266,13 +266,15 @@ describe('what each trigger collects', () => {
   test('unit checks resolve referenced requirement ids through derived criteria to their exact roots', async () => {
     const current = makeUnit();
     current.criteria[0] = { ...current.criteria[0]!, serves: ['group.c1'] };
+    current.readEvidence = [{ path: 'source.ts', returnedRanges: ['1-2'], returnedLines: 2 }];
     const planned = makeContract({ id: contract.id, units: [current], criteria: [
       { ...current.criteria[0]!, id: 'o1', origin: 'stated', text: 'Read source.ts:1-4.', quote: 'Read source.ts:1-4.', serves: [] },
       { ...current.criteria[0]!, id: 'unrelated', text: 'A separate responsibility', serves: [] },
     ], decisions: [{ id: 'accepted', at: 1, action: 'plan-accepted', targetId: contract.id, reason: 'Checked plan', decisionIds: ['native-plan'] }] });
     planned.groups[0]!.criteria = [{ ...current.criteria[0]!, id: 'group.c1', text: 'Preserve all o1 intervals.', serves: ['o1'] }];
     const evidence = await collectUnitEvidence(planned, current, 'resume', { ...sources(), turns: [], mustWrite: false });
-    const requirements = { unitId: current.id, brief: current.brief, referencedCriteria: [
+    const requirements = { unitId: current.id, brief: current.brief, sourceReferenceComparisons: [{ path: 'source.ts',
+      referencedLines: 4, coveredReferencedLines: 2, missingReferencedRanges: [[3, 4]], missingReferencedLines: 2 }], referencedCriteria: [
       { id: 'o1', text: 'Read source.ts:1-4.', origin: 'stated', quote: 'Read source.ts:1-4.', serves: [] },
       { id: 'group.c1', text: 'Preserve all o1 intervals.', origin: 'derived', serves: ['o1'] },
     ] };
