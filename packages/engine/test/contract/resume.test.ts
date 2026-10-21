@@ -99,7 +99,7 @@ async function ended(h: Harness, id: string): Promise<ContractView> {
 
 const running = (contract: ContractView) => contract.units[0]?.status === 'running' && (contract.units[0]?.checks.length ?? 0) >= 1;
 
-test.each(['interrupted', 'privacy-refused'])('an %s final-answer repair resumes the same round with its rejected draft and findings', async condition => {
+test.each(['interrupted', 'privacy-refused', 'verifier-refused'])('an %s final-answer repair resumes the same round with its rejected draft and findings', async condition => {
   const plan = oneUnitPlan(1);
   plan.groups[0]!.units[0]!.role = 'research';
   let fixing = false;
@@ -118,9 +118,17 @@ test.each(['interrupted', 'privacy-refused'])('an %s final-answer repair resumes
     contract.error = `the fix for deliverable ${contract.id} could not be planned: the planner agent failed: Refused before judgment: [REDACTED_TEXT]`;
     contract.units[0]!.commandEvidence = [{ agentId: contract.units[0]!.agentIds[0]!, turn: 1, callIndex: 0,
       callId: 'directory-listing', command: 'ls -l', success: true, head: privateHead }];
+    const acceptedIndex = contract.decisions.findIndex(decision => decision.action === 'plan-accepted');
+    contract.decisions[acceptedIndex] = { ...contract.decisions[acceptedIndex]!, at: 4222222222222 };
+  });
+  if (condition === 'verifier-refused') editContract(root, id!, contract => {
+    contract.status = 'failed'; contract.failureKind = 'judgment-unavailable'; contract.completedAt = Date.now();
+    contract.error = 'interrupted correction could not resume: Jev could not answer: invalid response';
   });
   let prompt = '';
   let repairTask = '';
+  let plannerRuns = 0;
+  let requestFailures = 0;
   const repair = fixPlan([{ serves: ['c1'] }, { serves: ['c1'], dependsOn: ['u1'] }]);
   for (const unit of repair.groups[0]!.units) unit.role = 'research';
   const second = restart(root, { plan, scripts: { u1: mustNotRun,
@@ -128,8 +136,23 @@ test.each(['interrupted', 'privacy-refused'])('an %s final-answer repair resumes
     [`${id}.f1.u2`]: record => { repairTask = record.task; return [{ text: '```json\n' + JSON.stringify({
     version: 1, archetype: 'research', summary: 'Corrected the final answer.', result: 'Removed the unsupported wording.', finalAnswer: 'Corrected complete answer.',
   }) + '\n```' }]; } },
-    planner: { run: async request => { prompt = request.userPrompt; return { status: 'completed', output: plannerOutput(repair), elapsedMs: 0 }; } },
-    port: context => context.name === 'role' ? choiceAnswer(context.question, 'research', 0.98) : undefined,
+    planner: { run: async request => {
+      plannerRuns++;
+      prompt = request.userPrompt;
+      if (condition === 'privacy-refused') {
+        await sleep(20);
+        const saved = JSON.parse(readFileSync(contractPath(root, id!), 'utf-8')) as { contract: Contract };
+        expect(saved.contract.status).toBe('fixing');
+        expect(saved.contract.error).toBeUndefined();
+      }
+      return { status: 'completed', output: plannerOutput(repair), elapsedMs: 0 };
+    } },
+    port: context => {
+      if (condition === 'verifier-refused' && context.name === 'role' && requestFailures === 0) {
+        requestFailures++; throw new JudgmentError('invalid-response', 'fixture malformed verifier response');
+      }
+      return context.name === 'role' ? choiceAnswer(context.question, 'research', 0.98) : undefined;
+    },
   });
   await second.runner.resumeAll();
   const done = await ended(second, id!);
@@ -145,6 +168,11 @@ test.each(['interrupted', 'privacy-refused'])('an %s final-answer repair resumes
   expect(receipts.units.find((unit: { id: string }) => unit.id === `${id}.f1.u1`)).toMatchObject({ status: 'passed', acceptedAnswer: 'Accepted scope reconciliation.' });
   expect(receipts.units.some((unit: { id: string }) => unit.id === `${id}.f1.u2`)).toBe(false);
   expect(done.units[0]!.answer).toBe('Original draft with an unsupported archive claim.');
+  expect(plannerRuns).toBe(1);
+  if (condition === 'verifier-refused') {
+    expect(requestFailures).toBe(1);
+    expect(done.decisions.some(decision => decision.reason.startsWith('fix-plan verification pending'))).toBe(true);
+  }
   if (condition === 'privacy-refused') {
     expect(prompt).not.toContain('4111111111111111');
     expect(prompt).toContain('[WITHHELD:card-shaped-number]');
@@ -154,6 +182,46 @@ test.each(['interrupted', 'privacy-refused'])('an %s final-answer repair resumes
     expect(done.units[0]!.commandEvidence![0]!.command).toBe('ls -l');
     expect(done.decisions.some(decision => decision.reason.startsWith('Recovered a historical repair-planner input refusal'))).toBe(true);
   }
+});
+
+test('an interrupted fix-plan request reuses its bound proposal and obtains a fresh check after restart', async () => {
+  const plan = oneUnitPlan(1); plan.groups[0]!.units[0]!.role = 'research';
+  const repair = fixPlan([{ serves: ['c1'] }]); repair.groups[0]!.units[0]!.role = 'research';
+  let plannerRuns = 0;
+  const { root, ids: [id] } = await interrupt({ plan, contract: { isolation: 'worktree' },
+    scripts: { u1: () => [{ text: 'Original answer.' }] },
+    planner: { run: async request => {
+      if (!request.systemPrompt.startsWith('You plan a repair')) return { status: 'completed', output: plannerOutput(plan), elapsedMs: 0 };
+      plannerRuns++;
+      return { status: 'completed', output: plannerOutput(repair), elapsedMs: 0 };
+    } },
+    port: context => {
+      if (context.name === 'role') {
+        if ((context.state['unit'] as { title: string }).title === 'Fix 1') throw new JudgmentError('invalid-response', 'fixture protocol failure');
+        return choiceAnswer(context.question, 'research', 0.98);
+      }
+      return context.name === 'unsupported' ? noulAnswer(0.98) : undefined;
+    },
+  }, contract => contract.decisions.some(decision => decision.reason.startsWith('fix-plan verification pending')), 'the retained repair proposal');
+  const stored = JSON.parse(readFileSync(contractPath(root, id!), 'utf-8')) as { contract: Contract };
+  expect(JSON.parse(stored.contract.decisions.find(decision => decision.targetId === `${id}.f1.candidate`)!.reason).output).toBe(plannerOutput(repair));
+  let freshChecks = 0;
+  const h = restart(root, { plan, contract: { isolation: 'worktree' }, scripts: { u1: mustNotRun,
+    [`${id}.f1.u1`]: () => [{ text: '```json\n' + JSON.stringify({ version: 1, archetype: 'research', summary: 'Corrected answer', finalAnswer: 'Corrected complete answer.' }) + '\n```' }],
+  }, planner: { run: async () => { throw new Error('The retained proposal must be checked without another planner run'); } },
+    port: context => {
+      if (context.name === 'role') { if ((context.state['unit'] as { title: string }).title === 'Fix 1') freshChecks++; return choiceAnswer(context.question, 'research', 0.98); }
+      return undefined;
+    },
+  });
+  await h.runner.resumeAll();
+  const done = await ended(h, id!);
+  expect(done.status).toBe('passed');
+  expect(done.answer).toBe('Corrected complete answer.');
+  expect(done.units).toHaveLength(2);
+  expect(done.fixRounds).toBe(1);
+  expect(plannerRuns).toBe(1);
+  expect(freshChecks).toBe(1);
 });
 
 test.each([false, true])('a rejected verifier request cannot cancel a sibling or pass unchecked work (persistent=%s)', async persistent => {
@@ -687,7 +755,7 @@ describe('a later group and the whole plan', () => {
     const accepted = done.decisions.filter(decision => decision.action === 'plan-accepted' && decision.targetId === id);
     expect(accepted).toHaveLength(1);
     expect(host.contractId).toBe(id);
-    expect(host.planChecks).toEqual(accepted.map(({ at, reason, decisionIds }) => ({ at, reason, decisionIds })));
+    expect(host.planChecks).toEqual(accepted.map(({ at, reason, decisionIds }) => ({ at: new Date(at).toISOString(), reason, decisionIds })));
     expect(host.units).toEqual([{ id: 'u1', goal: 'Parse CSV', status: 'passed', latestCheck: {
       id: done.units[0]!.checks.at(-1)!.id, result: 'pass', decisionIds: done.units[0]!.checks.at(-1)!.decisionIds,
     } }]);

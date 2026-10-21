@@ -24,6 +24,7 @@ import { nativeContractActionSource } from './native-decisions.js';
  * files the unit and its fixes touched.
  */
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { hashState } from '@goodvibes-jev/judgment';
 import type { StallRoute } from '../../events/contract.js';
 import type { WorkItem } from '../orchestration/types.js';
 import { stallRoute } from './batteries/stall-route.js';
@@ -195,9 +196,26 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
       criteria: brief.criteria.map((criterion) => ({ id: criterion.id, text: criterion.text, quote: undefined })),
       groups: [checked.group],
     };
-    const jev = await runUnitShapeChecks(shaped, { signal: run.abort.signal, nativeSource: run.contract.nativeSource, native: { contract: run.contract, services: context.native } });
-    addJudgmentUsage(run.contract.judgmentUsage, jev.usage);
-    return { group: checked.group, plan: checked.plan, problems: jev.problems, decisionIds: jev.decisionIds };
+    for (let failures = 0; ; failures++) {
+      try {
+        const jev = await runUnitShapeChecks(shaped, { signal: run.abort.signal, nativeSource: run.contract.nativeSource, native: { contract: run.contract, services: context.native } });
+        addJudgmentUsage(run.contract.judgmentUsage, jev.usage);
+        return { group: checked.group, plan: checked.plan, problems: jev.problems, decisionIds: jev.decisionIds };
+      } catch (error) {
+        if (isAbortError(error, run.abort.signal) || failureFromError(error).kind !== 'judgment-unavailable') throw error;
+        const delay = Math.min(30_000, 1_000 * 2 ** Math.min(failures, 5));
+        run.decide('resumed', brief.targetId, `fix-plan verification pending; exact proposal retained, retry in ${delay / 1_000} seconds, no verdict: ${failureFromError(error).reason}`);
+        context.checkpoint?.(run);
+        await new Promise<void>(resolve => {
+          const done = (): void => { clearTimeout(timer); run.abort.signal.removeEventListener('abort', done); resolve(); };
+          const timer = setTimeout(done, delay);
+          timer.unref?.();
+          run.abort.signal.addEventListener('abort', done, { once: true });
+          if (run.abort.signal.aborted) done();
+        });
+        run.abort.signal.throwIfAborted();
+      }
+    }
   }
 
   /**
@@ -213,26 +231,49 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
     const route = await nativeContractRoute(context.routeSelector, contract, context.native, { purpose: 'planner', contract: run.view() }, run.abort.signal);
     if (contract.nativeSource !== undefined) { await planNativeFix(run, brief, round, route, input); return; }
     let repair: { problems: readonly PlanProblem[]; previousPlan: string } | undefined;
+    const candidateId = `${brief.targetId}.f${round}.candidate`;
+    const { output: priorEvidence, ...target } = brief;
+    const binding = hashState(JSON.stringify({ ask: contract.ask, inputId: contract.inputSnapshot?.id ?? null,
+      resultRevision: input.resultRevision ?? null, target,
+      output: brief.scope === 'deliverable' ? renderContractAnswer(contract) : priorEvidence,
+      finalAnswerReview: brief.scope === 'deliverable' ? contract.decisions.findLast(decision => decision.targetId === `${contract.id}.final-answer-review`)?.reason ?? null : null,
+      work: contractWorkReceipts(contract, { readObservations: true }),
+    }));
+    let retained: string | undefined;
+    if (input.resultRevision !== undefined) {
+      const saved = contract.decisions.findLast(decision => decision.action === 'planned' && decision.targetId === candidateId);
+      try {
+        const candidate = saved === undefined ? undefined : JSON.parse(saved.reason) as { version?: unknown; binding?: unknown; output?: unknown };
+        if (candidate?.version === 1 && candidate.binding === binding && typeof candidate.output === 'string') retained = candidate.output;
+      } catch { /* Invalid candidate records grant no authority and cannot skip planning. */ }
+    }
     for (let attempt = 0; ; attempt += 1) {
       await input.assertCurrent();
-      const result = await context.decompositionRunner.run(bindContractPlanConsumer(bindContractInputAuthority({
-        goal: contract.ask,
-        workingDir: input.workingDirectory,
-        systemPrompt: buildFixPlannerPrompt(),
-        userPrompt: buildFixPlannerRequest(brief, repair),
-        bounds: readPlannerBounds(context.configManager),
-        attempt: attempt === 0 ? 'initial' : 'repair',
-        route,
-        signal: run.abort.signal,
-      }, input.authority)));
-      if (result.agentId !== undefined) contract.plannerAgentIds.push(result.agentId);
-      if (run.terminal) return;
-      await input.assertCurrent();
-      if (result.status !== 'completed') {
-        run.control.fail('planning', `the fix for ${brief.scope} ${brief.targetId} could not be planned: the planner agent ${result.status === 'cancelled' ? 'was stopped' : 'failed'}${result.detail === undefined ? '' : `: ${result.detail}`}`);
-        return;
+      let output = retained;
+      retained = undefined;
+      if (output === undefined) {
+        const result = await context.decompositionRunner.run(bindContractPlanConsumer(bindContractInputAuthority({
+          goal: contract.ask,
+          workingDir: input.workingDirectory,
+          systemPrompt: buildFixPlannerPrompt(),
+          userPrompt: buildFixPlannerRequest(brief, repair),
+          bounds: readPlannerBounds(context.configManager),
+          attempt: attempt === 0 ? 'initial' : 'repair',
+          route,
+          signal: run.abort.signal,
+        }, input.authority)));
+        if (result.agentId !== undefined) contract.plannerAgentIds.push(result.agentId);
+        if (run.terminal) return;
+        await input.assertCurrent();
+        if (result.status !== 'completed') {
+          run.control.fail('planning', `the fix for ${brief.scope} ${brief.targetId} could not be planned: the planner agent ${result.status === 'cancelled' ? 'was stopped' : 'failed'}${result.detail === undefined ? '' : `: ${result.detail}`}`);
+          return;
+        }
+        output = result.output;
+        run.decide('planned', candidateId, JSON.stringify({ version: 1, binding, output }));
+        context.checkpoint?.(run);
       }
-      const checked = await checkFixPlan(run, brief, result.output);
+      const checked = await checkFixPlan(run, brief, output);
       if (run.terminal) return;
       await input.assertCurrent();
       if (checked.problems.length === 0 && checked.group !== undefined) {
@@ -251,7 +292,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
         });
         return;
       }
-      repair = { problems: checked.problems, previousPlan: checked.plan === undefined ? result.output : renderContractPlan(checked.plan) };
+      repair = { problems: checked.problems, previousPlan: checked.plan === undefined ? output : renderContractPlan(checked.plan) };
     }
   }
 

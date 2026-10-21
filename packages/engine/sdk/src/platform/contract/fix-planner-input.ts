@@ -9,6 +9,7 @@ import type { ContractRun } from './run-context.js';
 export interface FixPlannerInput {
   readonly authority?: ContractInputAuthority | undefined;
   readonly workingDirectory: string;
+  readonly resultRevision?: string;
   /** Discard the plan if the source result tree or the frozen view changed while it was read. */
   assertCurrent(): Promise<void>;
 }
@@ -49,5 +50,5 @@ export async function prepareFixPlannerInput(run: ContractRun): Promise<FixPlann
   };
   await assertCurrent();
   const authority = await createContractInputAuthority(contract, workingDirectory, { signal, snapshot: current, assertView: assertCurrent });
-  return { workingDirectory, assertCurrent, authority };
+  return { workingDirectory, resultRevision: current.inputCommit, assertCurrent, authority };
 }

@@ -420,6 +420,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
     checks: () => checks,
     continuePlanning: (run, outcome) => continuePlanning(run, outcome),
     ownerProgress: (run) => updateOwnerProgress(run),
+    checkpoint: run => { deps.store.put(run.contract); if (!deps.store.write(run.id)) throw new Error('Contract correction checkpoint failed'); },
   });
   const untrackedSteps = { ...ownSteps, ...deps.steps };
   // Every step, including host overrides, runs under the contract's real

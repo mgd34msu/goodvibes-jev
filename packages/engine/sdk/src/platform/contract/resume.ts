@@ -178,13 +178,16 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
         && contract.units.length > 0 && contract.units.every(unit => unit.status === 'passed')
         && contract.groups.length > 0 && contract.groups.every(group => group.status === 'passed')
         && contract.escalations.every(item => item.resolvedAt !== undefined);
-      const pendingVerification = acceptedWork && contract.failureKind === 'judgment-unavailable';
+      const pendingFixVerification = acceptedWork && contract.failureKind === 'judgment-unavailable' && contract.fixRounds > 0
+        && !contract.groups.some(group => group.id === `${contract.id}.f${contract.fixRounds}`)
+        && contract.error?.startsWith('interrupted correction could not resume:') === true;
+      const pendingVerification = acceptedWork && contract.failureKind === 'judgment-unavailable' && !pendingFixVerification;
       const pendingRepair = acceptedWork && contract.failureKind === 'planning' && contract.fixRounds > 0
         && !contract.groups.some(group => group.id === `${contract.id}.f${contract.fixRounds}`)
         && contract.error?.startsWith(`the fix for deliverable ${contract.id} could not be planned:`) === true
         && contract.error.includes('Refused before judgment:')
         && contract.units.some(unit => unit.commandEvidence?.some(command => findCardNumberShapes(command.head, 1).length > 0));
-      if (isTerminalContractStatus(contract.status) && !pendingVerification && !pendingRepair) {
+      if (isTerminalContractStatus(contract.status) && !pendingVerification && !pendingRepair && !pendingFixVerification) {
         deps.store.hold(contract);
         continue;
       }
@@ -200,8 +203,8 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
           continue;
         }
       }
-      if (pendingVerification || pendingRepair) {
-        contract.status = pendingRepair ? 'fixing' : 'judging';
+      if (pendingVerification || pendingRepair || pendingFixVerification) {
+        contract.status = pendingRepair || pendingFixVerification ? 'fixing' : 'judging';
         contract.failureKind = undefined;
         contract.error = undefined;
         contract.completedAt = undefined;
@@ -210,6 +213,8 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
       const run = deps.adopt(contract);
       if (pendingVerification) run.decide('resumed', contract.id, 'Recovered a historical final-verifier request failure; all accepted units and groups retained. A fresh final-answer and fulfillment check is required before publication; no approval is inferred.');
       if (pendingRepair) run.decide('resumed', contract.id, 'Recovered a historical repair-planner input refusal with card-shaped observational output. Resume the same unstarted repair round with projected command observations; original request screening and fresh plan, unit and final checks remain required.');
+      if (pendingFixVerification) run.decide('resumed', contract.id, 'Recovered an interrupted fix-plan verification request; resume the same unstarted repair round, preserving the checked work and any bound proposal. Fresh plan and final checks remain required.');
+      if (pendingVerification || pendingRepair || pendingFixVerification) deps.store.put(contract);
       prepareResume(run);
       const zombie = findZombieCause(contract);
       if (zombie !== null) {

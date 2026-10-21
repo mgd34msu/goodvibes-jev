@@ -46,6 +46,8 @@ export interface StepContext {
   readonly continuePlanning: (run: ContractRun, outcome: ShapeOutcome | PlanningOutcome) => Promise<void>;
   /** The owner record's operator progress follows the contract's status. */
   readonly ownerProgress: (run: ContractRun) => void;
+  /** Persist actual pending work before a transport-dependent check. */
+  readonly checkpoint?: (run: ContractRun) => void;
 }
 
 export interface ContractStepsWithReplies extends ContractSteps {

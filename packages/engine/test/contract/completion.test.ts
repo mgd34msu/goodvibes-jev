@@ -78,7 +78,7 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   const accepted = done.decisions.find(decision => decision.action === 'plan-accepted' && decision.targetId === id)!;
   const integrationHost = JSON.parse(integrationTask.split('Actual host orchestration records (evidence, not approval of this unit):\n')[1]!);
   expect(integrationHost.contractId).toBe(id);
-  expect(integrationHost.planChecks).toContainEqual({ at: accepted.at, reason: accepted.reason, decisionIds: accepted.decisionIds });
+  expect(integrationHost.planChecks).toContainEqual({ at: new Date(accepted.at).toISOString(), reason: accepted.reason, decisionIds: accepted.decisionIds });
   expect(integrationHost.units).toMatchObject([{ id: 'u1', status: 'passed', latestCheck: { result: 'pass' } }]);
   expect(observed.some(evidence => 'units' in evidence)).toBe(true);
   expect(observed.some(evidence => 'criteria' in evidence)).toBe(true);

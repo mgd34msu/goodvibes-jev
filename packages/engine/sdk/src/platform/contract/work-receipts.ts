@@ -23,7 +23,7 @@ export function contractWorkReceipts(
     contractId: contract.id,
     meaning: 'Host observations and prior check results, not approval of the current repair. Preserve completed work; missing primary text is not evidence that accepted work never happened.',
     planChecks: (contract.decisions ?? []).filter(decision => decision.action === 'plan-accepted' && decision.targetId === contract.id)
-      .map(decision => ({ at: decision.at, reason: decision.reason, decisionIds: [...decision.decisionIds] })),
+      .map(decision => ({ at: new Date(decision.at).toISOString(), reason: decision.reason, decisionIds: [...decision.decisionIds] })),
     groups: (contract.groups ?? []).map(group => ({ id: group.id, status: group.status,
       latestCheck: group.checks.length ? { id: group.checks.at(-1)!.id, result: group.checks.at(-1)!.result,
         decisionIds: [...group.checks.at(-1)!.decisionIds] } : null })),
