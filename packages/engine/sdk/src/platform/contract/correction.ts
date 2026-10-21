@@ -37,6 +37,7 @@ import { assertNativeContractSource } from './native-source.js';
 import { renderContractAnswer } from './answer.js';
 import { contractWorkReceipts, workReceiptIdentity } from './work-receipts.js';
 import { preserveDeclaredReadReceipts } from './private-read-receipts.js';
+import { allocateFixIdentity, hasScheduledFix } from './fix-identity.js';
 import { runUnitShapeChecks } from './plan-checks.js';
 import { renderContractPlan, type ContractPlan, type PlanProblem } from './plan-schema.js';
 import { prepareFixPlannerInput, type FixPlannerInput } from './fix-planner-input.js';
@@ -356,6 +357,8 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
     decisionIds: readonly string[],
     route?: Parameters<ContractRun['decide']>[4],
   ): void {
+    ({ group, units } = allocateFixIdentity(group, units, new Set([...run.contract.groups.map(existing => existing.id),
+      ...run.contract.units.flatMap(unit => [unit.id, ...unit.criteria.map(criterion => criterion.id)])])));
     run.contract.groups.push(group);
     run.contract.units.push(...units);
     preserveDeclaredReadReceipts(run.contract);
@@ -657,7 +660,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
     ];
     for (const target of targets) {
       if (run.terminal) return;
-      if (contract.groups.some(group => group.id === `${target.targetId}.f${target.round}`)) continue;
+      if (hasScheduledFix(contract, target.targetId, target.round)) continue;
       if (target.scope === 'unit') { const unit = run.unit(target.targetId); if (unit !== undefined) await planFix(run, unitBrief(run, unit), target.round); }
       else {
         const group = target.scope === 'group' ? run.group(target.targetId) : undefined;

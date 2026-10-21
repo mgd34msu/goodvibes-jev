@@ -26,6 +26,7 @@ import { isContractInputSnapshot } from './input-snapshot.js';
 import { validateNativeDecisionState } from './native-decisions.js';
 import { assertNativeContractSource, bindNativeContractSource } from './native-source.js';
 import { CURRENT_CONTRACT_SCHEMA_VERSION, isContractId, isTerminalContractStatus, type Contract } from './types.js';
+import { recoverPendingFixIdentities } from './fix-identity.js';
 
 const DEBOUNCE_MS = 250;
 /** @deprecated Completed contracts are retained until explicitly removed. */
@@ -129,7 +130,7 @@ export function readContractSnapshot(json: string): { readonly snapshot: Contrac
   if (!isContractShape(raw['contract'])) return { rejected: 'invalid-contract' };
   if (raw['contract'].nativeDecisions !== undefined && raw['schemaVersion'] < 4) return { rejected: 'invalid-contract' };
   if (raw['contract'].nativeSource !== undefined && raw['schemaVersion'] < 3) return { rejected: 'invalid-contract' };
-  try { bindNativeContractSource(raw['contract']); validateNativeDecisionState(raw['contract']); } catch { return { rejected: 'invalid-contract' }; }
+  try { bindNativeContractSource(raw['contract']); validateNativeDecisionState(raw['contract']); recoverPendingFixIdentities(raw['contract']); } catch { return { rejected: 'invalid-contract' }; }
   if (raw['contract'].durableAdmission !== undefined && raw['schemaVersion'] < 2) return { rejected: 'invalid-contract' };
   const writtenAt = typeof raw['writtenAt'] === 'number' && Number.isFinite(raw['writtenAt']) ? raw['writtenAt'] : 0;
   return { snapshot: { schemaVersion: raw['schemaVersion'], writtenAt, contract: raw['contract'] } };

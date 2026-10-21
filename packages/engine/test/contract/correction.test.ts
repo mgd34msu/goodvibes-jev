@@ -11,6 +11,7 @@ import { hasContractPlanConsumer } from '../../sdk/src/platform/tools/agent/cont
 import { buildFixGroup, validateFixPlan, type ContractRouteSelector, type Criterion, type FixBrief } from '../../sdk/src/platform/contract/index.js';
 import { plannerOutput, type AnswerContext, type DraftPlan } from './plan-support.js';
 import { eventsOf, makeHarness, oneUnitPlan, startContract, waitFor, type AgentScript, type Harness } from './runner-support.js';
+import { makeGroup, makeUnit } from './fixtures.js';
 import {
   MET,
   UNMET,
@@ -252,6 +253,34 @@ function failsFirst(kind: 'group' | 'deliverable') {
 }
 
 describe('groups and the deliverable (6.4)', () => {
+  test('a repair after a budget reset runs with new identities and preserves the earlier accepted group', async () => {
+    const planner = stepPlanner(oneUnitPlan(1), { fix: () => plannerOutput(fixPlan([{ serves: ['c1'], files: ['src/cli.ts'] }])) });
+    const failing = failsFirst('deliverable'); let id = ''; let retained = ''; let seeded = false;
+    const h = use(makeHarness({ plan: oneUnitPlan(1), planner: planner.runner,
+      scripts: scriptsWith({ u1: finishes('parser written') }, unitId => unitId.endsWith('.f2.u1') ? finishes('wired the parser', 'src/cli.ts') : undefined),
+      port: context => {
+        if (!seeded && judgeOf(context) === 'deliverable' && context.name === 'goal') {
+          seeded = true;
+          const contract = h.store.get(id)!;
+          const group = makeGroup({ id: `${id}.f1`, kind: 'fix', status: 'passed', unitIds: [`${id}.f1.u1`],
+            repairs: { scope: 'deliverable', targetId: id, criterionIds: ['c1'] } });
+          const unit = makeUnit({ id: `${id}.f1.u1`, groupId: group.id, status: 'passed', criteria: [], answer: 'Accepted earlier work' });
+          contract.groups.push(group); contract.units.push(unit); contract.fixRounds = 0;
+          retained = JSON.stringify({ group, unit });
+        }
+        return failing(context);
+      },
+    }));
+    id = startContract(h).contract.id;
+    await waitFor(() => terminal(h, id), 'the new repair to finish', 15_000);
+    const done = contractOf(h, id);
+    expect(done.status).toBe('passed');
+    expect(JSON.stringify({ group: done.groups.find(group => group.id === `${id}.f1`), unit: done.units.find(unit => unit.id === `${id}.f1.u1`) })).toBe(retained);
+    expect(done.units.find(unit => unit.id === `${id}.f2.u1`)!.status).toBe('passed');
+    expect(done.fixRounds).toBe(1);
+    expect(new Set(done.units.map(unit => unit.id)).size).toBe(done.units.length);
+  }, 20_000);
+
   test('a passed answer repair replaces the rejected draft without repeating the completed implementation', async () => {
     const plan = oneUnitPlan(1);
     const repair = fixPlan([{ serves: ['c1'], files: [] }]);

@@ -28,6 +28,7 @@
 import { assertContractInputObjects, assertContractInputView, assertContractExecutionView, restoreContractInputDevice } from './input-snapshot.js';
 
 import { existsSync } from 'node:fs';
+import { hasScheduledFix } from './fix-identity.js';
 import { loadWorkstreamSnapshot } from '../orchestration/persistence.js';
 import { awaitNativeResumeConditions, nativeDecisionState } from './native-decisions.js';
 import { logger } from '../utils/logger.js';
@@ -180,11 +181,11 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
         && contract.groups.length > 0 && contract.groups.every(group => group.status === 'passed')
         && contract.escalations.every(item => item.resolvedAt !== undefined);
       const pendingFixVerification = acceptedWork && contract.failureKind === 'judgment-unavailable' && contract.fixRounds > 0
-        && !contract.groups.some(group => group.id === `${contract.id}.f${contract.fixRounds}`)
+        && !hasScheduledFix(contract, contract.id, contract.fixRounds)
         && contract.error?.startsWith('interrupted correction could not resume:') === true;
       const pendingVerification = acceptedWork && contract.failureKind === 'judgment-unavailable' && !pendingFixVerification;
       const pendingRepair = acceptedWork && contract.failureKind === 'planning' && contract.fixRounds > 0
-        && !contract.groups.some(group => group.id === `${contract.id}.f${contract.fixRounds}`)
+        && !hasScheduledFix(contract, contract.id, contract.fixRounds)
         && contract.error?.startsWith(`the fix for deliverable ${contract.id} could not be planned:`) === true
         && contract.error.includes('Refused before judgment:')
         && contract.units.some(unit => unit.commandEvidence?.some(command => findCardNumberShapes(command.head, 1).length > 0));
