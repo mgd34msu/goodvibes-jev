@@ -146,7 +146,17 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     const gates = await runContractGates({ configManager: context.configManager, cwd: tree, runtimeBus: context.runtimeBus, sessionId: contract.sessionId, contractId: contract.id, targetId: input.targetId, signal: run.abort.signal });
     if (run.terminal) return null;
     assertOwnedContractSource(contract);
-    const evidence = trimEvidence({ output: input.output, changes, gates, commands: [] }, { goal: input.goal, brief: '', files: [] });
+    const planChecks = contract.decisions.filter(decision => decision.action === 'plan-accepted' && decision.targetId === contract.id)
+      .map(decision => ({ at: decision.at, reason: decision.reason, decisionIds: [...decision.decisionIds] }));
+    const evidence = trimEvidence({ output: input.output, changes, gates, commands: [], orchestration: {
+      contractId: contract.id, createdAt: contract.createdAt, origin: contract.origin, planChecks,
+      inputGeneration: contract.inputSnapshot?.id ?? null,
+      firstUnitStartedAt: contract.decisions.find(decision => decision.action === 'spawned' && contract.units.some(unit => unit.id === decision.targetId))?.at ?? null,
+      units: contract.units.filter(unit => input.unitIds.has(unit.id)).map(unit => ({ id: unit.id, status: unit.status,
+        latestCheck: unit.checks.length ? { id: unit.checks.at(-1)!.id, trigger: unit.checks.at(-1)!.trigger,
+          result: unit.checks.at(-1)!.result, decisionIds: [...unit.checks.at(-1)!.decisionIds] } : null })),
+      meaning: 'Actual host records for this contract and the checked units. Plan validation and unit acceptance are separate from approval of the group or deliverable now being checked.',
+    } }, { goal: input.goal, brief: '', files: [] });
     const digest = hashState({ goal: input.goal, output: evidence.output, evidence: judgeEvidence(evidence), ...(contract.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(contract.nativeSource) }) });
     const prior = input.checks.at(-1);
     if (contract.nativeSource !== undefined && prior !== undefined && prior.result !== 'pass' && prior.evidenceDigest === digest) {

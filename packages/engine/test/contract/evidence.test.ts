@@ -206,14 +206,19 @@ describe('what each trigger collects', () => {
   const sources = () => ({ output: 'Done.', report: null, mustWrite: true, turns: TURNS, cwd: dir, configManager: noGates(), runtimeBus: new RuntimeEventBus() });
 
   test('actual plan acceptance reaches the unit checks without claiming unit completion', async () => {
+    const current = makeUnit();
     const planned = makeContract({ id: contract.id, status: 'running', decisions: [
       { id: 'foreign-plan', at: 122, action: 'plan-accepted', targetId: 'another-contract', reason: 'Other work', decisionIds: ['foreign-decision'] },
       { id: 'plan-check', at: 123, action: 'plan-accepted', targetId: contract.id, reason: 'Every fresh plan check passed', decisionIds: ['native-plan-decision'] },
-    ] });
-    const evidence = await collectUnitEvidence(planned, makeUnit(), 'turn-end', sources());
+    ], units: [current, makeUnit({ id: 'peer', status: 'passed' })] });
+    const evidence = await collectUnitEvidence(planned, current, 'turn-end', sources());
     const expected = { contractId: planned.id, status: 'running', planChecks: [{ at: 123, reason: 'Every fresh plan check passed', decisionIds: ['native-plan-decision'] }] };
     expect(judgeEvidence(evidence)).toMatchObject({ orchestration: expected });
     expect(qualityState(makeUnit(), evidence)).toMatchObject({ orchestration: expected });
+    const host = evidence.orchestration as { plannedUnits: Record<string, unknown>[] };
+    expect(host.plannedUnits[0]).not.toHaveProperty('latestCheck');
+    expect(host.plannedUnits[0]).not.toHaveProperty('status');
+    expect(host.plannedUnits[1]).toMatchObject({ id: 'peer', status: 'passed', latestCheck: null });
   });
 
   test('turn-end: no claims and no gates', async () => {

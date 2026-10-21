@@ -389,8 +389,11 @@ export async function collectUnitEvidence(
       ...(contract.origin === undefined ? {} : { origin: contract.origin }),
       ...(firstUnitStartedAt === undefined ? {} : { firstUnitStartedAt }),
       ...(contract.proposedUnits === undefined ? {} : { proposedUnits: contract.proposedUnits.map(unit => ({ task: unit.task, ...(unit.template === undefined ? {} : { template: unit.template }) })) }),
-      ...(contract.units === undefined ? {} : { plannedUnits: contract.units.map(unit => ({ id: unit.id, title: unit.title, goal: unit.goal, role: unit.role, brief: unit.brief,
-        criteria: unit.criteria.map(criterion => ({ id: criterion.id, text: criterion.text, serves: [...criterion.serves] })) })) }),
+      ...(contract.units === undefined ? {} : { plannedUnits: contract.units.map(planned => ({ id: planned.id, title: planned.title, goal: planned.goal, role: planned.role, brief: planned.brief,
+        ...(planned.id === unit.id ? {} : { status: planned.status,
+          latestCheck: planned.checks.length ? { id: planned.checks.at(-1)!.id, trigger: planned.checks.at(-1)!.trigger,
+            result: planned.checks.at(-1)!.result, decisionIds: [...planned.checks.at(-1)!.decisionIds] } : null }),
+        criteria: planned.criteria.map(criterion => ({ id: criterion.id, text: criterion.text, serves: [...criterion.serves] })) })) }),
       meaning: 'Host records for this current contract. Plan acceptance establishes its plan validation, not completion or approval of the unit now being checked.' } } : {}) }, unit);
 }
 
