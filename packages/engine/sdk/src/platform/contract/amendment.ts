@@ -126,6 +126,10 @@ export function parseAmendment(text: string, target: Target, servableIds: Readon
     if (id !== undefined && seen.has(id)) problems.push(`Criterion "${id}" appears more than once.`);
     if (id !== undefined) seen.add(id);
     const serves = Array.isArray(entry['serves']) ? entry['serves'].filter((served): served is string => typeof served === 'string') : undefined;
+    const retained = id === undefined ? undefined : target.criteria.find(criterion => criterion.id === id && criterion.disposition !== 'judged');
+    if (retained && (retained.text !== entry['text'].trim() || (serves !== undefined && serves.join() !== retained.serves.join()))) {
+      problems.push(`Criterion "${id}" is retained by structure and cannot be changed by this amendment.`);
+    }
     if (target.serves) {
       const kept = id === undefined ? undefined : target.criteria.find((criterion) => criterion.id === id)?.serves;
       const effective = serves ?? kept ?? [];
@@ -148,9 +152,10 @@ function ownerId(prefix: string, taken: ReadonlySet<string>): string {
 }
 
 /** The target's criteria after the amendment; the ones the planner kept word for word keep their readings. */
-function amendedCriteria(target: Target, amendment: Amendment, prefix: string, allIds: Set<string>): { readonly criteria: Criterion[]; readonly notes: string[] } {
+export function amendedCriteria(target: Target, amendment: Amendment, prefix: string, allIds: Set<string>): { readonly criteria: Criterion[]; readonly notes: string[] } {
   const notes: string[] = [];
-  const criteria = amendment.criteria.map((entry): Criterion => {
+  const criteria = amendment.criteria.filter(entry => entry.id === undefined
+    || target.criteria.find(criterion => criterion.id === entry.id)?.disposition === 'judged').map((entry): Criterion => {
     const previous = entry.id === undefined ? undefined : target.criteria.find((criterion) => criterion.id === entry.id);
     const serves = target.serves ? [...(entry.serves ?? previous?.serves ?? [])] : [];
     if (previous !== undefined && previous.text === entry.text && serves.join() === previous.serves.join()) return previous;

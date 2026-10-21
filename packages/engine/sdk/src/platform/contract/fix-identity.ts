@@ -1,5 +1,23 @@
 import type { Contract, ContractGroup, ContractUnit } from './types.js';
 
+/** Older amendments appended an unchanged structural criterion twice. Only
+ * byte-identical nonjudged duplicates can be removed without choosing a verdict. */
+export function recoverRepeatedStructuralCriteria(contract: Contract): void {
+  if (contract.nativeSource !== undefined) return;
+  for (const target of [contract, ...contract.groups, ...contract.units]) {
+    const seen = new Map<string, string>();
+    const removed: string[] = [];
+    target.criteria = target.criteria.filter(criterion => {
+      if (criterion.disposition === 'judged') return true;
+      const exact = JSON.stringify(criterion);
+      if (seen.get(criterion.id) === exact) { removed.push(criterion.id); return false; }
+      seen.set(criterion.id, exact); return true;
+    });
+    if (removed.length) contract.decisions.push({ id: `${contract.id}.d${contract.decisions.length + 1}`, at: Date.now(), action: 'created', targetId: target.id,
+      reason: `Removed identical repeated structural criterion records: ${removed.join(', ')}. Original requirements, criterion objects and check histories are unchanged.`, decisionIds: [] });
+  }
+}
+
 /** Retry budgets can reset after an amendment; retained work identities cannot. */
 export function allocateFixIdentity(group: ContractGroup, units: readonly ContractUnit[], reserved: ReadonlySet<string>): { group: ContractGroup; units: ContractUnit[] } {
   if (![group.id, ...units.map(unit => unit.id), ...units.flatMap(unit => unit.criteria.map(criterion => criterion.id))].some(id => reserved.has(id))) return { group, units: [...units] };
