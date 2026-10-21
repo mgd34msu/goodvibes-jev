@@ -284,6 +284,37 @@ describe('what each trigger collects', () => {
     expect(current.checks).toEqual([]);
   });
 
+  test('closed unit instructions remain bound without becoming current-task instructions or overflowing its check', async () => {
+    const current = makeUnit();
+    const peer = makeUnit({ id: 'peer', status: 'passed', brief: 'An earlier worker instruction. '.repeat(20_000) });
+    peer.criteria[0]!.status = 'met';
+    const planned = makeContract({ id: contract.id, units: [current, peer], decisions: [
+      { id: 'accepted', at: 1, action: 'plan-accepted', targetId: contract.id, reason: 'Checked plan', decisionIds: ['native-plan'] },
+    ] });
+    const original = peer.brief;
+    const evidence = await collectUnitEvidence(planned, current, 'resume', { ...sources(), turns: [], mustWrite: false });
+    const host = evidence.orchestration as { requirements: { brief: string }; plannedUnits: Record<string, unknown>[] };
+    expect(host.requirements.brief).toBe(current.brief);
+    expect(host.plannedUnits[1]).toMatchObject({ id: 'peer', briefSource: { unitId: 'peer', field: 'brief', bytes: Buffer.byteLength(original) },
+      criteria: [{ verdict: 'met' }] });
+    expect(host.plannedUnits[1]).not.toHaveProperty('brief');
+    expect((host.plannedUnits[0]!['criteria'] as unknown[])[0]).not.toHaveProperty('verdict');
+    expect(JSON.stringify(judgeEvidence(evidence))).not.toContain('An earlier worker instruction.');
+    expect(peer.brief).toBe(original);
+  });
+
+  test('an explicit original requirement reference in the assigned brief resolves to its actual text', async () => {
+    const current = makeUnit({ brief: 'Preserve the completed o1 inspection.' });
+    const root = { ...current.criteria[0]!, id: 'o1', text: 'Inspect the original supplemental ranges.', serves: [] };
+    const planned = makeContract({ id: contract.id, units: [current], criteria: [root], decisions: [
+      { id: 'accepted', at: 1, action: 'plan-accepted', targetId: contract.id, reason: 'Checked plan', decisionIds: ['native-plan'] },
+    ] });
+    const evidence = await collectUnitEvidence(planned, current, 'resume', { ...sources(), turns: [], mustWrite: false });
+    expect(judgeEvidence(evidence)).toMatchObject({ orchestration: { requirements: {
+      referencedCriteria: [{ id: 'o1', text: root.text, serves: [] }],
+    } } });
+  });
+
   test('turn-end: no claims and no gates', async () => {
     const evidence = await collectUnitEvidence(contract, makeUnit(), 'turn-end', sources());
     expect(evidence.claims).toBeUndefined();

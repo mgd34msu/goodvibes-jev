@@ -452,6 +452,11 @@ export async function collectUnitEvidence(
   const allCriteria = [...(contract.criteria ?? []), ...(contract.groups ?? []).flatMap(group => group.criteria),
     ...(contract.units ?? []).flatMap(planned => planned.criteria)];
   const referenced = new Set(currentUnit?.criteria.flatMap(criterion => criterion.serves) ?? []);
+  const assignedText = unit.goal + '\n' + unit.brief;
+  for (const criterion of contract.criteria ?? []) {
+    const escaped = criterion.id.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+    if (new RegExp('(?<![\\w.-])' + escaped + '(?![\\w.-])').test(assignedText)) referenced.add(criterion.id);
+  }
   for (const id of referenced) for (const parent of allCriteria.find(criterion => criterion.id === id)?.serves ?? []) referenced.add(parent);
   const referencedCriteria = allCriteria.filter(criterion => referenced.has(criterion.id));
   const requirements = { unitId: unit.id, brief: unit.brief,
@@ -477,7 +482,8 @@ export async function collectUnitEvidence(
       ...(contract.origin === undefined ? {} : { origin: contract.origin }),
       ...(firstUnitStartedAt === undefined ? {} : { firstUnitStartedAt }),
       ...(contract.proposedUnits === undefined ? {} : { proposedUnits: contract.proposedUnits.map(unit => ({ task: unit.task, ...(unit.template === undefined ? {} : { template: unit.template }) })) }),
-      ...(contract.units === undefined ? {} : { plannedUnits: contract.units.map(planned => ({ id: planned.id, title: planned.title, goal: planned.goal, role: planned.role, brief: planned.brief,
+      ...(contract.units === undefined ? {} : { plannedUnits: contract.units.map(planned => ({ id: planned.id, title: planned.title, goal: planned.goal, role: planned.role,
+        briefSource: { storage: 'native-contract-store', contractId: contract.id, unitId: planned.id, field: 'brief', digest: hashState(planned.brief), bytes: Buffer.byteLength(planned.brief) },
         ...(planned.id === unit.id ? {} : { status: planned.status,
           latestCheck: planned.checks.length ? { id: planned.checks.at(-1)!.id, trigger: planned.checks.at(-1)!.trigger,
             result: planned.checks.at(-1)!.result, decisionIds: [...planned.checks.at(-1)!.decisionIds],
@@ -487,8 +493,9 @@ export async function collectUnitEvidence(
             commands: (planned.commandEvidence ?? []).map(command => ({ ...commandObservation(command) })),
             ...(currentUnit?.role === 'integration' || (repairing && (planned.role === 'integration' || currentUnit?.dependsOn.includes(planned.id)))
               ? { acceptedAnswer: planned.answer ?? '' } : {}) } : {}) }),
-        criteria: planned.criteria.map(criterion => ({ id: criterion.id, text: criterion.text, serves: [...criterion.serves] })) })) }),
-      meaning: 'Host records for this current contract. Plan acceptance establishes its plan validation, not completion or approval of the unit now being checked.' } } : {}) }, unit);
+        criteria: planned.criteria.map(criterion => ({ id: criterion.id, text: criterion.text, serves: [...criterion.serves],
+          ...(planned.id !== unit.id && planned.status === 'passed' ? { verdict: criterion.status } : {}) })) })) }),
+      meaning: 'Host records for this current contract. The complete assigned unit brief and exact referenced requirements are supplied in requirements. Other units are represented by their goals, exact criteria, actual scoped checks, observations, commands and accepted results. Their old worker instructions remain unchanged in the owned store under briefSource and its digest; they are not this unit\'s requirements. A passed peer criterion verdict establishes only its checked scope. Plan and prior-unit acceptance do not approve the unit now being checked.' } } : {}) }, unit);
 }
 
 // ── What Jev reads ────────────────────────────────────────────────────────────
