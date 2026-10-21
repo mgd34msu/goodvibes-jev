@@ -170,7 +170,15 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
       if ((deps.nativeOnly === true) !== (contract.nativeSource !== undefined)) { deps.store.hold(contract); skipped.push(contractId); continue; }
       // Native authority is never reconstructed from disk. Only resumeDurable may adopt this binding.
       if (contract.durableAdmission !== undefined) { deps.store.hold(contract); skipped.push(contractId); continue; }
-      if (isTerminalContractStatus(contract.status)) {
+      // Older runners incorrectly ended completed legacy work when the final
+      // verifier request failed. Resume only that check, never an actual work
+      // failure, cancellation, owner wait, or already published contract.
+      const pendingVerification = contract.nativeSource === undefined && contract.status === 'failed'
+        && contract.failureKind === 'judgment-unavailable' && contract.commit === undefined
+        && contract.units.length > 0 && contract.units.every(unit => unit.status === 'passed')
+        && contract.groups.length > 0 && contract.groups.every(group => group.status === 'passed')
+        && contract.escalations.every(item => item.resolvedAt !== undefined);
+      if (isTerminalContractStatus(contract.status) && !pendingVerification) {
         deps.store.hold(contract);
         continue;
       }
@@ -186,7 +194,15 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
           continue;
         }
       }
+      if (pendingVerification) {
+        contract.status = 'judging';
+        contract.failureKind = undefined;
+        contract.error = undefined;
+        contract.completedAt = undefined;
+        contract.statusLine = undefined;
+      }
       const run = deps.adopt(contract);
+      if (pendingVerification) run.decide('resumed', contract.id, 'Recovered a historical final-verifier request failure; all accepted units and groups retained. A fresh final-answer and fulfillment check is required before publication; no approval is inferred.');
       prepareResume(run);
       const zombie = findZombieCause(contract);
       if (zombie !== null) {

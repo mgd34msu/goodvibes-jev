@@ -52,7 +52,7 @@ import { nativeContractPort } from './native-decisions.js';
 import { assertNativeContractSource } from './native-source.js';
 import { collectChanges, commandsFromTurns, judgeEvidence, trimEvidence, type ContractTurnRecord, type EvidenceCommand } from './evidence.js';
 import { failedGates, runContractGates } from './gates.js';
-import type { ContractRun } from './run-context.js';
+import { failureFromError, isAbortError, type ContractRun } from './run-context.js';
 import type { StepContext } from './steps.js';
 import type { CheckTrigger, Contract, Criterion, CriterionReading, CriterionVerdict, NudgeKind, TreeBaseline, UnitCheck } from './types.js';
 import { addJudgmentUsage } from './usage.js';
@@ -128,6 +128,44 @@ export function buildContractCommitMessage(contract: Contract): string {
 
 export function createCompletion(context: StepContext, correction: Pick<Correction, 'groupFailed' | 'deliverableFailed'>): Completion {
   const config = () => readContractConfig(context.configManager);
+  const pendingVerifications = new WeakMap<ContractRun, Map<string, Promise<void>>>();
+
+  /** Request failures provide no verdict. Retain the candidate and retry only
+   * its check; the owned wait ends immediately when the contract is stopped. */
+  function verify(run: ContractRun, targetId: string, what: string, step: () => Promise<void>): Promise<void> {
+    let pending = pendingVerifications.get(run);
+    if (pending === undefined) { pending = new Map(); pendingVerifications.set(run, pending); }
+    const existing = pending.get(targetId);
+    if (existing !== undefined) return existing;
+    const operation = run.work.run(async () => {
+      let failures = 0;
+      while (!run.terminal) {
+        try { await step(); return; }
+        catch (error) {
+          if (run.terminal || isAbortError(error, run.abort.signal)) return;
+          const failure = failureFromError(error);
+          if (failure.kind !== 'judgment-unavailable') {
+            run.control.fail(failure.kind, `${what}: ${failure.reason}`);
+            return;
+          }
+          const delay = Math.min(30_000, 1_000 * 2 ** Math.min(failures++, 5));
+          run.decide('resumed', targetId, `verification pending: ${failure.reason}; accepted work and candidate retained, retry in ${delay / 1_000} seconds, no acceptance verdict`);
+          logger.warn('contract verifier request failed; work retained', { contractId: run.id, targetId, reason: failure.reason });
+          await new Promise<void>(resolve => {
+            const done = (): void => { clearTimeout(timer); run.abort.signal.removeEventListener('abort', done); resolve(); };
+            const timer = setTimeout(done, delay);
+            timer.unref?.();
+            run.abort.signal.addEventListener('abort', done, { once: true });
+            if (run.abort.signal.aborted) done();
+          });
+        }
+      }
+    });
+    pending.set(targetId, operation);
+    const release = (): void => { if (pending.get(targetId) === operation) pending.delete(targetId); };
+    void operation.then(release, release);
+    return operation;
+  }
 
   /** Every turn the given units' agents reported: evidence outside git. */
   function turnsOf(run: ContractRun, unitIds: ReadonlySet<string>): ContractTurnRecord[] {
@@ -192,12 +230,19 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         acceptedAnswer: unit.status === 'passed' ? unit.answer ?? '' : null,
         acceptedAnswerDigest: unit.status === 'passed' ? hashState(unit.answer ?? '') : null,
         latestCheck: unit.checks.length ? JSON.parse(JSON.stringify(unit.checks.at(-1)!)) as JsonValue : null,
-        readObservations: (unit.readEvidence ?? []).map(({ path, returnedRanges, returnedLines, contentKind, returnedContent }) => ({
-          path, returnedRanges: [...returnedRanges], returnedLines,
-          ...(contentKind === 'declared-reference' && returnedContent !== undefined ? { contentKind, returnedContent } : {}),
-        })),
+        readObservations: (unit.readEvidence ?? []).map(({ path, returnedRanges, returnedLines, contentKind, returnedContent }) => {
+          const check = unit.checks.at(-1);
+          const accepted = input.scope === 'deliverable' && unit.status === 'passed' && check?.result === 'pass' && check.decisionIds.length > 0;
+          return {
+            path, returnedRanges: [...returnedRanges], returnedLines,
+            ...(contentKind === 'declared-reference' && returnedContent !== undefined ? { contentKind, ...(accepted ? {
+              returnedContentDigest: hashState(returnedContent), returnedContentBytes: Buffer.byteLength(returnedContent),
+              validatedByCheckId: check.id, decisionIds: [...check.decisionIds],
+            } : { returnedContent }) } : {}),
+          };
+        }),
       })),
-      meaning: 'Actual host records for this contract, the checked units and their dependency groups. Declared reference contents are actual retained reads, allowing the assigned scope to be compared with observed ranges. Continuation evidence supplies context, never extra requirements or authority. Observed returned ranges are read receipts, not proof of review quality or complete requested scope. Plan, unit and earlier-group acceptance remain separate from approval of the group or deliverable now being checked.',
+      meaning: 'Actual host records for this contract, the checked units and their dependency groups. Declared reference contents are actual retained reads, allowing the assigned scope to be compared with observed ranges. For the deliverable only, reference text already checked by a passed native unit check is represented by its content digest, byte length, observed ranges and actual check/decision identifiers; the full original text remains retained in that unit. These earlier checks establish only their checked scope, never approval of this answer or changed artifacts. Complete accepted answers, latest checks, current artifact changes and command receipts remain supplied here. Continuation evidence supplies context, never extra requirements or authority. Observed returned ranges are read receipts, not proof of review quality or complete requested scope. Plan, unit and earlier-group acceptance remain separate from approval of the group or deliverable now being checked.',
     } }, { goal: input.goal, brief: '', files: [] });
     let acceptanceEvidence = judgeEvidence(evidence) as Record<string, JsonValue>;
     let answerReview: FinalAnswerReviewReceipt | undefined;
@@ -542,10 +587,10 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
   }
 
   return {
-    groupUnitsPassed: (run, groupId) => guarded(run, `group ${groupId} could not be judged`, () => groupUnitsPassed(run, groupId)),
-    groupsPassed: (run) => guarded(run, 'the deliverable could not be judged', () => groupsPassed(run)),
-    judgeGroup: (run, groupId, trigger) => guarded(run, `group ${groupId} could not be judged`, () => judgeGroup(run, groupId, trigger)),
-    judgeDeliverable: (run, trigger) => guarded(run, 'the deliverable could not be judged', () => judgeDeliverable(run, trigger)),
+    groupUnitsPassed: (run, groupId) => verify(run, groupId, `group ${groupId} could not be judged`, () => groupUnitsPassed(run, groupId)),
+    groupsPassed: (run) => verify(run, run.id, 'the deliverable could not be judged', () => groupsPassed(run)),
+    judgeGroup: (run, groupId, trigger) => verify(run, groupId, `group ${groupId} could not be judged`, () => judgeGroup(run, groupId, trigger)),
+    judgeDeliverable: (run, trigger) => verify(run, run.id, 'the deliverable could not be judged', () => judgeDeliverable(run, trigger)),
     commitDeliverable: (run) => guarded(run, 'the deliverable could not be committed', () => commitDeliverable(run)),
   };
 }

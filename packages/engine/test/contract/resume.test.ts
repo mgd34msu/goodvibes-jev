@@ -510,6 +510,41 @@ describe('the deliverable steps run again', () => {
     contract.commit = undefined;
   }
 
+  test('historical final-verifier request failures resume only verification and retain all accepted work', async () => {
+    const { root, ids: [id] } = await interrupt({ plan: oneUnitPlan(1), scripts }, finished, 'the accepted parser');
+    let retainedUnits = '';
+    editContract(root, id!, contract => {
+      rewind(contract, 'judging');
+      contract.status = 'failed'; contract.failureKind = 'judgment-unavailable';
+      contract.error = 'the deliverable could not be judged: request rejected (HTTP 400)';
+      contract.completedAt = Date.now();
+      retainedUnits = JSON.stringify(contract.units.map(({ usage: _usage, ...unit }) => unit));
+    });
+    const h = restart(root, { plan: oneUnitPlan(1), scripts: { u1: mustNotRun } });
+    const report = await h.runner.resumeAll();
+    expect(report.resumed).toEqual([{ contractId: id!, step: 'judge' }]);
+    const done = await ended(h, id!);
+    expect(done.status).toBe('passed');
+    expect(done.failureKind).toBeUndefined();
+    expect(done.error).toBeUndefined();
+    expect(JSON.stringify(done.units.map(({ usage: _usage, ...unit }) => unit))).toBe(retainedUnits);
+    expect(done.checks.at(-1)!.trigger).toBe('resume');
+    expect(done.decisions.some(decision => decision.reason.startsWith('Recovered a historical final-verifier request failure'))).toBe(true);
+  });
+
+  test.each(['actual-failure', 'already-published', 'unfinished-unit'])('a terminal %s is not migrated as pending final verification', async condition => {
+    const { root, ids: [id] } = await interrupt({ plan: oneUnitPlan(1), scripts }, finished, 'the accepted parser');
+    editContract(root, id!, contract => {
+      if (condition !== 'already-published') contract.commit = undefined;
+      contract.status = 'failed'; contract.failureKind = condition === 'actual-failure' ? 'other' : 'judgment-unavailable';
+      if (condition === 'unfinished-unit') contract.units[0]!.status = 'failed';
+    });
+    const h = restart(root, { plan: oneUnitPlan(1), scripts: { u1: mustNotRun } });
+    const report = await h.runner.resumeAll();
+    expect(report.resumed).toEqual([]);
+    expect(h.runner.get(id!)!.status).toBe('failed');
+  });
+
   test('a contract stopped while judging is judged again with trigger resume, then commits', async () => {
     const { root, ids: [id] } = await interrupt({ plan: oneUnitPlan(1), scripts }, finished, 'the contract to pass');
     const checksBefore = (JSON.parse(readFileSync(contractPath(root, id!), 'utf-8')) as { contract: Contract }).contract.checks.length;

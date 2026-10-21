@@ -9,10 +9,10 @@ import { afterEach, describe, expect, test } from 'bun:test';
 import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
-import { hashState } from '@goodvibes-jev/judgment';
+import { hashState, JudgmentError, SqliteDecisionLog } from '@goodvibes-jev/judgment';
 import { CONTRACT_PASSED_WITHOUT_OUTPUT, describeCommitOutcome, describeContractOutcome, renderContractAnswer } from '../../sdk/src/platform/contract/index.js';
 import { makeHarness, oneUnitPlan, startContract, twoUnitPlan, waitFor, type AgentScript, type Harness } from './runner-support.js';
-import { contractOf, finishes, git, terminal } from './steps-support.js';
+import { contractOf, finishes, git, judgeOf, terminal } from './steps-support.js';
 
 let harness: Harness | undefined;
 afterEach(() => {
@@ -32,6 +32,7 @@ async function run(h: Harness): Promise<string> {
 }
 
 test('group and final checks receive actual plan-validation and unit-acceptance receipts', async () => {
+  using log = new SqliteDecisionLog(':memory:');
   const observed: Record<string, unknown>[] = [];
   const checkedOutputs = new Map<Record<string, unknown>, string>();
   let integrationTask = '';
@@ -41,7 +42,7 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   plan.groups[0]!.units[0]!.files.push('input.txt');
   plan.groups[0]!.criteria = [{ id: 'g1.c1', text: 'The parser implementation is coherent', serves: ['c1'] }];
   plan.groups[1]!.criteria = [{ id: 'g2.c1', text: 'Integration retains the accepted parser read receipts', serves: ['c2'] }];
-  const h = use(makeHarness({ plan,
+  const h = use(makeHarness({ plan, decisionLog: log,
     scripts: { u1: record => {
       h.runner.hooks().onTurnEnd(record, { turn: 1, assistantText: 'Read the parser input.',
         toolCalls: [{ name: 'read', arguments: { files: [{ path: 'input.txt' }] } }],
@@ -119,6 +120,17 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   expect(acceptedPeer.acceptedAnswer).toBe(done.units[0]!.answer!);
   expect(acceptedPeer.acceptedAnswerDigest).toBe(hashState(done.units[0]!.answer!));
   expect(acceptedPeer.latestCheck).toEqual(done.units[0]!.checks.at(-1)!);
+  const finalReceipts = observed.find(evidence => 'criteria' in evidence)!['orchestration'] as { units: { id: string; acceptedAnswer: string; latestCheck: unknown; readObservations: unknown[] }[] };
+  const finalPeer = finalReceipts.units.find(unit => unit.id === 'u1')!;
+  const check = done.units[0]!.checks.at(-1)!;
+  expect(check.decisionIds.length).toBeGreaterThan(0);
+  expect(finalPeer.acceptedAnswer).toBe(done.units[0]!.answer!);
+  expect(finalPeer.latestCheck).toEqual(check);
+  expect(finalPeer.readObservations).toEqual([{ path: 'input.txt', returnedRanges: ['1-2'], returnedLines: 2,
+    contentKind: 'declared-reference', returnedContentDigest: hashState('1 | first\n2 | second'),
+    returnedContentBytes: Buffer.byteLength('1 | first\n2 | second'), validatedByCheckId: check.id, decisionIds: check.decisionIds,
+  }]);
+  expect(done.units[0]!.readEvidence![0]!.returnedContent).toBe('1 | first\n2 | second');
   for (const evidence of observed) {
     const host = evidence['orchestration'] as { contractId: string; planChecks: unknown[]; firstUnitStartedAt: number; units: { id: string; status: string; latestCheck: { id: string; result: string; decisionIds: string[] } }[] };
     expect(host.contractId).toBe(id);
@@ -131,6 +143,51 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
       expect(receipt.latestCheck).toMatchObject({ id: actual.checks.at(-1)!.id, result: 'pass', decisionIds: actual.checks.at(-1)!.decisionIds });
     }
   }
+  await h.runner.join(id);
+});
+
+test.each(['group', 'final-answer', 'fulfillment'])('a %s verifier request failure retries its check without rerunning accepted work', async stage => {
+  const plan = oneUnitPlan(1);
+  plan.groups[0]!.criteria = [{ id: 'g1.c1', text: 'The parser is coherent', serves: ['c1'] }];
+  let failures = 0;
+  let workers = 0;
+  const h = use(makeHarness({ plan, scripts: { u1: (record, runtime) => { workers++; return finishes('The exact parser answer.')(record, runtime); } },
+    port: context => {
+      const target = stage === 'final-answer' ? context.name === 'unfinished'
+        : context.name === 'goal' && judgeOf(context) === (stage === 'group' ? 'group' : 'deliverable');
+      if (target && failures === 0) { failures++; throw new JudgmentError('rejected', 'fixture request rejection', { status: 400 }); }
+      return undefined;
+    },
+  }));
+  const { contract } = startContract(h);
+  await waitFor(() => contractOf(h, contract.id).decisions.some(decision => decision.reason.includes('verification pending:')), 'a retained verification candidate');
+  const waiting = contractOf(h, contract.id);
+  expect(waiting.status).not.toBe('failed');
+  expect(waiting.status).not.toBe('passed');
+  expect(waiting.units[0]!.status).toBe('passed');
+  expect(waiting.commit).toBeUndefined();
+  await waitFor(() => terminal(h, contract.id), 'the fresh verifier check');
+  const done = contractOf(h, contract.id);
+  expect(done.status).toBe('passed');
+  expect(done.answer).toBe('The exact parser answer.');
+  expect(done.units).toHaveLength(1);
+  expect(workers).toBe(1);
+  expect(failures).toBe(1);
+  expect(h.events.filter(event => event.type === 'CONTRACT_FAILED')).toEqual([]);
+});
+
+test('stopping a contract cancels its owned verifier retry without a verdict', async () => {
+  let failures = 0;
+  const h = use(makeHarness({ plan: oneUnitPlan(1), scripts: { u1: finishes('A retained parser answer.') },
+    port: context => { if (context.name === 'unfinished') { failures++; throw new JudgmentError('unavailable', 'fixture outage'); } return undefined; },
+  }));
+  const { contract } = startContract(h);
+  await waitFor(() => contractOf(h, contract.id).decisions.some(decision => decision.reason.includes('verification pending:')), 'the retry wait');
+  h.runner.cancel(contract.id, 'operator stopped the check');
+  await h.runner.join(contract.id);
+  expect(contractOf(h, contract.id).status).toBe('cancelled');
+  expect(contractOf(h, contract.id).checks).toEqual([]);
+  expect(failures).toBe(1);
 });
 
 test('a rejected native answer review holds publication even when fulfillment readings pass', async () => {
