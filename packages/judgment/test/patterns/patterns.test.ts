@@ -1,6 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import {
   aggregateJudgment,
+  createSystemOnePort,
   assembleDate,
   defineDatePartsReader,
   defineDispatch,
@@ -15,10 +16,15 @@ import {
   normalizeForMatch,
   resolveWeekday,
   STAKES_BANDS,
+  SqliteDecisionLog,
+  withDecisionLog,
+  JudgmentError,
+  type Question,
   type YesNoReading,
 } from '../../src/index.ts';
 import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '../../src/testing/fake-port.ts';
 import { estimateTokens, LIMITS } from '../../src/port/limits.ts';
+import { JudgmentContextLimitError } from '../../src/port/errors.ts';
 
 const header = { version: 1, description: 'test', accuracyFloor: 0.8 };
 
@@ -364,6 +370,53 @@ describe('selector', () => {
     const result = await selector.select(port, { evidence: 'x'.repeat(800_000) }, candidates);
     expect(result.chosen).toBe('draft.2');
     expect(requests).toHaveLength(3);
+  });
+
+  test('actual token-limit refusals partition all candidates through the recorded transport', async () => {
+    using log = new SqliteDecisionLog(':memory:');
+    const context = { evidence: 'Complete source and command results.' };
+    const attempted: { context: unknown; candidates: { id: string }[] }[] = [];
+    let uncertain = true;
+    const port = withDecisionLog(createSystemOnePort({
+      endpoint: { kind: 'hosted', baseURL: 'https://judge.test', apiKey: 'test-key' }, model: 'jev-latest', timeoutMs: 0, retry: {},
+      fetch: async (_url, init) => {
+        const body = JSON.parse(String(init?.body)) as { state: typeof attempted[number]; questions: Record<string, Question> };
+        attempted.push(body.state);
+        if (body.state.candidates.length > 2) return new Response(JSON.stringify({ detail: { error_type: 'max_tokens_exceeded', private: 'never retained' } }), { status: 400 });
+        const confidence = uncertain ? 0.6 : 0.99;
+        uncertain = false;
+        return new Response(JSON.stringify({ model: 'jev-1.13.0',
+          answers: Object.fromEntries(Object.entries(body.questions).map(([name, question]) => [name,
+            name === 'pick' ? choiceAnswer(question, body.state.candidates.at(-1)!.id, confidence) : noulAnswer(0.99)])),
+          usage: { input_tokens: 100, output_tokens: 10 } }), { status: 200 });
+      },
+    }), log);
+    const candidates = Array.from({ length: 6 }, (_, i) => ({ id: `passage-${i}`, content: `Source passage ${i}` }));
+    const result = await selector.select(port, context, candidates);
+    expect(result.chosen).toBe('passage-5');
+    expect(result.outcome).not.toBe('act');
+    expect(Object.keys(result.fits)).toHaveLength(6);
+    expect(attempted.length).toBeLessThan(30);
+    expect(attempted.every(request => JSON.stringify(request.context) === JSON.stringify(context))).toBe(true);
+    const entries = log.query({});
+    expect(entries.some(entry => entry.status === 'failed')).toBe(true);
+    expect(entries.some(entry => entry.status === 'answered')).toBe(true);
+    expect(JSON.stringify(entries)).not.toContain('never retained');
+  });
+
+  test('an irreducible token-limited comparison stops without accepting or looping', async () => {
+    const { port, requests } = fakePort((name, question, state) => {
+      if ((state as { candidates: unknown[] }).candidates.length > 1) throw new JudgmentContextLimitError();
+      return name === 'pick' ? choiceAnswer(question, Object.keys((question as { criteria: object }).criteria)[0]!, 0.99) : noulAnswer(0.99);
+    });
+    await expect(selector.select(port, 'Complete evidence', candidates)).rejects.toBeInstanceOf(JudgmentContextLimitError);
+    expect(requests).toHaveLength(4);
+  });
+
+  test('other request refusals do not trigger candidate partition retries', async () => {
+    const { port, requests } = fakePort(() => { throw new JudgmentError('rejected', 'Invalid question', { status: 400 }); });
+    await expect(selector.select(port, 'Complete evidence', candidates)).rejects.toMatchObject({ kind: 'rejected', status: 400 });
+    expect(requests).toHaveLength(1);
   });
 
   test('later confident selection cannot erase an unresolved group winner', async () => {

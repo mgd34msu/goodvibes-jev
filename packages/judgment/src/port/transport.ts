@@ -3,7 +3,7 @@ import { checkAnswers, projectAnswers } from './answers.ts';
 import { clientFor, systemOneWithoutDeadline, toJudgmentError } from './client.ts';
 import { validateJudgmentConfig, type JudgmentConfig } from './config.ts';
 import { matchesJudgmentModel } from './endpoint-validation.ts';
-import { JudgmentError } from './errors.ts';
+import { JudgmentContextLimitError, JudgmentError } from './errors.ts';
 import { requiresLongContext, validateContextBudget, validateQuestions } from './limits.ts';
 import { withRequestId } from './request-id.ts';
 import { delay, interruptible, retryable, retryDelay, retryPolicy } from './retry.ts';
@@ -183,6 +183,9 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
         const failure = toJudgmentError(error);
         // Do not retain upstream causes, bodies, headers, URLs or API keys in a public error/log.
         const requestId = safeId(failure.requestId) ?? attempts.at(-1)?.requestId;
+        if (failure instanceof JudgmentContextLimitError) throw new JudgmentContextLimitError({
+          ...(requestId ? { requestId } : {}), lineage: lineage(),
+        });
         throw new JudgmentError(failure.kind, keys.reduce((message, key) => message.replaceAll(key, '[redacted]'), failure.message), {
           ...(failure.status === undefined ? {} : { status: failure.status }), ...(requestId ? { requestId } : {}),
           lineage: lineage(),

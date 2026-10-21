@@ -1,7 +1,8 @@
 import { checkEachFixture, decisionHeader, fixtureCheck, NONE, type NamedDecision } from '../batteries/decision.ts';
 import { askAs, recordAction, recordReadings, type CallOptions, type PatternHeader, type PatternName } from '../batteries/asking.ts';
-import { choice, noul, type EntryType, type JsonValue, type JudgmentPort, type Question } from '../port/types.ts';
+import { choice, noul, type EntryType, type JsonValue, type JudgmentPort, type JudgmentResult, type Question } from '../port/types.ts';
 import { estimateTokens, LIMITS } from '../port/limits.ts';
+import { JudgmentContextLimitError } from '../port/errors.ts';
 import { assertBand, type ConfidenceBand, type Outcome, type YesNoBand } from '../readings/bands.ts';
 import { readChoice, readYesNo, type ChoiceReading, type YesNoReading } from '../readings/readings.ts';
 import type { Candidate } from './rerank.ts';
@@ -113,36 +114,50 @@ export async function runSelection(port: JudgmentPort, request: SelectionRequest
     group.push(candidate); tokens += added;
   }
   if (group.length) groups.push(group);
-  if (groups.length > 1) {
-    const rounds: Selection[] = [];
-    const winners: Candidate[] = [];
-    for (const group of groups) {
-      request.options?.signal?.throwIfAborted();
-      const result = await runSelection(port, { ...request, candidates: group });
-      rounds.push(result);
-      const winner = group.find(candidate => candidate.id === result.pick.choice);
-      if (winner) winners.push(winner);
-    }
-    // When the shared evidence leaves room for only one candidate, estimates
-    // cannot reduce this further. Let the endpoint tokenize the final comparison
-    // once, rather than recursively repeating an unchanged tournament forever.
-    const final = winners.length ? await (winners.length < candidates.length ? runSelection : askSelection)(port, { ...request, candidates: winners }) : rounds.at(-1)!;
-    // Every group participates in elimination; unresolved evidence cannot be
-    // upgraded by the final comparison between its surviving candidates.
-    const unresolved = rounds.filter(round => round.outcome !== 'act');
-    const outcome = [final, ...unresolved].some(round => round.outcome === 'escalate') ? 'escalate'
-      : [final, ...unresolved].some(round => round.outcome === 'confirm') ? 'confirm' : 'act';
-    return { ...final, outcome, fits: Object.assign({}, ...rounds.map(round => round.fits), final.fits),
-      recordAction(action) { for (const round of rounds) round.recordAction(action); if (winners.length) final.recordAction(action); } };
-  }
+  if (groups.length > 1) return selectGroups(port, request, groups);
   return askSelection(port, request);
 }
 
-async function askSelection(port: JudgmentPort, request: SelectionRequest): Promise<Selection> {
+async function selectGroups(port: JudgmentPort, request: SelectionRequest, groups: readonly (readonly Candidate[])[]): Promise<Selection> {
+  const { candidates } = request;
+  const rounds: Selection[] = [];
+  const winners: Candidate[] = [];
+  for (const group of groups) {
+    request.options?.signal?.throwIfAborted();
+    const result = await runSelection(port, { ...request, candidates: group });
+    rounds.push(result);
+    const winner = group.find(candidate => candidate.id === result.pick.choice);
+    if (winner) winners.push(winner);
+  }
+  // When the shared evidence leaves room for only one candidate, estimates
+  // cannot reduce this further. Let the endpoint tokenize the final comparison
+  // once, rather than recursively repeating an unchanged tournament forever.
+  const final = winners.length ? await (winners.length < candidates.length
+    ? runSelection(port, { ...request, candidates: winners })
+    : askSelection(port, { ...request, candidates: winners }, false)) : rounds.at(-1)!;
+  // Every group participates in elimination; unresolved evidence cannot be
+  // upgraded by the final comparison between its surviving candidates.
+  const unresolved = rounds.filter(round => round.outcome !== 'act');
+  const outcome = [final, ...unresolved].some(round => round.outcome === 'escalate') ? 'escalate'
+    : [final, ...unresolved].some(round => round.outcome === 'confirm') ? 'confirm' : 'act';
+  return { ...final, outcome, fits: Object.assign({}, ...rounds.map(round => round.fits), final.fits),
+    recordAction(action) { for (const round of rounds) round.recordAction(action); if (winners.length) final.recordAction(action); } };
+}
+
+async function askSelection(port: JudgmentPort, request: SelectionRequest, partitionOnOverflow = true): Promise<Selection> {
   const { header, config, candidates } = request;
   const ids = candidates.map(candidate => candidate.id);
   const state = { context: request.context, candidates: candidates.map(({ id, content }) => ({ id, content })) };
-  const result = await askAs(port, header, request.pattern, state, selectionQuestions(config, ids), request.options);
+  let result: JudgmentResult<Record<string, Question>>;
+  try { result = await askAs(port, header, request.pattern, state, selectionQuestions(config, ids), request.options); }
+  catch (error) {
+    // Endpoint tokenization can exceed estimates for dense source and JSON.
+    // Retry only this explicit refusal, preserving the full shared evidence and
+    // every candidate. A comparison that cannot shrink must fail, not recurse.
+    if (!(error instanceof JudgmentContextLimitError) || !partitionOnOverflow || candidates.length < 2) throw error;
+    const middle = Math.ceil(candidates.length / 2);
+    return selectGroups(port, request, [candidates.slice(0, middle), candidates.slice(middle)]);
+  }
   const answers = result.answers as Record<string, unknown>;
   const pick = readChoice(answers['pick'] as Parameters<typeof readChoice>[0], config.band);
   const fits = Object.fromEntries(ids.map((id, index) => [id, readYesNo(answers[`fits_${index}`] as Parameters<typeof readYesNo>[0], config.fitBand)]));

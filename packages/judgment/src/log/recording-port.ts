@@ -1,6 +1,6 @@
 import { types as nodeTypes } from 'node:util';
 import { checkAnswers, projectAnswers } from '../port/answers.ts';
-import { JudgmentError, type JudgmentErrorKind } from '../port/errors.ts';
+import { JudgmentContextLimitError, JudgmentError, type JudgmentErrorKind } from '../port/errors.ts';
 import {
   toJson, type JudgmentAttempt, type JudgmentLineage, type JudgmentPort, type JudgmentRequest,
   type JudgmentResult, type Questions,
@@ -89,6 +89,11 @@ function asFailure(error: unknown, overrideKind?: JudgmentErrorKind): JudgmentEr
   const status = statusCode(rawStatus) ? rawStatus : undefined;
   const requestId = optional(() => identifier(source?.requestId));
   const lineage = optional(() => projectLineage(source?.lineage));
+  if (kind === 'rejected' && status === 400 && optional(() => source instanceof JudgmentContextLimitError)) {
+    return new JudgmentContextLimitError({
+      ...(requestId === undefined ? {} : { requestId }), ...(lineage === undefined ? {} : { lineage }),
+    });
+  }
   // HTTP status is validated metadata, not private upstream exception text.
   // Preserve it in the displayed diagnostic as well as the structured error:
   // a billing refusal must not look like Jev rejected the task itself.

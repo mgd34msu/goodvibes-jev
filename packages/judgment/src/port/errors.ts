@@ -41,3 +41,10 @@ export class JudgmentError extends Error {
     this.requestId = options.requestId;
   }
 }
+
+/** A whitelisted provider refusal, retained without its response body. */
+export class JudgmentContextLimitError extends JudgmentError {
+  constructor(options: { requestId?: string; lineage?: JudgmentLineage } = {}) {
+    super('rejected', 'The judgment request exceeds the endpoint token limit.', { status: 400, ...options });
+  }
+}

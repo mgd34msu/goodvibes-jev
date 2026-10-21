@@ -1,6 +1,6 @@
 import { APIConnectionError, APIError, APIUserAbortError, TypeSafeClient, TypeSafeError, type Fetch, type SystemOneRequest, type SystemOneResult, type Questions } from '@typesafe-ai/sdk';
 import type { JudgmentConfig } from './config.ts';
-import { JudgmentError } from './errors.ts';
+import { JudgmentContextLimitError, JudgmentError } from './errors.ts';
 import { recordingRequestIds } from './request-id.ts';
 import { interruptible, transientStatus } from './retry.ts';
 
@@ -11,6 +11,11 @@ export function toJudgmentError(error: unknown): JudgmentError {
   }
   if (error instanceof APIError) {
     const { status, requestId } = error;
+    const body = error.body;
+    const detail = body && typeof body === 'object' && 'detail' in body ? body.detail : undefined;
+    if (status === 400 && detail && typeof detail === 'object' && 'error_type' in detail && detail.error_type === 'max_tokens_exceeded') {
+      return new JudgmentContextLimitError(requestId === undefined ? {} : { requestId });
+    }
     const kind = transientStatus(status) ? 'unavailable' : 'rejected';
     return new JudgmentError(kind, `System One answered HTTP ${status}`, {
       status,
