@@ -219,7 +219,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       contractId: contract.id, createdAt: contract.createdAt, origin: contract.origin, planChecks,
       continuationEvidence: contract.taskEvidence ?? '',
       ownerPriorReads: context.readOwnerEvidence?.(contract, input.output + '\n' + changes.map(change => change.diff).join('\n')) ?? null,
-      currentFiles: currentFileObservations(tree, changes.map(change => change.path)),
+      currentFiles: currentFileObservations(tree, changes.map(change => change.path), { includeText: input.scope === 'deliverable' }),
       privateArtifacts: readPrivateReceiptArchives(contract),
       currentValidation: {
         scope: input.scope, targetId: input.targetId, outputDigest: hashState(input.output), status: 'in-progress',

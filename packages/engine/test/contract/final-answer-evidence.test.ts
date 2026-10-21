@@ -1,6 +1,10 @@
 import { expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { hashState } from '@goodvibes-jev/judgment';
+import { currentFileObservations } from '../../sdk/src/platform/contract/evidence.js';
 import { finalAnswerEvidence } from '../../sdk/src/platform/contract/final-answer-evidence.js';
 import { makeContract, makeUnit } from './fixtures.js';
 
@@ -85,4 +89,40 @@ test('large historical reports stay retained and bound without overflowing the c
   const oldBinding = (projected.evidence['fullSourceEvidence'] as { digest: string }).digest;
   f.evidence.orchestration.units[0].acceptedAnswer += 'Changed earlier evidence.';
   expect((finalAnswerEvidence(f.contract, f.evidence, {})!.evidence['fullSourceEvidence'] as { digest: string }).digest).not.toBe(oldBinding);
+});
+
+test('final artifact review receives complete actual current text when the diff omits unchanged sections', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'current-review-text-'));
+  try {
+    const text = '# Current review\n\nUnchanged findings and source assessments.\n\nUpdated execution attribution.\n';
+    writeFileSync(join(dir, 'review.md'), text);
+    const observed = currentFileObservations(dir, ['review.md'], { includeText: true });
+    const contract = makeContract({ units: [] });
+    const evidence = { orchestration: { currentFiles: observed }, hostOperations: observed,
+      diff: '-Old attribution\n+Updated execution attribution.' };
+    const view = finalAnswerEvidence(contract, evidence, {})!;
+    expect(view.artifacts).toMatchObject([{ path: 'review.md', sha256: digest(text), content: text,
+      decisionIds: [], sourceHostOperation: { operation: 'read-current-file', source: 'native-host-filesystem', success: true } }]);
+    expect(JSON.stringify(view.evidence).split('Unchanged findings and source assessments.')).toHaveLength(2);
+    expect(view.artifacts[0]).not.toHaveProperty('sourceCheckId');
+    expect(view.evidence['orchestration']).toMatchObject({ currentFiles: [{ sha256: digest(text) }] });
+    expect(view.evidence['fullSourceEvidence']).toMatchObject({ digest: hashState(evidence) });
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('a corrupted current text observation cannot stand in for actual artifact bytes', () => {
+  const f = fixture();
+  f.evidence.orchestration.currentFiles[0] = { ...f.current, source: 'native-host-filesystem', text: 'Invented contents' };
+  expect(finalAnswerEvidence(f.contract, f.evidence, {})).toBeUndefined();
+});
+
+test('binary and non-UTF8 bytes never become lossy text evidence', () => {
+  const dir = mkdtempSync(join(tmpdir(), 'current-review-binary-'));
+  try {
+    writeFileSync(join(dir, 'archive.zip'), Buffer.from([0, 1, 2]));
+    writeFileSync(join(dir, 'legacy.txt'), Buffer.from([0xff, 0xfe]));
+    for (const observation of currentFileObservations(dir, ['archive.zip', 'legacy.txt'], { includeText: true })) {
+      expect(observation).not.toHaveProperty('text');
+    }
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 });

@@ -389,15 +389,17 @@ export async function collectChanges(unit: Pick<ContractUnit, 'baseline'>, sourc
 }
 
 /** Current regular-file identity, independent of an assistant's earlier claims. */
-export function currentFileObservations(cwd: string, paths: readonly string[]): JsonValue[] {
+export function currentFileObservations(cwd: string, paths: readonly string[], options: { readonly includeText?: boolean } = {}): JsonValue[] {
   return [...new Set(paths)].flatMap<JsonValue>(path => {
     if (isAbsolute(path) || path.split('/').includes('..') || path.startsWith('.goodvibes/')) return [];
     try {
       const absolute = join(cwd, path);
       if (!lstatSync(absolute).isFile()) return [];
       const bytes = readFileSync(absolute);
+      const text = options.includeText && !bytes.includes(0) ? bytes.toString('utf8') : undefined;
       return [{ operation: 'read-current-file', source: 'native-host-filesystem', success: true,
         path, bytes: bytes.length, binary: bytes.includes(0), sha256: createHash('sha256').update(bytes).digest('hex'),
+        ...(text !== undefined && Buffer.from(text, 'utf8').equals(bytes) ? { text } : {}),
         meaning: 'Actual bytes read from the current checked tree. This establishes current file identity, not semantic correctness, archive integrity, a worker execution or native approval.' }];
     } catch (error) {
       return [{ operation: 'read-current-file', source: 'native-host-filesystem', success: false, path,
