@@ -119,16 +119,33 @@ test('native read tables preserve every original field, range and unit attributi
   const view = finalAnswerEvidence(f.contract, f.evidence, {})!;
   const unit = (view.evidence['orchestration'] as { units: { id: string; readObservations: {
     columns: string[]; rows: [string, string[], number, Record<string, unknown>?][];
-  } }[] }).units[0]!;
+  }; latestCheck: { id: string; decisionIds: string[] } }[] }).units[0]!;
   expect(unit.id).toBe('u1');
   expect(unit.readObservations.columns).toEqual(['path', 'returnedRanges', 'returnedLines', 'additionalFields']);
-  const restored = unit.readObservations.rows.map(([path, returnedRanges, returnedLines, additionalFields]) => ({
-    path, returnedRanges, returnedLines, ...additionalFields,
-  }));
+  const restored = unit.readObservations.rows.map(([path, returnedRanges, returnedLines, additionalFields]) => {
+    const { nativeCheckRef, ...fields } = additionalFields ?? {};
+    return { path, returnedRanges, returnedLines, ...fields, ...(nativeCheckRef === 'latestCheck'
+      ? { validatedByCheckId: unit.latestCheck.id, decisionIds: unit.latestCheck.decisionIds } : {}) };
+  });
   expect(restored).toEqual(reads);
   expect(JSON.stringify(unit.readObservations).length).toBeLessThan(JSON.stringify(reads).length);
   expect(JSON.stringify(f.evidence)).toBe(before);
   expect(view.evidence['fullSourceEvidence']).toMatchObject({ digest: hashState(f.evidence) });
+});
+
+test('read validation references preserve mismatched and unaccepted check identities inline', () => {
+  for (const mismatch of [
+    { validatedByCheckId: 'other-check', decisionIds: ['native-unit-check'] },
+    { validatedByCheckId: 'u1.k1', decisionIds: ['different-native-decision'] },
+    { validatedByCheckId: 'u1.k1', decisionIds: [] },
+    { validatedByCheckId: 'u1.k1', decisionIds: ['native-unit-check'], nativeCheckRef: 'untrusted-existing-reference' },
+  ]) {
+    const f = fixture();
+    const observation = { path: 'src/a.ts', returnedRanges: ['1-2'], returnedLines: 2, ...mismatch };
+    f.evidence.orchestration.units[0].readObservations = [observation];
+    const view = finalAnswerEvidence(f.contract, f.evidence, {})!;
+    expect((view.evidence['orchestration'] as { units: { readObservations: unknown[] }[] }).units[0]!.readObservations).toEqual([observation]);
+  }
 });
 
 test('root criterion references resolve to complete identical unit criteria and preserve conflicting or extended values inline', () => {

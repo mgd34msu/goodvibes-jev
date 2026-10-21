@@ -98,7 +98,9 @@ interface TargetReading {
 }
 
 interface FinalAnswerReviewReceipt {
-  readonly schemaVersion: 1;
+  readonly schemaVersion: 2;
+  readonly fulfillmentDecisionIds: readonly string[];
+  readonly stateHash: string;
   readonly evidenceDigest: string;
   readonly outputDigest: string;
   readonly passed: boolean;
@@ -258,9 +260,9 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       privateArtifacts: readPrivateReceiptArchives(contract),
       currentValidation: {
         scope: input.scope, targetId: input.targetId, outputDigest: hashState(input.output), status: 'in-progress',
-        validationOrder: input.scope === 'deliverable' ? ['original-requirements', 'final-answer-content', 'owner-publication'] : ['group-requirements'],
+        validationOrder: input.scope === 'deliverable' ? ['original-requirements', 'final-answer-content', 'original-requirements-with-content-receipt-if-needed', 'owner-publication'] : ['group-requirements'],
         publicationRule: input.scope === 'deliverable'
-          ? 'This native Jev judgment is reviewing this exact final contract answer now. The host only commits and delivers this checked answer after this judgment passes. A requirement for native Jev to validate this final answer is performed by this very check; it cannot require an earlier successful record of its own verdict. This is not approval and does not replace independently required project-side validations or checks of later rewritten answers.'
+          ? 'This native Jev judgment is reviewing this exact final contract answer now. The host only commits and delivers this checked answer after this judgment passes. A requirement for native Jev to validate this final answer is performed by this very check; it cannot require an earlier successful record of its own verdict. The final-content review is a separate mandatory step. If this requirements assessment does not pass, the host assesses the unchanged original requirements again with the actual successful content-review receipt before publishing. Pending application of these staged artifacts and delivery of this exact checked answer are mandatory later host operations, not already completed actions or missing substantive work. This is not approval and does not replace independently required project-side validations or checks of later rewritten answers.'
           : 'This native Jev judgment is reviewing the combined group output now. The host advances the group only after this judgment passes. This is not approval or evidence of a later deliverable or rewritten-answer check.',
       },
       inputGeneration: contract.inputSnapshot?.id ?? null,
@@ -312,15 +314,25 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     if (contract.nativeSource !== undefined && prior !== undefined && prior.result !== 'pass' && prior.evidenceDigest === digest) {
       return { check: prior, verdicts: new Map(input.criteria.filter(criterion => criterion.disposition === 'judged').map(criterion => [criterion.id, criterion.status === 'unread' ? 'unshown' : criterion.status])), passed: false, output: evidence.output };
     }
-    const usage = emptyJudgmentUsage();
-    let judgment: Awaited<ReturnType<typeof fulfillmentJudge.judge>>;
-    try {
-      judgment = await fulfillmentJudge.judge(
-        meteredPort(nativeContractPort(contract, context.native, judgmentPort(site), run.abort.signal), usage),
-        { goal: input.goal, criteria: judgedCriteria.map(criterion => criterion.text), output: evidence.output, evidence: fulfillmentEvidence },
-        { site, signal: run.abort.signal },
-      );
-    } finally { addJudgmentUsage(contract.judgmentUsage, usage); }
+    const readFulfillment = async (review?: FinalAnswerReviewReceipt, previous?: Awaited<ReturnType<typeof fulfillmentJudge.judge>>) => {
+      const usage = emptyJudgmentUsage();
+      try {
+        return await fulfillmentJudge.judge(
+          meteredPort(nativeContractPort(contract, context.native, judgmentPort(site), run.abort.signal), usage),
+          { goal: input.goal, criteria: judgedCriteria.map(criterion => criterion.text), output: evidence.output,
+            evidence: review === undefined ? fulfillmentEvidence : { ...fulfillmentEvidence, finalAnswerReview: JSON.parse(JSON.stringify(review)) as JsonValue,
+              previousFulfillmentAssessment: {
+                goal: { probabilityUnmet: previous!.goal.probability, verdict: criterionVerdict(previous!.goal) },
+                criteria: judgedCriteria.map((criterion, index) => ({ id: criterion.id, probabilityUnmet: previous!.criteria[index]!.probability,
+                  verdict: criterionVerdict(previous!.criteria[index]!) })),
+                decisionIds: previous!.decisionId ? [previous!.decisionId] : [],
+                meaning: 'Actual initial assessment of the identical output, original requirements and primary facts. The only new evidence is the completed independent content-review receipt. Reconsider a failed requirement only to the extent that this new receipt actually resolves it. Content approval does not repair missing substantive work, supply unshown execution or undo a factual failure. All original obligations still apply.',
+              } } },
+          { site, signal: run.abort.signal },
+        );
+      } finally { addJudgmentUsage(contract.judgmentUsage, usage); }
+    };
+    let judgment = await readFulfillment();
     assertOwnedContractSource(contract);
     if (run.terminal) { judgment.recordAction('discarded: the contract already ended'); return null; }
     let answerReview: FinalAnswerReviewReceipt | undefined;
@@ -342,7 +354,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         if (decision.action !== 'checked' || decision.targetId !== targetId) continue;
         try {
           const receipt = JSON.parse(decision.reason) as FinalAnswerReviewReceipt;
-          if (receipt.schemaVersion === 1 && receipt.evidenceDigest === evidenceDigest && receipt.outputDigest === outputDigest && typeof receipt.passed === 'boolean'
+          if (receipt.schemaVersion === 2 && typeof receipt.stateHash === 'string' && Array.isArray(receipt.fulfillmentDecisionIds) && receipt.evidenceDigest === evidenceDigest && receipt.outputDigest === outputDigest && typeof receipt.passed === 'boolean'
             && ['unfinished', 'unsupported'].every(key => {
               const probability = receipt.readings[key as 'unfinished' | 'unsupported']?.probability;
               return typeof probability === 'number' && Number.isFinite(probability) && probability >= 0 && probability <= 1;
@@ -354,8 +366,14 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         const reviewUsage = emptyJudgmentUsage();
         const site = 'contract.check.final-answer-review';
         try {
+          const rawReviewPort = judgmentPort(site);
+          let reviewStateHash: string | undefined;
+          const boundReviewPort: typeof rawReviewPort = { ...rawReviewPort, ask(request) {
+            reviewStateHash = hashState(request.state);
+            return rawReviewPort.ask(request);
+          } };
           const review = await reviewBattery.run(
-            meteredPort(nativeContractPort(contract, context.native, judgmentPort(site), run.abort.signal), reviewUsage), state,
+            meteredPort(nativeContractPort(contract, context.native, boundReviewPort, run.abort.signal), reviewUsage), state,
             { site, signal: run.abort.signal },
           );
           assertOwnedContractSource(contract);
@@ -390,7 +408,8 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
             }));
           assertOwnedContractSource(contract);
           if (run.terminal) return null;
-          answerReview = { schemaVersion: 1, evidenceDigest, outputDigest,
+          if (reviewStateHash === undefined) throw new Error('Final-answer review has no recorded input binding');
+          answerReview = { schemaVersion: 2, stateHash: reviewStateHash, fulfillmentDecisionIds: fulfillmentAssessment.decisionIds, evidenceDigest, outputDigest,
             passed, ...(findings.length ? { findings } : {}),
             readings: Object.fromEntries(Object.entries(readings).map(([key, { probability, verdict, outcome }]) => [key, { probability, verdict, outcome }])) as FinalAnswerReviewReceipt['readings'],
             decisionIds: review.result.decisionId ? [review.result.decisionId] : [],
@@ -399,6 +418,14 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
           review.recordAction(answerReview.passed ? 'final answer content passed; original-requirement readings and gates must also pass before publication' : 'final answer content rejected; publication remains held');
         } finally { addJudgmentUsage(contract.judgmentUsage, reviewUsage); }
       }
+    }
+    // The separate content review did not exist during the initial requirements
+    // assessment. Reassess with its genuine receipt, never by overriding a
+    // reading or retrying an identical evidence basis until it happens to pass.
+    if (answerReview?.passed && (criterionVerdict(judgment.goal) !== 'met'
+      || judgment.criteria.some(reading => criterionVerdict(reading) !== 'met'))) {
+      judgment.recordAction('requirements require reassessment with the completed independent content review');
+      judgment = await readFulfillment(answerReview, judgment);
     }
     assertOwnedContractSource(contract);
     if (run.terminal) {
@@ -434,7 +461,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       result: passed ? 'pass' : 'stall',
       problems,
       qualityProblems: [],
-      decisionIds: [...(answerReview?.decisionIds ?? []), ...(judgment.decisionId === undefined ? [] : [judgment.decisionId])],
+      decisionIds: [...new Set([...(answerReview?.fulfillmentDecisionIds ?? []), ...(answerReview?.decisionIds ?? []), ...(judgment.decisionId === undefined ? [] : [judgment.decisionId])])],
       evidenceDigest: digest,
     };
     input.checks.push(check);

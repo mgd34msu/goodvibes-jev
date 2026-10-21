@@ -11,17 +11,25 @@ const metadata = (value: JsonValue): JsonValue => object(value) && value['operat
   ? Object.fromEntries(Object.entries(value).filter(([key]) => key !== 'text')) : value;
 
 /** Keep every returned-read field while naming repeated columns only once. */
-function observationTable(value: JsonValue | undefined): JsonValue {
+function observationTable(value: JsonValue | undefined, check?: JsonValue): JsonValue {
   if (!Array.isArray(value) || !value.length || !value.every(read => object(read)
     && typeof read['path'] === 'string' && Array.isArray(read['returnedRanges']) && typeof read['returnedLines'] === 'number')) return value ?? [];
+  const linked = value.map(read => {
+    if (!object(read) || !object(check) || check['result'] !== 'pass' || typeof check['id'] !== 'string'
+      || !Array.isArray(check['decisionIds']) || !check['decisionIds'].length || Object.hasOwn(read, 'nativeCheckRef')
+      || read['validatedByCheckId'] !== check['id'] || !Array.isArray(read['decisionIds'])
+      || hashState(read['decisionIds']) !== hashState(check['decisionIds'])) return read;
+    const { validatedByCheckId: _checkId, decisionIds: _decisions, ...rest } = read;
+    return { ...rest, nativeCheckRef: 'latestCheck' };
+  });
   const table = { columns: ['path', 'returnedRanges', 'returnedLines', 'additionalFields'],
-    rows: value.map(read => {
+    rows: linked.map(read => {
       const record = read as JsonObject;
       const rest = Object.fromEntries(Object.entries(record).filter(([key]) => !['path', 'returnedRanges', 'returnedLines'].includes(key)));
       return [record['path']!, record['returnedRanges']!, record['returnedLines']!, ...(Object.keys(rest).length ? [rest] : [])];
     }),
-    meaning: 'Lossless rows of actual returned-read observations for this unit. Expand each row using columns; additionalFields, when present, preserves every other original field unchanged. An absent fourth column means no additional fields. Ranges and attribution are unchanged. A returned read is not semantic approval or test execution.' };
-  return JSON.stringify(table).length < JSON.stringify(value).length ? table : value;
+    meaning: 'Lossless rows of actual returned-read observations for this unit. Expand each row using columns; additionalFields retains the other original fields directly or through the exact nativeCheckRef described by readValidationReferenceMeaning. An absent fourth column means no additional fields. Ranges and attribution are unchanged. A returned read is not semantic approval or test execution.' };
+  return JSON.stringify(table).length < JSON.stringify(linked).length ? table : linked;
 }
 
 /** Root-to-unit links can reuse the identical criterion already supplied below. */
@@ -127,7 +135,7 @@ export function finalAnswerEvidence(contract: Pick<ContractView, 'id' | 'ask' | 
     acceptedAnswerDigest: unit['acceptedAnswerDigest'] ?? null,
     ...(retainedResult ? { acceptedAnswer: source.answer ?? '' } : {}),
     acceptedAnswerSource: { storage: 'native-contract-store', contractId: host['contractId'] ?? null, unitId: unit['id'] ?? null, field: 'answer' },
-    readObservations: observationTable(unit['readObservations']),
+    readObservations: observationTable(unit['readObservations'], unit['latestCheck']),
   }; }) : [];
   const view: JsonObject = {
     originalRequest: contract.ask,
@@ -142,6 +150,7 @@ export function finalAnswerEvidence(contract: Pick<ContractView, 'id' | 'ask' | 
     gates: evidence['gates'] ?? [],
     criteria: criterionLinks(object(summaries) ? summaries['checks'] ?? summaries : summaries, units),
     criteriaReferenceMeaning: 'A servedBy criterionRef resolves by exact id to orchestration.units[].criteria, including its complete literal text and recorded verdict. Only identical complete criterion values are referenced; conflicting or additional fields remain inline. All original root criteria remain separately supplied unchanged. These references are native evidence links, not new approval.',
+    readValidationReferenceMeaning: 'A read observation with nativeCheckRef=latestCheck retains its original validation through the enclosing unit latestCheck: expand validatedByCheckId from latestCheck.id and decisionIds from latestCheck.decisionIds. Only exact matches to that actual passed check are referenced. Read contents, digests, byte counts, paths, ranges and unit attribution remain unchanged. This is provenance for earlier reads, not approval of the current answer.',
     orchestration: { contractId: host['contractId'] ?? null, planChecks: host['planChecks'] ?? [],
       currentAnswerSource: host['currentAnswerSource'] ?? null,
       repairPlanAdmissions: host['repairPlanAdmissions'] ?? [], referenceOperations: host['referenceOperations'] ?? [],

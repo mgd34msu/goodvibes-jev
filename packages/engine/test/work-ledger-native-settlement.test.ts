@@ -88,6 +88,48 @@ test('terminal settlement checks every original criterion and atomically publish
   expect(f.harness.agentsOf('u1')).toHaveLength(1);
 });
 
+test('native settlement accepts a genuine content review followed by original-requirements reassessment', async () => {
+  let assessments = 0;
+  const f = await fixture({ harness: { port: context => {
+    const evidence = context.state['evidence'] as { orchestration?: { currentValidation?: { scope: string } }; finalAnswerReview?: { passed: boolean } } | undefined;
+    if (evidence?.orchestration?.currentValidation?.scope === 'deliverable'
+      && (context.name === 'goal' || context.name.startsWith('criterion_'))) {
+      if (context.name === 'goal') assessments++;
+      return noulAnswer(evidence.finalAnswerReview?.passed ? 0.03 : 0.97);
+    }
+    return undefined;
+  } } });
+  const started = await f.host.start(f.target, f.authority);
+  const contract = await completed(f.harness, started.admission.contractId);
+  expect(contract.status).toBe('passed');
+  expect(assessments).toBe(2);
+  expect(contract.checks.at(-1)!.decisionIds).toHaveLength(3);
+  const receipt = await f.host.settle(f.key, f.authority);
+  expect(receipt.attestation.outcome).toBe('verified');
+  expect(f.harness.agentsOf('u1')).toHaveLength(1);
+});
+
+test('native settlement refuses missing, failing or mismatched final-content proof despite a passed checkpoint', async () => {
+  const f = await fixture(); const started = await f.host.start(f.target, f.authority);
+  const contract = await completed(f.harness, started.admission.contractId);
+  const contentId = contract.checks.at(-1)!.decisionIds.find(id => f.log.get(id)?.context.site === 'contract.check.final-answer-review')!;
+  expect(contentId).toBeDefined();
+  for (const mutation of ['absent', 'failed-answer', 'wrong-state', 'wrong-question'] as const) {
+    await expect(verifyNativeWorkExecution({ execution: f.storage.current(f.key).record!, runner: f.harness.runner,
+      port: f.hostOptions.port, decisionLog: { get(id) {
+        const entry = f.log.get(id);
+        if (id !== contentId || entry?.status !== 'answered') return entry;
+        if (mutation === 'absent') return undefined;
+        if (mutation === 'failed-answer') return { ...entry, answers: { ...entry.answers as object, unsupported: noulAnswer(0.99) } };
+        if (mutation === 'wrong-state') return { ...entry, stateHash: 'copied-from-another-state' as typeof entry.stateHash };
+        return { ...entry, questions: { unfinished: { type: 'noul', instructions: 'A different check' }, unsupported: { type: 'noul', instructions: 'A different check' } } };
+      } }, settings: checkSettings(CONTRACT_CONFIG_DEFAULTS), readAccessFilter: async () => true,
+      signal: new AbortController().signal, assertCurrent() {} })).rejects.toThrow('genuine final-answer content review');
+  }
+  expect(f.storage.current(f.key).ledger.revision).toBe(2);
+  expect(f.storage.current(f.key).settlement).toBeNull();
+});
+
 test('an unmet original criterion cannot be hidden by planner success', async () => {
   const f = await fixture({ settlementAnswers: context => context.name === 'criterion_1' ? noulAnswer(0.99) : undefined });
   const started = await f.host.start(f.target, f.authority); expect((await completed(f.harness, started.admission.contractId)).status).toBe('passed');

@@ -215,7 +215,7 @@ test('group and final checks receive actual plan-validation and unit-acceptance 
   expect(finalPeer.latestCheck).toEqual(check);
   expect(finalPeer.readObservations).toEqual([{ path: 'input.txt', returnedRanges: ['1-2'], returnedLines: 2,
     contentKind: 'declared-reference', returnedContentDigest: hashState('1 | first\n2 | second'),
-    returnedContentBytes: Buffer.byteLength('1 | first\n2 | second'), validatedByCheckId: check.id, decisionIds: check.decisionIds,
+    returnedContentBytes: Buffer.byteLength('1 | first\n2 | second'), nativeCheckRef: 'latestCheck',
   }]);
   expect(done.units[0]!.readEvidence![0]!.returnedContent).toBe('1 | first\n2 | second');
   for (const evidence of observed) {
@@ -340,11 +340,56 @@ test('a rejected native answer review holds publication even when fulfillment re
   expect(review.readings.unfinished.probability).toBe(0.98);
 });
 
+test('a final-content receipt resolves its own pending requirement through a genuine original-requirements recheck', async () => {
+  using log = new SqliteDecisionLog(':memory:');
+  const order: string[] = [];
+  let workers = 0;
+  const plan = oneUnitPlan(1);
+  plan.criteria[0]!.text = 'Have native Jev validate the completed final answer before publishing it.';
+  const h = use(makeHarness({ plan, decisionLog: log,
+    scripts: { u1: (record, context) => { workers++; return finishes('The parser is ready.')(record, context); } },
+    port: context => {
+      if (judgeOf(context) === 'deliverable') {
+        const evidence = context.state['evidence'] as { finalAnswerReview?: { passed: boolean; outputDigest: string; decisionIds: string[] } };
+        if (context.name === 'goal') order.push(evidence.finalAnswerReview ? 'requirements-with-review' : 'original-requirements');
+        if (context.name === 'goal' || context.name.startsWith('criterion_')) {
+          if (!evidence.finalAnswerReview) return noulAnswer(0.98);
+          expect(evidence.finalAnswerReview.passed).toBe(true);
+          const output = context.state['output'];
+          if (typeof output !== 'string') throw new Error('Expected the exact final answer');
+          expect(evidence.finalAnswerReview.outputDigest).toBe(hashState(output));
+          expect(log.get(evidence.finalAnswerReview.decisionIds[0]!)?.context.site).toBe('contract.check.final-answer-review');
+          return noulAnswer(0.01);
+        }
+      }
+      if (context.name === 'unfinished') {
+        order.push('final-answer-content');
+        const evidence = context.state['evidence'] as { fulfillmentAssessment: { goal: { verdict: string } } };
+        expect(evidence.fulfillmentAssessment.goal.verdict).toBe('unmet');
+      }
+      return undefined;
+    },
+  }));
+  const id = await run(h);
+  const done = contractOf(h, id);
+  expect(done.status).toBe('passed');
+  expect(done.criteria[0]!.text).toBe(plan.criteria[0]!.text);
+  expect(workers).toBe(1);
+  expect(order).toEqual(['original-requirements', 'final-answer-content', 'requirements-with-review']);
+  const check = done.checks.at(-1)!;
+  expect(check.result).toBe('pass');
+  expect(check.decisionIds).toHaveLength(3);
+  const records = check.decisionIds.map(id => log.get(id)!);
+  expect(records.map(record => record.context.site)).toEqual(['contract.check.deliverable-judge', 'contract.check.final-answer-review', 'contract.check.deliverable-judge']);
+  expect(done.criteria[0]!.readings.at(-1)!.decisionId).toBe(check.decisionIds[2]);
+});
+
 test('current primary evidence never bypasses an unmet original root after answer content passes', async () => {
-  let composed = false;
+  let composed = false, assessments = 0;
   const h = use(makeHarness({ plan: oneUnitPlan(1), scripts: { u1: finishes('The parser is ready.') },
     port: ({ name, state }) => {
       if (state['goal'] === 'A CSV parser' && (name === 'goal' || name.startsWith('criterion_'))) {
+        if (name === 'goal') assessments++;
         const evidence = state['evidence'] as { fullSourceEvidence?: unknown };
         composed = evidence.fullSourceEvidence !== undefined;
         return noulAnswer(0.98);
@@ -356,6 +401,7 @@ test('current primary evidence never bypasses an unmet original root after answe
   await waitFor(() => (h.runner.get(contract.id)?.checks.length ?? 0) > 0, 'the original fulfillment check');
   const current = contractOf(h, contract.id);
   expect(composed).toBe(true);
+  expect(assessments).toBe(2);
   expect(current.status).not.toBe('passed');
   expect(current.criteria[0]!.status).toBe('unmet');
   expect(current.checks[0]!.result).not.toBe('pass');

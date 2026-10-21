@@ -243,20 +243,22 @@ function groupCriterionPlan(): DraftPlan {
   return { ...plan, groups: [{ ...plan.groups[0]!, criteria: [{ id: 'g1.c1', text: 'the parser is exported', serves: ['c1'] }] }] };
 }
 
-/** Reads `kind`'s first check as failing and every later one as met. */
-function failsFirst(kind: 'group' | 'deliverable') {
-  let checks = 0;
+/** Content approval cannot repair the first rejected work; actual changed source or fix evidence can. */
+function failsUntilRepairedWork(kind: 'group' | 'deliverable') {
+  let rejectedBasis: string | undefined;
   return (context: AnswerContext): unknown => {
     if (judgeOf(context) !== kind) return undefined;
-    if (context.name === 'goal') checks += 1;
-    return noulAnswer(checks <= 1 ? UNMET : MET);
+    const { finalAnswerReview: _review, previousFulfillmentAssessment: _previous, ...work } = context.state['evidence'] as Record<string, unknown>;
+    const basis = JSON.stringify({ output: context.state['output'], work });
+    rejectedBasis ??= basis;
+    return noulAnswer(basis === rejectedBasis ? UNMET : MET);
   };
 }
 
 describe('groups and the deliverable (6.4)', () => {
   test('a repair after a budget reset runs with new identities and preserves the earlier accepted group', async () => {
     const planner = stepPlanner(oneUnitPlan(1), { fix: () => plannerOutput(fixPlan([{ serves: ['c1'], files: ['src/cli.ts'] }])) });
-    const failing = failsFirst('deliverable'); let id = ''; let retained = ''; let seeded = false;
+    const failing = failsUntilRepairedWork('deliverable'); let id = ''; let retained = ''; let seeded = false;
     const h = use(makeHarness({ plan: oneUnitPlan(1), planner: planner.runner,
       scripts: scriptsWith({ u1: finishes('parser written') }, unitId => unitId.endsWith('.f2.u1') ? finishes('wired the parser', 'src/cli.ts') : undefined),
       port: context => {
@@ -333,7 +335,7 @@ describe('groups and the deliverable (6.4)', () => {
       plan: groupCriterionPlan(),
       planner: planner.runner,
       scripts: { u1: finishes('parser written'), 'g1.f1.u1': finishes('exported the parser', 'src/index.ts') },
-      port: failsFirst('group'),
+      port: failsUntilRepairedWork('group'),
     }));
     const { contract } = startContract(h);
     await waitFor(() => terminal(h, contract.id), 'the contract to end', 15_000);
@@ -358,7 +360,7 @@ describe('groups and the deliverable (6.4)', () => {
       plan: oneUnitPlan(1),
       planner: planner.runner,
       scripts: scriptsWith({ u1: finishes('parser written') }, (unitId) => (unitId.endsWith('.f1.u1') ? finishes('wired the parser into the cli', 'src/cli.ts') : undefined)),
-      port: failsFirst('deliverable'),
+      port: failsUntilRepairedWork('deliverable'),
     }));
     const { contract } = startContract(h);
     await waitFor(() => terminal(h, contract.id), 'the contract to end', 15_000);
@@ -374,7 +376,7 @@ describe('groups and the deliverable (6.4)', () => {
   }, 20_000);
 
   test('a deliverable that fails with its fix rounds spent goes to the owner', async () => {
-    const h = use(makeHarness({ plan: oneUnitPlan(1), contract: { maxFixRounds: 1 }, scripts: { u1: finishes('parser written') }, port: failsFirst('deliverable') }));
+    const h = use(makeHarness({ plan: oneUnitPlan(1), contract: { maxFixRounds: 1 }, scripts: { u1: finishes('parser written') }, port: failsUntilRepairedWork('deliverable') }));
     const { contract } = startContract(h);
     h.store.get(contract.id)!.fixRounds = 1;
     await waitFor(() => contractOf(h, contract.id).status === 'awaiting-owner', 'the owner to be asked', 15_000);
