@@ -25,6 +25,7 @@ import { saysYesAtAct } from './batteries/request-shape.js';
 import { criterionVerdict, UNIT_JUDGES } from './batteries/unit-judge.js';
 import { midRunNudgeItems, qualityVerdict, unitQuality, type QualityVerdict } from './batteries/unit-quality.js';
 import { unmetSeverity } from './batteries/unmet-severity.js';
+import { responseFinding } from '../core/batteries/response-finding.js';
 import type { ContractAcceptanceStakes, ContractConfig } from './config.js';
 import { judgeEvidence, judgeState, qualityState, type UnitEvidence } from './evidence.js';
 import { failedGates } from './gates.js';
@@ -319,6 +320,32 @@ export async function runUnitCheck(input: UnitCheckInput): Promise<UnitCheckOutc
       ...(evidence.claims === undefined ? {} : { claims: { missingPaths: evidence.claims.missingPaths, noChanges: evidence.claims.missingPaths.length === 0 && claimsDidFail } }),
     };
     nudge = { text: buildNudge(unit, nudgeFindings), kinds: chosen.nudgeKinds, criterionIds: nudgedCriteria(findings, chosen.nudgeKinds) };
+    if (input.trigger !== 'turn-end' && chosen.nudgeQuality.includes('unsupported_claims')) {
+      const candidates = [...new Intl.Segmenter(undefined, { granularity: 'sentence' }).segment(evidence.output)]
+        .filter(sentence => sentence.segment.trim()).map((sentence, index) => ({ id: `sentence-${index}`,
+          content: { reference: `current unit report at character ${sentence.index}`, quote: sentence.segment.trim() } }));
+      if (candidates.length) {
+        try {
+          const site = 'contract.check.unit-quality-finding';
+          const selected = await responseFinding.select(
+            meteredPort(input.checkPort ?? (input.native === undefined ? judgmentPort(site)
+              : nativeContractPort(input.native.contract, input.native.services, judgmentPort(site), input.signal)), usage),
+            { issue: 'The current unit report claims performed actions or verified results that the actual evidence does not establish. Locate the specific unsupported claim, including attributing retained earlier operations to the current worker.',
+              evidence: qualityState(unit, evidence) }, candidates, { ...signal, site },
+          );
+          const passage = candidates.find(candidate => candidate.id === selected.chosen)?.content;
+          if (selected.decisionId) decisionIds.push(selected.decisionId);
+          selected.recordAction('Localize an unsupported unit-report claim for correction; the quality hold and acceptance requirements are unchanged.');
+          if (passage) nudge = { ...nudge, text: nudge.text + '\n\n'
+            + (selected.outcome === 'act' ? 'Specific claim to correct' : 'Candidate claim to investigate (localization is uncertain)')
+            + ` at ${passage.reference}:\n${JSON.stringify(passage.quote)}\n`
+            + 'Make this claim match the actual evidence. Attribute retained observations to the earlier work; claim new operations only when their actual execution records establish them. Preserve completed work and already-met criteria. This feedback grants no acceptance.' };
+        } catch {
+          input.signal?.throwIfAborted();
+          // Localization failure leaves the original held check and its feedback intact.
+        }
+      }
+    }
   }
 
   const readings = new Map(judged.map((criterion, index): [string, CriterionReading] => {

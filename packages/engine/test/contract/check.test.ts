@@ -6,6 +6,7 @@
  */
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { readYesNo, STAKES_BANDS } from '@goodvibes-jev/judgment';
+import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { DELIVERABLE_JUDGES, deliverableVerdict } from '../../sdk/src/platform/contract/batteries/deliverable-judge.js';
 import { GROUP_JUDGES, groupVerdict } from '../../sdk/src/platform/contract/batteries/group-judge.js';
@@ -289,6 +290,34 @@ describe('check outcomes, in table order (4.6)', () => {
   test('row 5: a quality problem nudges', async () => {
     const outcome = await check({ quality: { hidden_failure: UNMET } });
     expect(outcome.nudge?.kinds).toEqual(['quality']);
+  });
+
+  test.each([0.99, 0.4])('an unsupported-claim correction localizes the exact draft sentence with confidence %s', async confidence => {
+    const port = fakePort((name, question) => {
+      if (name === 'pick') return choiceAnswer(question, 'sentence-1', confidence);
+      if (name.startsWith('fits_')) return noulAnswer(name === 'fits_1' ? 0.99 : MET);
+      return noulAnswer(name === 'unsupported_claims' ? UNMET : MET);
+    });
+    const outcome = await check({}, { checkPort: port.port, evidence: evidence({
+      output: 'The earlier source observations are retained. I ran seven read calls in this turn. No tests were run.', commands: [],
+    }) });
+    expect(outcome.check.result).toBe('nudge');
+    expect(outcome.check.qualityProblems).toContain('unsupported_claims');
+    expect(outcome.nudge?.text).toContain('"I ran seven read calls in this turn."');
+    expect(outcome.nudge?.text).toContain('Preserve completed work and already-met criteria.');
+    expect(outcome.nudge?.text).toContain(confidence > 0.9 ? 'Specific claim to correct' : 'localization is uncertain');
+    expect(outcome.verdicts.get('u1.c1')).toBe('met');
+  });
+
+  test('unavailable claim localization preserves the rejection without inventing a passage', async () => {
+    const port = fakePort(name => {
+      if (name === 'pick') throw new Error('Finding service unavailable');
+      return noulAnswer(name === 'unsupported_claims' ? UNMET : MET);
+    });
+    const outcome = await check({}, { checkPort: port.port });
+    expect(outcome.check.result).toBe('nudge');
+    expect(outcome.check.qualityProblems).toEqual(['unsupported_claims']);
+    expect(outcome.nudge?.text).not.toContain('Specific claim to correct');
   });
 
   test('rows 3 to 5 together: only the unmet criteria need further work', async () => {
