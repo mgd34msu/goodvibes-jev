@@ -48,6 +48,8 @@
  */
 
 import { afterEach, expect, test, describe } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -493,17 +495,23 @@ describe('the Gmail inbound path is reachable from the daemon composition', () =
     await rig.supervisor.stop();
   });
 
-  test('a credential Google refuses is reported with Google own words, never as a quiet IMAP fallback', async () => {
+  test('a qualified Google permission refusal is reported instead of a quiet IMAP fallback', async () => {
+    const prior = installJudgmentPort(undefined);
+    const failure = fakePort(name => noulAnswer(name === 'missingScopes' ? .99 : .01));
+    installJudgmentPort({ ...failure.port, ask(request) {
+      if (request.context?.battery === 'google.api-failure') return failure.port.ask(request);
+      return prior ? prior.ask(request) : Promise.reject(new Error('No judgment fixture for this request'));
+    } });
     const rig = compose({ profileStatus: 403 });
-    const status = await rig.supervisor.start();
-
-    expect(status.mode).toBe('inactive');
-    expect(status.reason).toContain('insufficient authentication scopes');
-    // IMAP is not configured at all here, so a fallback would have produced a
-    // different, IMAP-flavoured reason. It must not appear.
-    expect(status.reason).not.toContain('surfaces.email.imap.host');
-
-    await rig.supervisor.stop();
+    try {
+      const status = await rig.supervisor.start();
+      expect(status.mode).toBe('inactive');
+      expect(status.reason).toContain('credential lacks the required OAuth permissions');
+      expect(failure.requests).toHaveLength(1);
+      expect(failure.requests[0]!.state).toEqual({ error: { message: 'Request had insufficient authentication scopes.' } });
+      // No IMAP connection is configured; keep the actual Google cause.
+      expect(status.reason).not.toContain('surfaces.email.imap.host');
+    } finally { await rig.supervisor.stop(); installJudgmentPort(prior); }
   });
 });
 

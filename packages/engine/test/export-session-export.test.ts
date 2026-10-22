@@ -219,8 +219,10 @@ describe('redactMessage', () => {
     };
     const out = await redactMessage(msg);
     const args = out.toolCalls![0]!.arguments;
-    expect(args.cmd).toContain('/home/[REDACTED]');
-    expect((args.env as { KEY: string }).KEY).toContain('[REDACTED_API_KEY]');
+    expect(args.cmd).toContain('[REDACTED]');
+    expect(args.cmd).not.toContain('/home/eve');
+    expect(JSON.stringify(args.env)).toContain('[REDACTED]');
+    expect(JSON.stringify(args)).not.toContain('sk-' + 'k'.repeat(20));
   });
 
   test('does not mutate the original message', async () => {
