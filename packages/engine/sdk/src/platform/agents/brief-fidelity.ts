@@ -2,6 +2,7 @@ import { defineBattery, yesNo, STAKES_BANDS } from '@goodvibes-jev/judgment';
 import { captureJudgmentPort, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { snapshotJudgmentEvidence } from '../gate/judgment-input.js';
 import { prepareJudgmentResult, retainStrictJudgmentJson } from '../gate/judgment-result.js';
+import type { ExecutionIntent } from '../runtime/execution-intents.js';
 
 export const agentBriefFidelity = defineBattery({
   name: 'engine.agents.brief-fidelity', version: 3, accuracyFloor: .95,
@@ -22,7 +23,8 @@ export const agentBriefFidelity = defineBattery({
   ],
 });
 
-export async function assertAgentBriefFidelity(input: { readonly request: string; readonly assignments: readonly { readonly task: string; readonly context?: string; readonly successCriteria?: readonly string[]; readonly requiredEvidence?: readonly string[]; readonly writeScope?: readonly string[] }[]; readonly context?: string; readonly repairContext?: string }, options: JudgmentReadingOptions = {}): Promise<void> {
+export async function assertAgentBriefFidelity(input: { readonly request: string; readonly assignments: readonly { readonly task: string; readonly context?: string; readonly successCriteria?: readonly string[]; readonly requiredEvidence?: readonly string[]; readonly writeScope?: readonly string[];
+  readonly tools?: readonly string[]; readonly restrictTools?: boolean; readonly executionIntent?: ExecutionIntent }[]; readonly context?: string; readonly repairContext?: string }, options: JudgmentReadingOptions = {}): Promise<void> {
   const source = retainStrictJudgmentJson(input);
   const state = snapshotJudgmentEvidence(source.snapshot);
   const current = () => { source.assertCurrent(); options.signal?.throwIfAborted(); options.assertCurrent?.(); };

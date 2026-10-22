@@ -1,6 +1,7 @@
 import { publishTurnTerminal } from './turn-cancellation.js';
 import { isNativeConversationTurn } from './native-turn-scope.js';
 import { withCompletionRepairContext } from './completion-repair-context.js';
+import { withDelegationRequest } from './delegation-request-context.js';
 import type { ConversationManager } from './conversation.js';
 import type { ConfigManager } from '../config/manager.js';
 import type { ContentPart, LLMProvider } from '../providers/interface.js';
@@ -286,14 +287,14 @@ type ToolResponseOutcomeArgs = {
 };
 
 export async function handleToolResponseOutcome(args: ToolResponseOutcomeArgs): Promise<{ continueLoop: boolean; results: ToolResult[] }> {
-  return withCompletionRepairContext(args.completionRepair, async () => {
+  return withDelegationRequest({ request: args.userText, signal: args.inputProjection?.signal, assertCurrent: args.inputProjection?.assertCurrent }, () => withCompletionRepairContext(args.completionRepair, async () => {
     const originalCalls = attachAuthoritativeTaskToAgentCalls(captureToolInputCalls(args.response.toolCalls), args.userText);
     const batch = args.toolRegistry ? await projectToolInputBatch(args.toolRegistry, originalCalls, args.inputProjection) : undefined;
     try {
       batch?.assertCurrent();
       return await handleOwnedToolResponseOutcome({ ...args, response: { ...args.response, toolCalls: batch?.calls ?? originalCalls } });
     } finally { await batch?.release(); }
-  });
+  }));
 }
 
 async function handleOwnedToolResponseOutcome(args: ToolResponseOutcomeArgs): Promise<{ continueLoop: boolean; results: ToolResult[] }> {

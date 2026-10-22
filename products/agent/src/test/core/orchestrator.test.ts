@@ -479,7 +479,7 @@ describe('Orchestrator', () => {
   });
 
   describe('conversation follow-ups', () => {
-    test('queued follow-ups emit a short assistant acknowledgement into the main conversation', async () => {
+    test('queued follow-ups resume the authorized request and publish a checked answer', async () => {
       const mockModel = {
         id: 'mock-model',
         provider: 'mock',
@@ -492,6 +492,10 @@ describe('Orchestrator', () => {
       };
       const provider = new MockLLMProvider([{ content: 'WRFC passed and the engineer run is complete.' }]);
       const { orch, cm } = await buildOrchestrator();
+      cm.addUserMessage('Run the WRFC chain and report the final result.');
+      let completed!: () => void;
+      const completion = new Promise<void>(resolve => { completed = resolve; });
+      const unsubscribe = runtimeBus.on('TURN_COMPLETED', completed);
 
       const reg = testManagers.providerRegistry;
       const origGet = reg.get.bind(reg);
@@ -513,8 +517,10 @@ describe('Orchestrator', () => {
           key: 'wrfc:chain-1:passed',
           summary: 'WRFC chain chain-1 passed all gates.',
         });
-        await new Promise((resolve) => setTimeout(resolve, 0));
+        await completion;
       } finally {
+        unsubscribe();
+        orch.dispose();
         reg.get = origGet;
         reg.getForModel = origGetForModel;
         reg.getCurrentModel = origGetCurrentModel;
@@ -567,7 +573,7 @@ describe('Orchestrator', () => {
       expect(params.required).toContain('tools');
     });
 
-    test('delegate tool execution calls acpManager.spawn', async () => {
+    test('direct delegate execution cannot replace the original captured request', async () => {
       const { orch } = await buildOrchestrator();
 
       const spawnMock = mock(async (_task: unknown) => 'spawned-agent-id');
@@ -581,9 +587,20 @@ describe('Orchestrator', () => {
         tools: ['read'],
       });
 
-      expect(result.success).toBe(true);
-      expect(result.output).toContain('spawned-agent-id');
-      expect(spawnMock).toHaveBeenCalledTimes(1);
+      expect(result.success).toBe(false);
+      expect(result.output).toContain('original request captured by the active turn');
+      expect(spawnMock).not.toHaveBeenCalled();
+    });
+
+    test('the checked agent interface prevents registering an alternate ACP delegation route', async () => {
+      const { orch } = await buildOrchestrator();
+      toolRegistry.register({ definition: { name: 'agent', description: 'Native checked delegation.', parameters: {} },
+        execute: async () => ({ success: false, error: 'Synthetic checked plan is held.' }) });
+      const spawnMock = mock(async () => 'must-not-spawn');
+      orch.registerDelegateTool({ spawn: spawnMock } as unknown as import('@goodvibes-jev/engine/sdk/platform/acp').AcpManager);
+      expect(toolRegistry.has('agent')).toBe(true);
+      expect(toolRegistry.has('delegate')).toBe(false);
+      expect(spawnMock).not.toHaveBeenCalled();
     });
 
     test('delegate tool returns failure when acpManager is null', async () => {
@@ -833,12 +850,14 @@ describe('Orchestrator', () => {
       configManager.set('behavior.autoApprove', savedAutoApprove);
     });
 
-    test('batch-spawn tool call ends the turn loop (LLM called exactly once)', async () => {
+    test('batch-spawn continues through the tool result to a checked final answer', async () => {
+      let calls = 0;
       const provider: LLMProvider = {
         name: 'mock',
         models: ['mock-model'],
         chat: mock(async (_params: ChatRequest): Promise<ChatResponse> => {
-          // First (and only expected) call: return a batch-spawn agent tool call
+          if (++calls > 1) return { content: 'The requested assignments were submitted.', toolCalls: [],
+            usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'completed' };
           return {
             content: '',
             toolCalls: [{
@@ -878,18 +897,23 @@ describe('Orchestrator', () => {
       ).messages;
       const assistantMessages = messages.filter((message) => message.role === 'assistant');
       const toolMessages = messages.filter((message) => message.role === 'tool');
-      expect(assistantMessages).toHaveLength(1);
+      expect(assistantMessages).toHaveLength(2);
+      expect(assistantMessages.at(-1)?.content).toBe('The requested assignments were submitted.');
+      expect(calls).toBe(2);
       expect(toolMessages).toHaveLength(1);
       expect(toolMessages[0]?.callId).toBe('call-batch-1');
       expect(toolMessages[0]?.content).toBe('batch spawned');
       expect(turnCompleteEvents.length).toBeGreaterThan(0);
     });
 
-    test('spawn tool call ends the turn loop (same behavior as batch-spawn)', async () => {
+    test('spawn continues through the tool result to a checked final answer', async () => {
+      let calls = 0;
       const provider: LLMProvider = {
         name: 'mock',
         models: ['mock-model'],
         chat: mock(async (_params: ChatRequest): Promise<ChatResponse> => {
+          if (++calls > 1) return { content: 'The requested assignment was submitted.', toolCalls: [],
+            usage: { inputTokens: 10, outputTokens: 5 }, stopReason: 'completed' };
           return {
             content: '',
             toolCalls: [{
@@ -922,7 +946,9 @@ describe('Orchestrator', () => {
       ).messages;
       const assistantMessages = messages.filter((message) => message.role === 'assistant');
       const toolMessages = messages.filter((message) => message.role === 'tool');
-      expect(assistantMessages).toHaveLength(1);
+      expect(assistantMessages).toHaveLength(2);
+      expect(assistantMessages.at(-1)?.content).toBe('The requested assignment was submitted.');
+      expect(calls).toBe(2);
       expect(toolMessages).toHaveLength(1);
       expect(toolMessages[0]?.callId).toBe('call-spawn-1');
       expect(toolMessages[0]?.content).toBe('spawned');

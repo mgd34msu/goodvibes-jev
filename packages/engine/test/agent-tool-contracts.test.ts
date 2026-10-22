@@ -661,3 +661,27 @@ test('brief fidelity checks the real shared context and task-specific evidence i
   expect(runner.starts).toHaveLength(0);
   expect(fake.requests).toHaveLength(1);
 });
+
+test('batch delegation retains read-only tools and shared execution restrictions through per-task hints', async () => {
+  const h = harness();
+  const fake = fakePort((name, _question, state) => {
+    const source = state as never as { assignments: { tools?: string[]; restrictTools?: boolean; executionIntent?: Record<string, unknown> }[] };
+    const assignment = source.assignments[0];
+    const preserved = assignment?.tools?.join(',') === 'read' && assignment.restrictTools === true
+      && assignment.executionIntent?.filesystemPolicy === 'read-only' && assignment.executionIntent?.networkPolicy === 'deny'
+      && assignment.executionIntent?.riskClass === 'safe';
+    return noulAnswer(name === 'constraint_conflict' && !preserved ? .99 : .01);
+  });
+  installJudgmentPort(fake.port);
+  try {
+    const result = await h.tool.execute({ mode: 'batch-spawn', authoritativeTask: 'Use one read-only agent to inspect review.md without network or writes.',
+      tools: ['read'], restrictTools: true, executionIntent: { filesystemPolicy: 'read-only', networkPolicy: 'deny' },
+      tasks: [{ task: 'Read review.md and return its existing verification result.', outsideContract: true, executionIntent: { riskClass: 'safe' } }] });
+    expect(result.success, result.error).toBe(true);
+    const record = h.manager.list()[0]!;
+    await h.manager.join(record.id);
+    expect(record.tools).toEqual(['read']);
+    expect(record.executionIntent).toEqual({ filesystemPolicy: 'read-only', networkPolicy: 'deny', riskClass: 'safe' });
+    expect(fake.requests).toHaveLength(1);
+  } finally { h.manager.clear(); }
+});

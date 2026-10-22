@@ -1,4 +1,7 @@
 import type { AutonomousToolSource } from '../permissions/autonomous.js';
+import { assertAgentBriefFidelity } from '../agents/brief-fidelity.js';
+import { readCompletionRepairContext } from './completion-repair-context.js';
+import { readDelegationRequest } from './delegation-request-context.js';
 import { revalidateNativeConversationTurnPermit, type NativeConversationTurnPermit } from '../workflow/work-ledger/native-intake-client.js';
 import { admitNativeConversationTurn, failNativeConversationTurn, NativeConversationTurnAdmissionError, readNativeConversationTurnStatus, settleNativeConversationTurn, startNativeConversationTurn, validateNativeConversationTurn, type NativeConversationTurnAdmission } from './native-turn-admission.js';
 import { isNativeConversationTurn, markNativeConversationTurnEffectsPossible, nativeConversationTurnCanRetry, NATIVE_TURN_EXECUTION_REFUSAL, withNativeConversationTurn, withoutNativeConversationTurn } from './native-turn-scope.js';
@@ -365,11 +368,15 @@ export class Orchestrator {
   }
 
   /**
-   * Attach an AcpManager and register the 'delegate' tool into the ToolRegistry.
+   * Attach ACP lifecycle ownership; expose legacy delegation only without the agent tool.
    * Call this after construction, before the first turn.
    */
   public registerDelegateTool(manager: AcpManager): void {
     this.acpManager = manager;
+    if (this.toolRegistry.has('agent')) {
+      this.toolRegistry.unregister('delegate');
+      return;
+    }
 
     this.toolRegistry.register({
       definition: {
@@ -406,8 +413,9 @@ export class Orchestrator {
           },
         },
       },
-      execute: async (args): Promise<{ success: boolean; output: string }> => {
+      execute: async (args, options): Promise<{ success: boolean; output: string }> => {
         if (isNativeConversationTurn()) return { success: false, output: NATIVE_TURN_EXECUTION_REFUSAL };
+        if (this.toolRegistry.has('agent')) return { success: false, output: 'Use the agent tool and revalidate any held delegation plan. Legacy ACP delegation cannot replace that plan.' };
         if (!this.acpManager) {
           return { success: false, output: 'ACP manager not initialized' };
         }
@@ -416,6 +424,16 @@ export class Orchestrator {
         if (!workingDirectory) {
           return { success: false, output: 'ACP manager requires an explicit working directory.' };
         }
+
+        const source = readDelegationRequest();
+        if (!source?.request.trim()) return { success: false, output: 'ACP delegation requires the original request captured by the active turn. A model-supplied task is insufficient.' };
+        const acp = this.acpManager, session = this.currentSessionId;
+        const assertCurrent = () => {
+          options?.signal?.throwIfAborted(); source.signal?.throwIfAborted(); source.assertCurrent?.();
+          if (this.disposed || this.acpManager !== acp || this.currentSessionId !== session || this.toolRegistry.has('agent')
+            || readDelegationRequest() !== source || requireConfigManager(this.coreServices) !== configManager
+            || configManager.getWorkingDirectory() !== workingDirectory) throw new Error('ACP delegation source changed');
+        };
 
         const task: SubagentTask = {
           description: String(args.description ?? ''),
@@ -426,7 +444,12 @@ export class Orchestrator {
           provider: args.provider ? String(args.provider) : undefined,
         };
 
-        const id = await this.acpManager.spawn(task);
+        assertCurrent();
+        await assertAgentBriefFidelity({ request: source.request, assignments: [{ task: task.description,
+          ...(task.context ? { context: task.context } : {}), tools: task.tools }], ...(readCompletionRepairContext() ? { repairContext: readCompletionRepairContext()! } : {}) },
+          { signal: options?.signal ?? source.signal, assertCurrent });
+        assertCurrent();
+        const id = await acp.spawn(task);
         return {
           success: true,
           output: `Subagent spawned with ID: ${id}. Task: "${task.description}". The subagent is running in the background.`,

@@ -117,6 +117,8 @@ function batchTaskToSpawnInput(input: AgentInput, taskDef: NonNullable<AgentInpu
     provider: taskDef.provider ?? input.provider,
     fallbackModels: taskDef.fallbackModels ?? input.fallbackModels,
     routing: taskDef.routing ?? input.routing,
+    executionIntent: taskDef.executionIntent === undefined ? input.executionIntent
+      : { ...input.executionIntent, ...taskDef.executionIntent },
     reasoningEffort: taskDef.reasoningEffort ?? input.reasoningEffort,
     tools: taskDef.tools ?? input.tools,
     restrictTools: taskDef.restrictTools ?? input.restrictTools,
@@ -139,6 +141,9 @@ function batchTaskToSpawnInput(input: AgentInput, taskDef: NonNullable<AgentInpu
 /** The actual delivered brief, including shared or task-specific constraints. */
 function briefAssignment(input: AgentInput) {
   return { task: input.task!, ...(input.context ? { context: input.context } : {}),
+    ...(input.tools ? { tools: input.tools } : {}),
+    ...(input.restrictTools === undefined ? {} : { restrictTools: input.restrictTools }),
+    ...(input.executionIntent ? { executionIntent: input.executionIntent } : {}),
     ...(input.successCriteria ? { successCriteria: input.successCriteria } : {}),
     ...(input.requiredEvidence ? { requiredEvidence: input.requiredEvidence } : {}),
     ...(input.writeScope ? { writeScope: input.writeScope } : {}) };
