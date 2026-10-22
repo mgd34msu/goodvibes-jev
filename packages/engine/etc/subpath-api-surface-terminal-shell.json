@@ -1346,6 +1346,18 @@
       "text": "export declare function writeTreeStatusMarker(line: Line, glyph: string | null, fg: string, width: number): void; ;; via Line = export type Line = Cell[];"
     }
   ],
+  "./ansi-sanitize": [
+    {
+      "name": "safeTerminalLink",
+      "kind": "function",
+      "text": "export declare function safeTerminalLink(value: string | undefined): string | undefined;"
+    },
+    {
+      "name": "stripDangerousAnsi",
+      "kind": "function",
+      "text": "export declare function stripDangerousAnsi(input: string): string;"
+    }
+  ],
   "./conformance": [
     {
       "name": "ConformanceOptions",
@@ -1531,6 +1543,13 @@
       "name": "installTerminalOutputGuard",
       "kind": "function",
       "text": "export declare function installTerminalOutputGuard(options: TerminalOutputGuardOptions): TerminalOutputGuard;"
+    }
+  ],
+  "./terminal-write": [
+    {
+      "name": "allowTerminalWrite",
+      "kind": "function",
+      "text": "export declare function allowTerminalWrite<T>(fn: () => T): T;"
     }
   ]
 }

@@ -9,7 +9,7 @@
  */
 
 import type { Cell } from '@goodvibes-jev/engine/sdk/platform/types';
-import { safeTerminalLink } from '@goodvibes-jev/engine/terminal-shell';
+import { safeTerminalLink } from '@goodvibes-jev/engine/terminal-shell/ansi-sanitize';
 import { activeTheme } from './theme.ts';
 
 /** Module-level set of inline markdown special characters (hoisted out of hot loop). */

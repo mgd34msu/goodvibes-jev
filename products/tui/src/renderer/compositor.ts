@@ -2,7 +2,7 @@ import { TerminalBuffer } from './buffer.ts';
 import { DiffEngine } from './diff.ts';
 import { type Line, createEmptyLine } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { SearchManager } from '../input/search.ts';
-import { allowTerminalWrite } from '@goodvibes-jev/engine/terminal-shell/terminal-output-guard';
+import { allowTerminalWrite } from '@goodvibes-jev/engine/terminal-shell/terminal-write';
 import { probeTermCaps, type TermColorCaps } from './term-caps.ts';
 import { activeTheme, activeTokens } from './theme.ts';
 import type { SurfaceLayer } from './surface-kit.ts';

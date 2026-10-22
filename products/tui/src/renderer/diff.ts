@@ -1,5 +1,5 @@
 import { TerminalBuffer } from './buffer.ts';
-import { safeTerminalLink } from '@goodvibes-jev/engine/terminal-shell';
+import { safeTerminalLink } from '@goodvibes-jev/engine/terminal-shell/ansi-sanitize';
 import { type Cell } from '@goodvibes-jev/engine/sdk/platform/types';
 import {
   type TermColorCaps,

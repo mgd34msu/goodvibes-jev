@@ -30,6 +30,8 @@
  */
 import { format } from 'node:util';
 import { logger } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { terminalOutputState } from './terminal-output-state.js';
+export { allowTerminalWrite } from './terminal-write.js';
 
 type WritableStreamLike = {
   write: {
@@ -91,8 +93,6 @@ const MAX_LOG_TEXT = 4_000;
 const MAX_PREVIEW_TEXT = 180;
 const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 
-let currentGuard: TerminalOutputGuard | null = null;
-
 function writeCallback(args: unknown[]): ((error?: Error | null) => void) | undefined {
   const maybeCallback = args[args.length - 1];
   return typeof maybeCallback === 'function'
@@ -128,18 +128,14 @@ function invokeSuppressedCallback(args: unknown[]): void {
   }
 }
 
-export function allowTerminalWrite<T>(fn: () => T): T {
-  return currentGuard ? currentGuard.allowTerminalWrite(fn) : fn();
-}
-
 export function installTerminalOutputGuard(options: TerminalOutputGuardOptions): TerminalOutputGuard {
   // If a guard already exists and hasn't been disposed, dispose it first so
   // the monkeypatch chain is cleanly unwound BEFORE the originals below are
   // snapshotted. Without this, a second install's "original" write is actually
   // the first guard's wrapper, and disposing the second guard alone leaves the
   // first guard's patch installed forever.
-  if (currentGuard !== null) {
-    currentGuard.dispose();
+  if (terminalOutputState.current !== null) {
+    terminalOutputState.current.dispose();
   }
 
   const stdout = options.stdout;
@@ -250,13 +246,13 @@ export function installTerminalOutputGuard(options: TerminalOutputGuardOptions):
       console.info = originalConsole.info;
       console.log = originalConsole.log;
       console.warn = originalConsole.warn;
-      if (currentGuard === guard) {
-        currentGuard = null;
+      if (terminalOutputState.current === guard) {
+        terminalOutputState.current = null;
       }
     },
   };
 
-  currentGuard = guard;
+  terminalOutputState.current = guard;
   return guard;
 }
 

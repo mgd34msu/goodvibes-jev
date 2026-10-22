@@ -34,11 +34,10 @@
  * front-end-specific; all of it is meaningless outside a terminal, which is
  * why it lives here rather than in the SDK core.
  *
- * See ./conformance for the descriptor/handler gate a consumer runs against its
- * own composition in CI, and ./terminal-output-guard for the write guard on its
- * own import path, a renderer needs `allowTerminalWrite` and nothing else in
- * this barrel, and reaching it through the barrel would load the whole
- * gateway/fleet graph on the startup path.
+ * See ./conformance for the descriptor/handler gate, ./terminal-output-guard
+ * for guard installation, and ./terminal-write and ./ansi-sanitize for the
+ * renderer's small write and hyperlink helpers. Importing those helpers here
+ * would load the gateway/fleet graph on the renderer's startup path.
  */
 export { readNoticeSeverity, type NoticeSeverityReading } from './notice-severity.js';
 export { readProcessOutput, processEndpointCandidates, PROCESS_OUTPUT_READING_LIMITS, type ProcessOutputEvidence, type ProcessOutputEvidenceLine, type ProcessOutputReading } from './process-output-reading.js';

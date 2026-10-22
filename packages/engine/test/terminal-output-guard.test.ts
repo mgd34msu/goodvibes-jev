@@ -4,6 +4,7 @@ import {
   installTerminalOutputGuard,
   type TerminalOutputIntercept,
 } from '@goodvibes-jev/engine/terminal-shell';
+import { allowTerminalWrite as rendererWrite } from '@goodvibes-jev/engine/terminal-shell/terminal-write';
 
 function makeStream() {
   const writes: string[] = [];
@@ -62,13 +63,19 @@ describe('terminal output guard', () => {
     });
 
     try {
+      expect(rendererWrite).toBe(allowTerminalWrite);
       allowTerminalWrite(() => stdout.write('render diff'));
+      rendererWrite(() => stdout.write('next frame'));
+      expect(() => rendererWrite(() => { throw new Error('frame stopped'); })).toThrow('frame stopped');
+      stdout.write('unowned write');
 
-      expect(stdout.writes).toEqual(['render diff']);
-      expect(captured).toEqual([]);
+      expect(stdout.writes).toEqual(['render diff', 'next frame']);
+      expect(captured.map(event => event.text)).toEqual(['unowned write']);
     } finally {
       guard.dispose();
     }
+    rendererWrite(() => stdout.write('after disposal'));
+    expect(stdout.writes.at(-1)).toBe('after disposal');
   });
 
   test('passes writes through after being deactivated', () => {

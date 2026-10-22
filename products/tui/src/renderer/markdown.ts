@@ -1,5 +1,5 @@
 import { type Line, type Cell, createStyledCell } from '@goodvibes-jev/engine/sdk/platform/types';
-import { safeTerminalLink } from '@goodvibes-jev/engine/terminal-shell';
+import { safeTerminalLink } from '@goodvibes-jev/engine/terminal-shell/ansi-sanitize';
 import { UIFactory } from './ui-factory.ts';
 import { renderCodeBlock } from './code-block.ts';
 import { getDisplayWidth } from '../utils/terminal-width.ts';

@@ -1243,10 +1243,20 @@
       "types": "./terminal-shell/dist/conformance.d.ts",
       "import": "./terminal-shell/dist/conformance.js"
     },
+    "./terminal-shell/ansi-sanitize": {
+      "bun": "./terminal-shell/src/ansi-sanitize.ts",
+      "types": "./terminal-shell/dist/ansi-sanitize.d.ts",
+      "import": "./terminal-shell/dist/ansi-sanitize.js"
+    },
     "./terminal-shell/terminal-output-guard": {
       "bun": "./terminal-shell/src/terminal-output-guard.ts",
       "types": "./terminal-shell/dist/terminal-output-guard.d.ts",
       "import": "./terminal-shell/dist/terminal-output-guard.js"
+    },
+    "./terminal-shell/terminal-write": {
+      "bun": "./terminal-shell/src/terminal-write.ts",
+      "types": "./terminal-shell/dist/terminal-write.d.ts",
+      "import": "./terminal-shell/dist/terminal-write.js"
     },
     "./toolchain": {
       "bun": "./toolchain/src/index.ts",
