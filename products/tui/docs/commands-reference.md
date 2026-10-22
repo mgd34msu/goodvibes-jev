@@ -509,7 +509,7 @@ GoodVibes ships **161** built-in slash commands across **75** categories. Every 
 | `/load` | None | `<name>` | Load a saved session |
 | `/note` | None | `[list\|add <text>\|remove <id>]` | Manage session notes (pinned across context compaction) |
 | `/redo` | None | `[rewind\|file]` | Redo last undone action. /redo rewind re-applies the last undone /rewind. /redo file re-applies the last reverted file. /redo alone restores a conversation turn |
-| `/retry` | `/r` | `[modified text]` | Re-send the last user message |
+| `/retry` | `/r` | `[modified text]` | Retry the last request while retaining completed work |
 | `/save` | None | `[name]` | Save current session to .goodvibes/tui/sessions/ |
 | `/sessions` | None | `[resume <id\|name>]` | List saved sessions |
 | `/template` | `/tmpl` | `save <name> \| use <name> [args] \| list \| edit <name> \| delete <name>` | Manage and use prompt templates |
