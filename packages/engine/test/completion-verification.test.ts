@@ -127,6 +127,32 @@ test('lossless source boundaries cannot turn a long numeric identity into refuse
   }
 });
 
+test('uncertain history audits settle against the exact page and current proof without asking the model to repeat work', async () => {
+  const before = state('Earlier progress metadata. '.repeat(15_000));
+  const input = { ...before, initial: { request: before.request, transcript: before.transcript },
+    transcript: [...before.transcript, { role: 'tool', callId: 'current-proof', content: 'The complete review was accepted and the canonical report exists.' }],
+    completedWork: [{ kind: 'host-completed-contract', id: 'review', status: 'passed', finalCheck: { result: 'pass' } }] };
+  const fake = fakePort(name => noulAnswer(name === 'missed' ? .4 : .01));
+  const result = await new CompletionVerification(verificationWriter).prepare(input, access(fake.port));
+  expect(result.findings).toHaveLength(0);
+  expect(fake.requests.some(request => request.context?.site === 'engine.verification.audit-refinement')).toBe(true);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.source')).toBe(false);
+});
+
+test('a real gap found while refining an uncertain audit remains held', async () => {
+  const before = state('Earlier source. '.repeat(10_000) + 'ACTUAL-UNFINISHED-WORK' + ' Later source. '.repeat(15_000));
+  const input = { ...before, initial: { request: before.request, transcript: before.transcript },
+    transcript: [...before.transcript, { role: 'tool', callId: 'current-proof', content: 'A report was written.' }],
+    completedWork: [{ kind: 'host-completed-contract', id: 'review', status: 'passed', finalCheck: { result: 'pass' } }] };
+  const fake = fakePort((name, question, raw) => {
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    const current = raw as unknown as { opened?: { sources?: unknown[] } };
+    const gap = JSON.stringify(current.opened?.sources ?? []).includes('ACTUAL-UNFINISHED-WORK');
+    return noulAnswer(name === 'missed' ? .4 : gap && ['unfinished', 'quality_gap'].includes(name) ? .99 : .01);
+  });
+  expect((await new CompletionVerification(verificationWriter).prepare(input, access(fake.port))).findings.length).toBeGreaterThan(0);
+});
+
 test('each requirement question binds its exact root scope even when source data contains other requirement fields', async () => {
   const fake = fakePort((name, question, raw) => {
     const current = raw as unknown as { requirement?: { text: string } };

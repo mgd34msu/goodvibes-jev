@@ -4,7 +4,7 @@ import { captureJudgmentPort, installJudgmentPort } from '@goodvibes-jev/engine/
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { captureStrictJudgmentJson, prepareJudgmentResult, JudgmentResultAdmissionError } from '../sdk/src/platform/gate/judgment-result.ts';
 import { JudgmentInputError, judgmentInputProblem } from '../sdk/src/platform/gate/judgment-input.ts';
-import { choice, noul, SqliteDecisionLog, withDecisionLog, type JudgmentResult, type Questions } from '@goodvibes-jev/judgment';
+import { choice, createSystemOnePort, noul, SqliteDecisionLog, withDecisionLog, type JudgmentResult, type Questions } from '@goodvibes-jev/judgment';
 
 const questions = () => ({ flag: noul('Does the synthetic statement hold?'), pick: choice('Pick the matching synthetic option.', { a: 'A', b: 'B' }) });
 function response() {
@@ -362,4 +362,22 @@ test('exact bounded latency metadata does not become card material', () => {
   expect(() => prepareJudgmentResult(questions()).capture({ ...original, latencyMs: 4111111111111111 })).toThrow(JudgmentResultAdmissionError);
   const privateResult = { ...original, privateMetadata: { latencyMs } };
   expect(() => prepareJudgmentResult(questions()).capture(privateResult)).toThrow(JudgmentInputError);
+});
+
+test('optional native request identifiers cannot turn a valid judgment into a card-material recovery loop', async () => {
+  const native = createSystemOnePort({ endpoint: { kind: 'hosted', baseURL: 'https://judge.test', apiKey: 'synthetic-key' },
+    model: 'jev-1.13.0', timeoutMs: 1_000, retry: {}, fetch: async () => new Response(JSON.stringify({
+      model: 'jev-1.13.0', answers: { checked: { type: 'noul', noul: .01 } }, usage: { input_tokens: 1, output_tokens: 1 },
+    }), { status: 200, headers: { 'content-type': 'application/json', 'x-typesafe-request-id': 'req_4111111111111111' } }) });
+  using log = new SqliteDecisionLog(':memory:');
+  const prior = installJudgmentPort(withDecisionLog(native, log));
+  try {
+    const owner = captureJudgmentPort('test.native-optional-id', { prepareResultCapture: prepareJudgmentResult });
+    const result = await owner.port.ask({ state: 'The existing delivery was inspected.', questions: { checked: noul('Is its inspection missing?') } });
+    expect(result.answers.checked.noul).toBe(.01);
+    expect(result.requestId).toBeUndefined();
+    expect(result.lineage!.attempts[0]!.requestId).toBeUndefined();
+    expect(log.query()).toHaveLength(1);
+    expect(log.query()[0]!.status).toBe('answered');
+  } finally { installJudgmentPort(prior); }
 });

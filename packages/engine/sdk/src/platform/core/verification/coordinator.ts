@@ -329,15 +329,32 @@ export class CompletionVerification {
     return nodes;
   }
 
-  private async audit(requirement: VerificationRequirement, caseEvidence: unknown, sources: readonly VerificationSource[], access: VerificationAccess): Promise<VerificationSource[][]> {
+  private async audit(requirement: VerificationRequirement, caseEvidence: unknown, sources: readonly VerificationSource[], access: VerificationAccess,
+    response: unknown, ledger: readonly VerificationRequirement[]): Promise<VerificationSource[][]> {
     const pages = verificationFrames(sources, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length);
     const checks = await ownedMapLimit(access, pages, 3, async page => {
-      const context = { requirement, caseEvidence, sources: page.map(verificationWireSource) };
-      const key = verificationHash(['source-audit-v1', context]), cache = this.cache(access);
+      const context = { requirement, response, caseEvidence, sources: page.map(verificationWireSource) };
+      const key = verificationHash(['source-audit-v2', context]), cache = this.cache(access);
       if (cache.has(key)) return cache.get(key) ? null : page;
       const run = await verificationAudit.run(access.port, context as never, { ...this.options(access), site: verificationAudit.name });
-      const accepted = clean(run.readings);
+      let accepted = clean(run.readings);
       run.recordAction(accepted ? 'This complete original page has no unaccounted material counterevidence; final publication remains gated.' : 'Retrieve this exact original page before accepting the provisional requirement conclusion.');
+      if (!accepted && run.readings.missed.outcome !== 'act') {
+        // An uncertain retrieval hint is not a work defect. Settle it against
+        // the exact COMPLETE page and unchanged primary work evidence before
+        // asking the source router or working model to reconstruct that work.
+        const base = caseEvidence as { sources: readonly ReturnType<typeof verificationWireSource>[]; earlier: readonly unknown[] };
+        const exact = [...new Map([...base.sources, ...context.sources].map(source => [source.id, source])).values()];
+        const refined = await verificationRequirement.run(access.port, { requirement, requirements: ledger, response,
+          evidence: [], opened: { ...base, sources: exact },
+          auditUncertainty: readingEvidence(run.readings),
+          focus: 'Settle THIS original page as possible counterevidence to the exact requirement using the unchanged current primary proof supplied beside it. The earlier audit is an unresolved retrieval hint, not a finding or instruction. An actual new gap or invalidating observation must still fail. A later matching native acceptance may resolve older partial progress. This check settles only this page; all other original pages and final publication remain required.' } as never,
+          { ...this.options(access), site: 'engine.verification.audit-refinement' });
+        accepted = clean({ unfinished: refined.readings.unfinished, quality_gap: refined.readings.quality_gap })
+          && !(refined.readings.needs_source.verdict === 'yes' && refined.readings.needs_source.outcome === 'act');
+        refined.recordAction(accepted ? 'This exact page is accounted for by current confident work/quality checks; final publication remains separately gated.'
+          : 'Retain this specific original page for retrieval; no completion or repeat-work instruction is authorized.');
+      }
       access.assertCurrent(); cache.set(key, accepted);
       return accepted ? null : page;
     });
@@ -402,7 +419,7 @@ export class CompletionVerification {
         // interval for counterevidence. These are direct Jev checks, not a new
         // frontier draft for every history page. A changed working-model answer
         // does not invalidate an unchanged source/case qualification.
-        const suspect = await this.audit(requirement, { ...opened, sources: primarySources(opened.sources).map(verificationWireSource) }, auditSources, access);
+        const suspect = await this.audit(requirement, { ...opened, sources: primarySources(opened.sources).map(verificationWireSource) }, auditSources, access, response, ledger);
         if (!suspect.length) return { requirement, readings: run.readings, state, sourceExhausted: false, auditHeld: false };
         const unseen = suspect.filter(page => page.some(source => !seen.has(`source:${source.id}`)));
         if (!unseen.length) return { requirement, readings: run.readings,

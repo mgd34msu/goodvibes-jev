@@ -30,6 +30,11 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
   const keys = targets.map((target) => target.endpoint.apiKey);
   const safeId = (value: string | undefined): string | undefined => {
     if (!value || value.length > 256 || !/^[A-Za-z0-9._:-]+$/.test(value) || keys.some((key) => value.includes(key))) return undefined;
+    // Provider request IDs are optional diagnostics. A valid opaque ID can
+    // accidentally contain a card-shaped numeric run; omit that metadata at
+    // the native transport instead of rejecting an otherwise valid judgment.
+    // Borrowed results and all unknown response fields remain strictly screened.
+    if (/\d{13,}/.test(value)) return undefined;
     return value;
   };
 

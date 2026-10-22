@@ -1,5 +1,5 @@
 import { captureJudgmentPort, JudgmentAuthorityRetiredError, JudgmentPortMissingError, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
-import { JudgmentError, mapLimit } from '@goodvibes-jev/judgment';
+import { JudgmentError, mapLimit, type JudgmentResult, type Questions } from '@goodvibes-jev/judgment';
 import { JudgmentInputError } from '../gate/judgment-input.js';
 import { CompletionEvidenceProjection } from './response-completion-evidence.js';
 import { CompletionEvidenceBudgetError } from './response-completion-budget.js';
@@ -160,7 +160,7 @@ export class ResponseCompletionGuard {
     }
   }
 
-  private rememberFailure(error: unknown): void {
+  private rememberFailure(error: unknown, stage?: 'result-admission' | 'question-currentness'): void {
     if (!this.reviewStore || !this.reviewKey) return;
     const causes: Record<string, unknown>[] = [], seen = new Set<unknown>();
     for (let current = error; current instanceof Error && !seen.has(current) && causes.length < 8; current = current.cause) {
@@ -177,7 +177,20 @@ export class ResponseCompletionGuard {
     // Record only local type/stage/stack locations, never upstream error
     // messages, request bodies, credentials or evaluator approval.
     this.reviewStore.rememberProposal(verificationHash(['completion-verification-failure-v1', this.reviewKey]),
-      JSON.stringify({ kind: 'completion-verification-failure', at: new Date().toISOString(), causes }));
+      JSON.stringify({ kind: 'completion-verification-failure', at: new Date().toISOString(), ...(stage ? { stage } : {}), causes }));
+  }
+
+  private resultCapture(questions: Questions) {
+    const frame = prepareJudgmentResult(questions);
+    const trace = (error: unknown, stage: 'result-admission' | 'question-currentness') => {
+      try { this.rememberFailure(error, stage); } catch { /* Diagnostics cannot change admission. */ }
+    };
+    return { questions: frame.questions,
+      assertCurrent() { try { frame.assertCurrent(); } catch (error) { trace(error, 'question-currentness'); throw error; } },
+      capture<T extends JudgmentResult<Questions>>(original: T): T {
+        try { return frame.capture(original); } catch (error) { trace(error, 'result-admission'); throw error; }
+      },
+    };
   }
 
   resumedRepair(): string { return this.restoredCorrection ?? ''; }
@@ -316,7 +329,7 @@ export class ResponseCompletionGuard {
     const batch = new AbortController();
     const owner = captureJudgmentPort(responseCompletion.name, { ...options,
       signal: options.signal ? AbortSignal.any([options.signal, batch.signal]) : batch.signal,
-      assertCurrent: current, prepareResultCapture: prepareJudgmentResult });
+      assertCurrent: current, prepareResultCapture: questions => this.resultCapture(questions) });
     const port = bindVerificationTargets(owner.port);
     const readingOptions = { signal: owner.signal, beforeAttempt: owner.assertCurrent, onRetry: () => onWaiting?.() };
     let state: unknown = fullState;
