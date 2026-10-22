@@ -124,7 +124,7 @@ test.each([{ args: [] }, { args: ['Finish', 'the', 'existing', 'review.'] }])('/
   const submitted: string[] = [];
   ctx.submitInput = text => { submitted.push(text); };
   const registry = new CommandRegistry(); registerSessionContentCommands(registry);
-  await registry.execute('retry', args, ctx);
+  await registry.execute('retry', [...args], ctx);
   expect(submitted).toEqual([args.length ? args.join(' ') : 'Review the repository and deliver review.md.']);
   expect(conversation.getMessageSnapshot()).toEqual(before);
   expect(conversation.getMessageSnapshot().some(message => message.role === 'tool' && message.content.includes('completed findings'))).toBe(true);
