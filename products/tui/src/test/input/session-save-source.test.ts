@@ -112,6 +112,24 @@ describe('the standalone /save command', () => {
 describe('automatic persistence is stamped as automatic', () => {
 });
 
+test.each([{ args: [] }, { args: ['Finish', 'the', 'existing', 'review.'] }])('/retry preserves completed tool receipts while submitting the requested retry', async ({ args }) => {
+  const sm = new SessionManager(tmpDir, { surface }), ctx = makeCtx(sm, []);
+  const conversation = ctx.session.conversationManager;
+  conversation.resetAll();
+  conversation.addUserMessage('Review the repository and deliver review.md.');
+  conversation.addAssistantMessage('', { toolCalls: [{ id: 'write-review', name: 'write', arguments: { path: 'review.md', content: 'Completed findings.' } }] });
+  conversation.addToolResults([{ callId: 'write-review', success: true, output: 'Wrote review.md with completed findings.' }]);
+  conversation.addSystemMessage('[Response cancelled]');
+  const before = conversation.getMessageSnapshot();
+  const submitted: string[] = [];
+  ctx.submitInput = text => { submitted.push(text); };
+  const registry = new CommandRegistry(); registerSessionContentCommands(registry);
+  await registry.execute('retry', args, ctx);
+  expect(submitted).toEqual([args.length ? args.join(' ') : 'Review the repository and deliver review.md.']);
+  expect(conversation.getMessageSnapshot()).toEqual(before);
+  expect(conversation.getMessageSnapshot().some(message => message.role === 'tool' && message.content.includes('completed findings'))).toBe(true);
+});
+
 for (const command of ['fork', 'save', 'resume'] as const) {
   test(`/session ${command} revokes pending native retry admission before changing session identity/history`, async () => {
     const { heldNativeRetry } = await import('../helpers/held-native-retry.ts');

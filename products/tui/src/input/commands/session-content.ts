@@ -238,7 +238,7 @@ export function registerSessionContentCommands(registry: CommandRegistry): void 
   registry.register({
     name: 'retry',
     aliases: ['r'],
-    description: 'Re-send the last user message',
+    description: 'Retry the last request while retaining completed work',
     usage: '[modified text]',
     argsHint: '[modified text]',
     handler(args, ctx) {
@@ -247,7 +247,6 @@ export function registerSessionContentCommands(registry: CommandRegistry): void 
         ctx.print('No message to retry.');
         return;
       }
-      ctx.session.conversationManager.undo();
       ctx.submitInput?.(args.length > 0 ? args.join(' ') : lastMsg);
     },
   });
