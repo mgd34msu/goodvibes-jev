@@ -339,7 +339,7 @@ describe('registered use', () => {
 
   test('the actual composed contract decisions are clean only with every real registration', () => {
     const names = new Set(contractRegistry.list().map((decision) => decision.name));
-    for (const filename of ['unit-judge', 'group-judge', 'deliverable-judge', 'plan-coverage', 'unit-shape']) {
+    for (const filename of ['unit-judge', 'group-judge', 'deliverable-judge', 'final-answer-review', 'goal-obligations', 'source-citation-purpose', 'plan-coverage', 'unit-shape']) {
       const path = resolve(import.meta.dir, `../sdk/src/platform/contract/batteries/${filename}.ts`);
       const source = readFileSync(path, 'utf8');
       expect(sourceFindings(path, source, names)).toEqual([]);

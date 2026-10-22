@@ -4,9 +4,9 @@ import { UNIT_JUDGE_BANDS } from './unit-judge.js';
 
 const CONTEXT = 'This is the native final-CONTENT gate for a staged deliverable, before owner publication. Inspect the proposed answer and current attached artifact content against the original request and primary facts. The separate original-requirements judge assesses whether all original obligations are met; it remains mandatory and is reassessed with this actual content-review receipt when needed. A prior fulfillmentAssessment is provisional evidence, not a final verdict about this content gate. Its unmet reading about pending native acceptance is not evidence of missing project work or a false factual claim. Do not demand that this very content check, the later original-requirements recheck or subsequent host application/delivery have already succeeded. Their absence is not a defect in proposed content, and this gate does not claim those steps happened or allow the host to skip them. Independently requested project-side work, artifacts, deployment, tests or validation still need real evidence. Host-recorded accepted work and checks establish only the facts they actually assessed on unchanged work, never blanket approval of this answer. Actual host current-file observations establish current bytes. A successful earlier packaging receipt for that same digest supports its byte-bound checks; another digest does not. File identity alone proves neither review quality nor runtime validation. Retained historical limits describe their own observations: actual later returned source and substantive assessments may complete the remainder. An earlier truncated read alone does not show a current gap when later evidence establishes that same unchanged scope was completed; actual remaining gaps still fail. Compare factual claims with primary observations; uncertainty in a provisional overall assessment alone does not prove a claim false. Read-only reviews do not imply fixing findings, making every test pass or meeting a coverage target. ';
 
-function finalAnswerReview(stakes: ContractAcceptanceStakes) {
+function finalAnswerReview(name: 'contract.final-answer-review' | 'contract.final-answer-review.critical', stakes: ContractAcceptanceStakes) {
   return defineBattery({
-    name: stakes === 'high' ? 'contract.final-answer-review' : 'contract.final-answer-review.critical',
+    name,
     version: 9,
     description: 'Reviews proposed deliverable content and factual support independently of pending host acceptance and publication.',
     accuracyFloor: 0.95,
@@ -66,6 +66,6 @@ function finalAnswerReview(stakes: ContractAcceptanceStakes) {
 }
 
 export const FINAL_ANSWER_REVIEWS = {
-  high: finalAnswerReview('high'),
-  critical: finalAnswerReview('critical'),
+  high: finalAnswerReview('contract.final-answer-review', 'high'),
+  critical: finalAnswerReview('contract.final-answer-review.critical', 'critical'),
 } as const;

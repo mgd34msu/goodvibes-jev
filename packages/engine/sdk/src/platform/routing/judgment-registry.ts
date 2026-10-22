@@ -1,4 +1,5 @@
 import { BatteryRegistry } from '@goodvibes-jev/judgment';
+import { modelFamily } from '../providers/batteries/model-family.js';
 
 /**
  * Every named decision the routing subsystem makes, for calibration:
@@ -6,6 +7,7 @@ import { BatteryRegistry } from '@goodvibes-jev/judgment';
  *   bun run --cwd packages/judgment calibrate --registry ../engine/sdk/src/platform/routing/judgment-registry.ts
  */
 export const registry = new BatteryRegistry();
+registry.register(modelFamily);
 
 // Requests: what a piece of work needs, read before tokens are spent.
 import { requestDifficulty, requestDomain, requestIntent, requestLanguage, requestRisk, requestTier } from './batteries/request.js';

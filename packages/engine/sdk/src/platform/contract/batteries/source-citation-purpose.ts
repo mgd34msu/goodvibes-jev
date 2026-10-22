@@ -23,7 +23,8 @@ export const sourceCitationPurpose = defineBattery({
 
 /** Fixed semantic question per identified occurrence, batched in one request. */
 export function sourceCitationBatch(count: number) {
-  return defineBattery({ ...sourceCitationPurpose,
+  return defineBattery({ name: 'contract.source-citation-purpose', version: sourceCitationPurpose.version,
+    description: sourceCitationPurpose.description, accuracyFloor: sourceCitationPurpose.accuracyFloor,
     items: Object.fromEntries(Array.from({ length: count }, (_, index) => [`citation_${index}`, yesNo(
       `Evaluate ONLY citations[${index}] in the state, identified by its path, start, end and offset. Other citation occurrences in the same paragraph may have different purposes. ${String(sourceCitationPurpose.items.receipt_only.question.instructions ?? '')}`,
       sourceCitationPurpose.items.receipt_only.band,

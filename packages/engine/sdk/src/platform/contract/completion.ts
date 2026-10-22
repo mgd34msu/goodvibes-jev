@@ -422,8 +422,9 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
               const raw = judgmentPort(site);
               const bound: typeof raw = { ...raw, ask(request) {
                 stateHash = hashState(request.state);
-                return raw.ask({ ...request, questions: { ...request.questions,
-                  unsupported: scopedClaimQuestion(reviewBattery.items.unsupported.question, scope, outputDigest) } });
+                const forwarded: typeof request = { ...request, questions: { ...request.questions,
+                  unsupported: scopedClaimQuestion(reviewBattery.items.unsupported.question, scope, outputDigest) } };
+                return raw.ask(forwarded);
               } };
               const review = await reviewBattery.run(meteredPort(nativeContractPort(contract, context.native, bound, claimSignal), reviewUsage),
                 { ...state, claimScope: { ...scope, text: evidence.output.slice(scope.start, scope.end) } },
@@ -552,7 +553,8 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         const raw = judgmentPort(site);
         const bound: typeof raw = { ...raw, ask(request) {
           stateHash = hashState(request.state);
-          return raw.ask({ ...request, questions: { ...request.questions, omitted: goalObligationQuestion(battery.items.omitted.question, literalSourceDigest) } });
+          const forwarded: typeof request = { ...request, questions: { ...request.questions, omitted: goalObligationQuestion(battery.items.omitted.question, literalSourceDigest) } };
+          return raw.ask(forwarded);
         } };
         const result = await battery.run(meteredPort(nativeContractPort(contract, context.native, bound, run.abort.signal), usage), state, { site, signal: run.abort.signal });
         assertOwnedContractSource(contract);
