@@ -638,12 +638,21 @@ export class CompletionVerification {
       const node = this.nodes.get(choice.id)!;
       const children = node.children.map(id => this.nodes.get(id)).filter((entry): entry is VerificationReceipt => !!entry);
       if (children.length) { evidence.frontier = [...children, ...evidence.frontier.filter(entry => entry.id !== node.id)]; continue; }
+      const originals = node.sourceIds.map(id => this.originals.get(id)!);
+      const combined = [...new Map([...evidence.opened, ...originals].map(source => [source.id, source])).values()];
+      if (bounded(combined.map(verificationWireSource), MAX_EXACT_CASE_CHARACTERS)) {
+        // A final claim can depend on several earlier observations. Retain the
+        // exact bounded window instead of summarizing the previous page anew
+        // on every retrieval and forgetting its primary proof.
+        evidence.opened = combined;
+        return true;
+      }
       if (evidence.opened.length) {
         const requirement: VerificationRequirement = { id: 'final-publication', text: 'Settle the exact current draft against the original request, required result, and held final publication readings.', sources: [] };
         evidence.earlier.push(...await this.caseMemory(evidence.opened, requirement, access));
         if (!bounded(evidence.earlier.map(node => this.compactNode(node)), 8_000)) evidence.earlier = await this.caseMemory(evidence.earlier, requirement, access);
       }
-      evidence.opened = node.sourceIds.map(id => this.originals.get(id)!);
+      evidence.opened = originals;
       return true;
     }
   }
@@ -869,6 +878,14 @@ export class CompletionVerification {
     }
     access.assertCurrent();
     rememberSources();
+    if (!findings.length && cases.length === ledger.length) {
+      state.verifiedWork = {
+        kind: 'native-verified-work', result: 'pass',
+        requirements: cases.map(({ requirement }) => ({ id: requirement.id, text: requirement.text, result: 'pass' })),
+        bindings: { originalScope: verificationHash(ledger), observations: verificationHash(sources.map(source => source.id)), proposedAnswer: verificationHash(full.response) },
+        meaning: 'The runtime has completed every original requirement, work-quality, original-source history and integration check for these exact bindings. Prior uncertain readings were resolved under their native policies. This establishes only the listed work; it does not approve the current response, support unrelated claims, override later invalidating observations or permit publication.',
+      };
+    }
     return { state, findings };
   }
 }

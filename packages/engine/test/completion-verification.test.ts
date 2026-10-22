@@ -86,6 +86,9 @@ test('a source-backed native resolution settles uncertain quality once and still
   const checks = (result.state.verification as { requirementChecks: { readings: { quality_gap: { outcome: string } }; resolution?: { aspects: string[] } }[] }).requirementChecks;
   expect(checks[0]!.readings.quality_gap.outcome).not.toBe('act');
   expect(checks[0]!.resolution?.aspects).toContain('quality_gap');
+  expect(result.state.verifiedWork).toMatchObject({ kind: 'native-verified-work', result: 'pass',
+    requirements: [{ text: 'Complete the original requested review and deliver its report.', result: 'pass' }],
+    bindings: { proposedAnswer: verificationHash(input.response) } });
   expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(true);
 });
 
@@ -705,6 +708,35 @@ test('individually accepted requirements cannot release a disconnected combined 
 test('a reported application defect does not require remediation to complete a review', async () => {
   const fake = fakePort(name => noulAnswer(name === 'disconnected' ? .99 : .01));
   expect((await new CompletionVerification(verificationWriter).prepare(state(), access(fake.port))).findings).toHaveLength(0);
+});
+
+test('final retrieval retains bounded earlier originals without repeatedly summarizing them', async () => {
+  const fake = fakePort((name, question) => question.type === 'choice'
+    ? choiceAnswer(question, Object.keys(question.criteria)[0]!, .99) : noulAnswer(name.startsWith('fits_') ? .99 : .01));
+  const before = { ...state(), transcript: Array.from({ length: 8 }, (_, index) => ({ role: 'tool', callId: `original-${index}`,
+    content: Array.from({ length: 140 }, (_, line) => `Original observation ${index}, unique line ${line}.`).join('\n') })) };
+  const input = { ...before, initial: { request: before.request, transcript: before.transcript }, transcript: [...before.transcript,
+    { role: 'assistant', toolCalls: [{ id: 'current-result', name: 'read', arguments: { files: [{ path: 'review.md' }] } }] },
+    { role: 'tool', callId: 'current-result', content: 'Current observed report.' }] };
+  let reductions = 0;
+  const writer: VerificationWriter = request => {
+    if (request.operation === 'evidence' || request.operation === 'merge') reductions++;
+    return verificationWriter(request);
+  };
+  const verifier = new CompletionVerification(writer), owner = access(fake.port);
+  let prepared = await verifier.prepare(input, owner);
+  const earlier = new Set<string>();
+  for (let page = 0; page < 8 && await verifier.openFinal(prepared.state, { completion: { unsupported: { verdict: 'uncertain', outcome: 'escalate' } } }, owner); page++) {
+    const before = reductions;
+    prepared = await verifier.prepare(input, owner);
+    expect(reductions).toBe(before);
+    const originals = (prepared.state.transcript as { sourceId?: string; content?: { retrievedOriginalSource?: { id: string } } }[])
+      .flatMap(message => message.sourceId ? [message.sourceId] : message.content?.retrievedOriginalSource ? [message.content.retrievedOriginalSource.id] : []);
+    for (const id of earlier) expect(originals).toContain(id);
+    originals.forEach(id => earlier.add(id));
+  }
+  expect(earlier.size).toBeGreaterThan(2);
+  expect(reductions).toBe(0);
 });
 
 test('final-gate uncertainty retrieves original receipts and accepts the SAME draft without another working-model turn', async () => {

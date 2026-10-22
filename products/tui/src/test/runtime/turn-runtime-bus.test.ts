@@ -18,7 +18,7 @@ import { createPermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform
 import { createTestManagers } from '../helpers/test-managers.ts';
 
 let previousPort: ReturnType<typeof installJudgmentPort>;
-beforeEach(() => { previousPort = installJudgmentPort(conversationReadingsPort().port); });
+beforeEach(() => { previousPort = installJudgmentPort(conversationReadingsPort({ request: 'hello', response: 'hello back' }).port); });
 afterEach(() => { installJudgmentPort(previousPort); });
 
 const configManager = new ConfigManager({ surfaceRoot: 'tui',

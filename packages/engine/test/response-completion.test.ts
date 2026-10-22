@@ -53,11 +53,13 @@ test('historical answer fields cannot replace the exact current candidate and a 
 test('compound claim uncertainty is settled against every exact answer passage without another model draft', async () => {
   const fake = fakePort((name, _question, input) => noulAnswer(name === 'unsupported' && !(input as never as { nativeAnswerRange?: unknown }).nativeAnswerRange ? .4 : .01));
   installJudgmentPort(fake.port);
-  const input = source('Inspected parser.ts. Wrote review.md. Application files were unchanged.');
+  const input = source('Inspected parser.ts.\n\nWrote review.md. Application files were unchanged.');
   const guard = new ResponseCompletionGuard();
   expect(await guard.check(input)).toBeNull();
   const atomic = fake.requests.filter(request => (request.state as never as { nativeAnswerRange?: unknown }).nativeAnswerRange);
-  expect(atomic.map(request => (request.state as never as { response: string }).response).join('')).toBe(input.response);
+  expect(atomic.every(request => (request.state as never as { response: string }).response.trim().length > 0)).toBe(true);
+  expect(atomic.map(request => (request.state as never as { response: string }).response).join('').replaceAll(/\s+/g, ' '))
+    .toBe(input.response.replaceAll(/\s+/g, ' '));
   expect(atomic).toHaveLength(3);
   expect(() => guard.beginFinalization({ content: input.response })).not.toThrow();
 });

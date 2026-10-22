@@ -405,6 +405,9 @@ export class ResponseCompletionGuard {
       if (passages.length > 1 && passages.length <= 24 && passages.map(passage => passage.segment).join('') === response
         && passages.every((passage, index) => passage.index === passages.slice(0, index).reduce((length, prior) => length + prior.segment.length, 0))) {
         const checked = await mapLimit(passages, 3, async passage => {
+          // Whitespace has no factual claim. Keep its original range in the
+          // complete answer, without asking a semantic reader to classify it.
+          if (!passage.segment.trim()) return true;
           try {
             const atomic = await responseCompletion.run(port, { ...state as object, response: passage.segment, entireProposedAnswer: response,
               nativeAnswerRange: { start: passage.index, end: passage.index + passage.segment.length },

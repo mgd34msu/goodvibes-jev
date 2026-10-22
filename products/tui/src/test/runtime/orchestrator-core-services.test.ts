@@ -45,6 +45,7 @@ import type { ChatResponse, LLMProvider, ModelDefinition, ProviderRegistry } fro
 import type { MemoryRecord } from '@goodvibes-jev/engine/sdk/platform/state';
 
 let previousPort: ReturnType<typeof installJudgmentPort>;
+const RATE_LIMIT_RESPONSE = 'Configure a token bucket for the API with a limit of 100 requests per minute.';
 let memoryFixture: ReturnType<typeof fakePort>;
 beforeEach(() => {
   memoryFixture = fakePort((name, _question, state) => {
@@ -53,7 +54,7 @@ beforeEach(() => {
     if (record?.summary !== 'rate limiting: token bucket, 100 requests per minute') throw new Error('Unexpected memory fixture record');
     return noulAnswer(0.99);
   });
-  const core = conversationReadingsPort();
+  const core = conversationReadingsPort({ request: 'how do I configure rate limiting for the API', response: RATE_LIMIT_RESPONSE });
   previousPort = installJudgmentPort({ ...core.port, ask: request =>
     request.context?.battery === 'engine.state.knowledge-relevance' ? memoryFixture.port.ask(request) : core.port.ask(request),
   });
@@ -125,7 +126,7 @@ function makeCapturingProviderRegistry(): { providerRegistry: ProviderRegistry; 
     models: ['fake-model'],
     async chat(request): Promise<ChatResponse> {
       capturedSystemPrompts.push(request.systemPrompt ?? '');
-      return { content: 'done', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
+      return { content: RATE_LIMIT_RESPONSE, toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
     },
   };
   const providerRegistry = {
