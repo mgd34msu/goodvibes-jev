@@ -48,6 +48,7 @@ const failures: readonly AuthoredFailure[] = [
   { message: OPENAI_QUOTA_429, status: 429, reading: { category: 'billing', billing: true, rateLimited: true } },
   { message: 'invalid request: [REDACTED_TEXT]', status: 400, reading: { category: 'bad_request' } },
   { message: 'invalid request: malformed tool schema', status: 400, reading: { category: 'bad_request' } },
+  { message: 'invalid request: unsupported parameter "reasoning_effort"', status: 400, reading: { category: 'bad_request' } },
   { message: 'Rate limit reached for requests. Please try again later.', status: 429, reading: { category: 'rate_limit', rateLimited: true } },
   { message: 'Rate limit reached, too many requests', status: 429, reading: { category: 'rate_limit', rateLimited: true } },
   { message: 'Request too large: rate limit of 30000 tokens per minute exceeded', status: 429, reading: { category: 'rate_limit', rateLimited: true } },

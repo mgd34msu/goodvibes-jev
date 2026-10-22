@@ -175,7 +175,7 @@ describe('evaluateOutwardEffect: the allowed case the whole mechanism exists to 
     });
 
     expect(decision.allowed).toBe(false);
-    expect(decision.reason).toContain('nothing read this turn kept its text');
+    expect(decision.reason).toContain('some source text is missing, empty, truncated, or no longer retained');
   });
 
   test('a caller that supplies no content at all also takes the coarse path and is refused', async () => {

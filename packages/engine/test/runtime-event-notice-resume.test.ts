@@ -37,6 +37,10 @@ for (const type of ['CONTRACT_FAILED', 'CONTRACT_CANCELLED', 'CONTRACT_PASSED', 
         }
         await waitFor(() => h.events.filter((event) => event.type === type).length === occurrence);
         await waitFor(() => lines.map((line, index) => runtimeEventOfNotice(line, provenance[index])).filter((notice) => notice?.type === type).length === occurrence);
+        // A terminal event precedes executor/finally cleanup. The restored
+        // owner identity becomes reusable only after both actual joins.
+        await h.runner.join(contract.id);
+        await h.manager.join(contract.ownerAgentId);
         if (occurrence === 1) {
           // The supported importer permits replacing a terminal contract with
           // its older nonterminal snapshot without a force override.

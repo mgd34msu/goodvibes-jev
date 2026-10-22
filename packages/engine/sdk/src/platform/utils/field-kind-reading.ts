@@ -6,9 +6,9 @@ import { assertRedactionCurrent } from './redaction-reading.js';
 const fields: Readonly<Record<FieldKind, ReadonlySet<string>>> = {
   secret: new Set(['password', 'passwd', 'loginpassword', 'apikey', 'accesstoken', 'refreshtoken', 'authorization', 'cookie',
     'credential', 'credentials', 'credentialref', 'token', 'privatekey', 'signingkey', 'secret', 'unlockpassphrase', 'privatesigningmaterial']),
-  owner_profile: new Set(['shippingaddress', 'billingaddress', 'homeaddress', 'emailaddress', 'phonenumber', 'privateaddress']),
+  owner_profile: new Set(['shippingaddress', 'billingaddress', 'homeaddress', 'emailaddress', 'phonenumber', 'privateaddress', 'quiethours']),
   content: new Set(['message', 'body', 'text', 'content', 'prompt', 'response', 'stdout', 'stderr', 'output', 'error', 'stack',
-    'summary', 'hint', 'name', 'description', 'reasoningcontent', 'reasoningsummary', 'instructions', 'document', 'transcript', 'title',
+    'summary', 'hint', 'name', 'note', 'description', 'reasoningcontent', 'reasoningsummary', 'instructions', 'document', 'transcript', 'title',
     'data', 'details', 'payload', 'attributes', 'arguments', 'result', 'results', 'records', 'items', 'nested', 'self', 'metadata', 'judgment', 'config', 'extension', 'surfaces', 'diagnostics']),
   other: new Set(['id', 'requestid', 'sessionid', 'agentid', 'taskid', 'documentid', 'traceid', 'spanid', 'workstreamid',
     'domain', 'eventtype', 'source', 'turnid', 'stopreason', 'model', 'modelid', 'provider', 'providerid', 'registrykey', 'site', 'universe', 'kind', 'type', 'category', 'code', 'status', 'state',

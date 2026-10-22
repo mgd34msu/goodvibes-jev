@@ -122,7 +122,8 @@ function recordedStyles() {
       if (!tone || !tones.every(value => value === tone)) throw new Error('Unmapped exact corpus tone');
       return choiceAnswer(question, tone, 0.999);
     }
-    if (Object.keys(state).join() === 'context,candidates' && Array.isArray(state.candidates)) {
+    if (Object.keys(state).join() === 'context,candidates,selectionFitInstructions'
+      && typeof state.selectionFitInstructions === 'string' && Array.isArray(state.candidates)) {
       const from = object(state.context).from;
       if (typeof from !== 'string' || !names.has(from)) throw new Error('Unmapped complete From header');
       const expected = names.get(from);

@@ -61,6 +61,7 @@ import {
   type ContractSessionHooks,
 } from './orchestrator-turn-helpers.js';
 import { appendGoodVibesRuntimeAwarenessPrompt } from '../tools/goodvibes-runtime/index.js';
+import { FINAL_RESPONSE_REVIEW_INSTRUCTIONS } from './verification/response-prompt.js';
 import { describeIntake, type ContractIntake } from '../contract/intake-route.js';
 import { withOpenTierProfileBlock } from '../agents/orchestrator-prompts.js';
 import {
@@ -454,7 +455,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
     assertActiveTurn();
     const baseSystemPromptForCall = appendGoodVibesRuntimeAwarenessPrompt(resolvedSystemPrompt);
     const composedBaseSystemPrompt = baseSystemPromptForCall
-      + '\n\nFinal responses are checked privately by the host with Jev before publication. Return the final draft normally when the authorized work is done; do not search for a verification tool or spawn an agent merely to invoke this automatic check. The host returns specific corrections privately when needed. Preserve completed work and address only those corrections.'
+      + `\n\n${FINAL_RESPONSE_REVIEW_INSTRUCTIONS}`
       + (completionCorrection ? `\n\n${completionCorrection}` : '');
     const contextCompactThreshold = context.configManager.get('agents.contextCompactThreshold')
       ?? DEFAULT_PASSIVE_KNOWLEDGE_INJECTION_CONTEXT_THRESHOLD;

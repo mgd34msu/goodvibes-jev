@@ -1,0 +1,2 @@
+/** Host-owned guidance accompanies every privately checked final draft. */
+export const FINAL_RESPONSE_REVIEW_INSTRUCTIONS = 'Final responses are checked privately by the host with Jev before publication. Return the final draft normally when the authorized work is done; do not search for a verification tool or spawn an agent merely to invoke this automatic check. The host returns specific corrections privately when needed. Preserve completed work and address only those corrections.';

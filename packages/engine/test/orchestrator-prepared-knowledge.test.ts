@@ -19,6 +19,7 @@ import { OrchestratorObservationHeldError } from '../sdk/src/platform/agents/orc
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { AgentMessageBus } from '../sdk/src/platform/agents/message-bus.js';
 import { ToolRegistry } from '../sdk/src/platform/tools/registry.js';
+import { bindContractPlanConsumer } from '../sdk/src/platform/tools/agent/contract-binding.js';
 import type { LLMProvider } from '../sdk/src/platform/providers/interface.js';
 import type { ModelDefinition } from '../sdk/src/platform/providers/registry-types.js';
 import { revalidateProviderAttempt } from '../sdk/src/platform/providers/attempt-guard.js';
@@ -144,7 +145,9 @@ describe('orchestrator prepared curated knowledge', () => {
   test('a full repository planning request reaches the provider with its complete task', async () => {
     const { deps } = await fixture(), fake = readings();
     const task = nativePlannerTask() + '\n' + 'packages/engine/source.ts exports repositorySymbol\n'.repeat(40_000);
-    const agent = { ...record(), template: 'planner', task };
+    // Real contract planners return a proposal to their construction-owned
+    // plan checker. Their proposal is not a final response to the user.
+    const agent = bindContractPlanConsumer({ ...record(), template: 'planner', task });
     let received = '';
     const provider: LLMProvider = { name: 'fixture', models: ['fixture-model'], async chat(request) {
       received = String(request.messages.find(message => message.role === 'user')?.content);

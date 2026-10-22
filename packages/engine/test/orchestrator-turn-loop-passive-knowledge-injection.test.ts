@@ -44,6 +44,7 @@ import { ConversationManager } from '../sdk/src/platform/core/conversation.js';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { ToolRegistry } from '../sdk/src/platform/tools/registry.js';
 import { appendGoodVibesRuntimeAwarenessPrompt } from '../sdk/src/platform/tools/goodvibes-runtime/index.js';
+import { FINAL_RESPONSE_REVIEW_INSTRUCTIONS } from '../sdk/src/platform/core/verification/response-prompt.js';
 import type { LLMProvider, ChatResponse } from '../sdk/src/platform/providers/interface.js';
 import type { ModelDefinition } from '../sdk/src/platform/providers/registry-types.js';
 import type { HelperModel } from '../sdk/src/platform/config/helper-model.js';
@@ -62,7 +63,8 @@ const BASE_SYSTEM_PROMPT = 'You are the goodvibes assistant.';
 // at the call site (pre-existing, unrelated to this per-turn knowledge injection feature) before any per-turn knowledge block
 // is composed onto it, this is the "no injection happened" baseline every "byte-identical"
 // assertion in this suite compares against, not the raw BASE_SYSTEM_PROMPT.
-const EXPECTED_BASE_PROMPT = appendGoodVibesRuntimeAwarenessPrompt(BASE_SYSTEM_PROMPT);
+const expectedSystemPrompt = (prompt: string) => appendGoodVibesRuntimeAwarenessPrompt(prompt) + `\n\n${FINAL_RESPONSE_REVIEW_INSTRUCTIONS}`;
+const EXPECTED_BASE_PROMPT = expectedSystemPrompt(BASE_SYSTEM_PROMPT);
 
 const FAKE_MODEL: ModelDefinition = {
   id: 'fake-model',
@@ -580,7 +582,7 @@ describe('orchestrator-turn-loop: awaited system prompts', () => {
     readSet = ['reviewed memory A', 'reviewed memory B'];
     ready.resolve();
     await turn;
-    expect(capturedSystemPrompts).toEqual([appendGoodVibesRuntimeAwarenessPrompt(readSet.join('\n'))]);
+    expect(capturedSystemPrompts).toEqual([expectedSystemPrompt(readSet.join('\n'))]);
   });
 
   test('aborts immediately while a prompt ignores cancellation and consumes its late rejection', async () => {
@@ -656,7 +658,7 @@ describe('orchestrator-turn-loop: awaited system prompts', () => {
         chat: async (request) => {
           expect(request.signal).toBe(controller.signal);
           await request.onRetry?.(1, 2, 0, new Error('transient'));
-          expect(request.systemPrompt).toBe(appendGoodVibesRuntimeAwarenessPrompt('single reviewed read set'));
+          expect(request.systemPrompt).toBe(expectedSystemPrompt('single reviewed read set'));
           return provider.chat(request);
         },
       },
