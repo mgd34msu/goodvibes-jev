@@ -88,7 +88,7 @@ export interface ThrobberActivityInput {
   /** Active agents, including the interval before their results resume main. */
   readonly runningAgentCount?: number;
   /** This session's contracts, including shaping and gaps between workers. */
-  readonly contracts?: readonly { readonly status: ContractStatus }[];
+  readonly contracts?: readonly { readonly status: ContractStatus; readonly commit?: { readonly status: string } | undefined }[];
   /** A compaction of the main conversation is running (inside a turn or not). */
   readonly compacting: boolean;
   /** When the running compaction started (epoch ms), once known. */
@@ -127,7 +127,8 @@ export function resolveThrobberActivity(input: ThrobberActivityInput): ThrobberA
     const activeContracts = input.contracts?.filter(contract => CONTRACT_ACTIVITY[contract.status] !== null) ?? [];
     // Ongoing work takes precedence over a queued contract or an owner question.
     const contract = activeContracts.find(contract => contract.status !== 'queued' && contract.status !== 'awaiting-owner') ?? activeContracts[0];
-    if (contract) return { kind: 'contract', phrase: CONTRACT_ACTIVITY[contract.status]! };
+    if (contract) return { kind: 'contract', phrase: contract.status === 'committing' && contract.commit?.status === 'failed'
+      ? 'Recovering publication...' : CONTRACT_ACTIVITY[contract.status]! };
     if (runningAgentCount > 0) return { kind: 'agents', count: runningAgentCount };
     return null;
   };

@@ -141,6 +141,17 @@ describe('throbber: what it names', () => {
     expect(throbberFor({ turnActive: false, compacting: true, contracts })?.activity.kind).toBe('compacting');
   });
 
+  test('a pending publication retains the spinner and names recovery without changing footer height', () => {
+    const saving = throbberFor({ turnActive: false, contracts: [contractFixture({ status: 'committing' })] });
+    const recovering = throbberFor({ turnActive: false, contracts: [contractFixture({ status: 'committing',
+      commit: { status: 'failed', note: 'Owner Git operation pending; accepted work retained.' } })] });
+    const before = footer({ throbber: saving, turnRunning: false }).map(text);
+    const after = footer({ throbber: recovering, turnRunning: false }).map(text);
+    expect(after).toHaveLength(before.length);
+    expect(after[1]).toContain('⠋ Recovering publication...');
+    expect(after[1]).not.toContain('Thinking');
+  });
+
   test('an MCP tool is named by its last segment, like its bead', () => {
     const activity = resolveThrobberActivity(input({ activeTool: { name: 'mcp__github__search_issues', args: { query: 'retry backoff' }, startedAtMs: NOW - 1_000 } }))!;
     expect(throbberText({ activity })).toBe('Running search_issues · retry backoff · 1s');
