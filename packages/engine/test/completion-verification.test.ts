@@ -153,6 +153,22 @@ test('a real gap found while refining an uncertain audit remains held', async ()
   expect((await new CompletionVerification(verificationWriter).prepare(input, access(fake.port))).findings.length).toBeGreaterThan(0);
 });
 
+test('opening held original pages never restarts the audit of pages already checked in the same immutable case', async () => {
+  const before = state('Earlier progress record. '.repeat(15_000));
+  const input = { ...before, initial: { request: before.request, transcript: before.transcript },
+    transcript: [...before.transcript, { role: 'tool', callId: 'current-proof', content: 'CURRENT-PROOF: the requested review and report were accepted.' }],
+    completedWork: [{ kind: 'host-completed-contract', id: 'review', status: 'passed', finalCheck: { result: 'pass' } }] };
+  const fake = fakePort((name, question) => question.type === 'choice'
+    ? choiceAnswer(question, Object.keys(question.criteria)[0]!, .99) : noulAnswer(name === 'missed' ? .99 : .01));
+  const result = await new CompletionVerification(verificationWriter).prepare(input, access(fake.port));
+  expect(result.findings).toHaveLength(0);
+  const pages = fake.requests.filter(request => request.context?.battery === 'engine.verification.audit')
+    .flatMap(request => (request.state as unknown as { sources: { id: string }[] }).sources.map(source => source.id));
+  expect(pages.length).toBeGreaterThan(10);
+  expect(new Set(pages).size).toBe(pages.length);
+  expect(fake.requests.filter(request => request.context?.battery === 'engine.verification.requirement').length).toBeGreaterThan(5);
+});
+
 test('each requirement question binds its exact root scope even when source data contains other requirement fields', async () => {
   const fake = fakePort((name, question, raw) => {
     const current = raw as unknown as { requirement?: { text: string } };

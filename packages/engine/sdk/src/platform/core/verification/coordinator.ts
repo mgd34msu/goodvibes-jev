@@ -21,6 +21,8 @@ type InspectionCursor = {
   opened: { sources: readonly VerificationSource[]; earlier: readonly { id: string; summary: VerificationSummary }[] };
   seen: Set<string>;
   localized: boolean;
+  audited: Set<string>;
+  accounted: Set<string>;
 };
 async function ownedMapLimit<T, R>(access: VerificationAccess, values: readonly T[], limit: number, read: (value: T) => Promise<R>): Promise<R[]> {
   return mapLimit(values, limit, value => {
@@ -330,12 +332,21 @@ export class CompletionVerification {
   }
 
   private async audit(requirement: VerificationRequirement, caseEvidence: unknown, sources: readonly VerificationSource[], access: VerificationAccess,
-    response: unknown, ledger: readonly VerificationRequirement[]): Promise<VerificationSource[][]> {
+    response: unknown, ledger: readonly VerificationRequirement[], audited: Set<string>, accounted: Set<string>): Promise<VerificationSource[][]> {
     const pages = verificationFrames(sources, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length);
     const checks = await ownedMapLimit(access, pages, 3, async page => {
+      // These sets belong to ONE exact source/requirement/answer/authority
+      // cursor. Opening another immutable original does not undo a checked
+      // page. A new source, changed scope, draft or owner starts another cursor.
+      if (page.every(source => accounted.has(source.id))) return null;
+      if (page.every(source => audited.has(source.id))) return page;
       const context = { requirement, response, caseEvidence, sources: page.map(verificationWireSource) };
       const key = verificationHash(['source-audit-v2', context]), cache = this.cache(access);
-      if (cache.has(key)) return cache.get(key) ? null : page;
+      if (cache.has(key)) {
+        const accepted = cache.get(key);
+        for (const source of page) { audited.add(source.id); if (accepted) accounted.add(source.id); }
+        return accepted ? null : page;
+      }
       const run = await verificationAudit.run(access.port, context as never, { ...this.options(access), site: verificationAudit.name });
       let accepted = clean(run.readings);
       run.recordAction(accepted ? 'This complete original page has no unaccounted material counterevidence; final publication remains gated.' : 'Retrieve this exact original page before accepting the provisional requirement conclusion.');
@@ -356,6 +367,7 @@ export class CompletionVerification {
           : 'Retain this specific original page for retrieval; no completion or repeat-work instruction is authorized.');
       }
       access.assertCurrent(); cache.set(key, accepted);
+      for (const source of page) { audited.add(source.id); if (accepted) accounted.add(source.id); }
       return accepted ? null : page;
     });
     return checks.filter((page): page is VerificationSource[] => page !== null);
@@ -381,9 +393,11 @@ export class CompletionVerification {
     let opened: InspectionCursor['opened'] = retained ? { sources: [...retained.opened.sources], earlier: [...retained.opened.earlier] } : { sources: recent, earlier: [] };
     const seen = new Set(retained?.seen ?? recent.map(source => `source:${source.id}`));
     let localized = retained?.localized ?? false;
+    const audited = new Set(retained?.audited), accounted = new Set(retained?.accounted);
     const primaryIds = new Set(recent.map(source => source.id));
     const primarySources = (sources: readonly VerificationSource[]) => [...new Map([...recent, ...sources].map(source => [source.id, source])).values()];
-    const checkpoint = () => cache.set(key, { frontier: [...frontier], opened: { sources: [...opened.sources], earlier: [...opened.earlier] }, seen: new Set(seen), localized } satisfies InspectionCursor);
+    const checkpoint = () => cache.set(key, { frontier: [...frontier], opened: { sources: [...opened.sources], earlier: [...opened.earlier] }, seen: new Set(seen), localized,
+      audited: new Set(audited), accounted: new Set(accounted) } satisfies InspectionCursor);
     for (;;) {
       access.assertCurrent(); if (defer()) throw new VerificationDeferredError();
       // Native retrieval progress is private metadata, never approval. A retry
@@ -415,11 +429,17 @@ export class CompletionVerification {
       const resultAccepted = clean({ unfinished: run.readings.unfinished, quality_gap: run.readings.quality_gap });
       const sourceDemanded = run.readings.needs_source.verdict === 'yes' && run.readings.needs_source.outcome === 'act';
       if (hasPrimary && resultAccepted && !sourceDemanded && auditSources) {
+        // A held audit requested this exact original. It is now opened beside
+        // the unchanged primary proof, and current Jev work AND quality checks
+        // confidently accept it. That settles this page, without granting final
+        // publication or silently clearing any uninspected original.
+        for (const source of opened.sources) if (audited.has(source.id)) accounted.add(source.id);
         // Affirmative evidence alone is insufficient: inspect EVERY original
         // interval for counterevidence. These are direct Jev checks, not a new
         // frontier draft for every history page. A changed working-model answer
         // does not invalidate an unchanged source/case qualification.
-        const suspect = await this.audit(requirement, { ...opened, sources: primarySources(opened.sources).map(verificationWireSource) }, auditSources, access, response, ledger);
+        const suspect = await this.audit(requirement, { ...opened, sources: primarySources(opened.sources).map(verificationWireSource) }, auditSources, access, response, ledger, audited, accounted);
+        checkpoint();
         if (!suspect.length) return { requirement, readings: run.readings, state, sourceExhausted: false, auditHeld: false };
         const unseen = suspect.filter(page => page.some(source => !seen.has(`source:${source.id}`)));
         if (!unseen.length) return { requirement, readings: run.readings,
