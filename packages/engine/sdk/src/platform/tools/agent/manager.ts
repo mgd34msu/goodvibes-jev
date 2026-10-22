@@ -710,7 +710,8 @@ export class AgentManager {
    * restores context from the frozen transcript tail (a summary, not a risky
    * tool-call replay) and appends the steer as a fresh user turn.
    */
-  wakeWithSteer(agentId: string, steer: string, options: { readonly allowCompleted?: boolean } = {}): { woke: boolean; reason: string } {
+  wakeWithSteer(agentId: string, steer: string, options: { readonly allowCompleted?: boolean; readonly referenceOnly?: true } = {}): { woke: boolean; reason: string } {
+    const referenceOnly = options.referenceOnly === true;
     const record = this.agents.get(agentId);
     if (!record) return { woke: false, reason: 'unknown-agent' };
     if (this.restoredContractUnits.has(agentId)) return { woke: false, reason: 'contract-unit-requires-resume' };
@@ -748,7 +749,7 @@ export class AgentManager {
       if (this.cancellationSignals.get(agentId)?.aborted) this.cancellationSignals.delete(agentId);
       this.cancellationControllers.set(agentId, controller);
       const priorSummary = this.summarizeTranscriptTailForWake(agentId);
-      record.resumeSteer = { steer, ...(priorSummary ? { priorSummary } : {}) };
+      record.resumeSteer = { steer, ...(priorSummary ? { priorSummary } : {}), ...(referenceOnly ? { referenceOnly: true as const } : {}) };
       record.error = undefined;
       record.failureReason = undefined;
       record.turnBudget = undefined;

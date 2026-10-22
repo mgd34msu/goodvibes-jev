@@ -18,6 +18,7 @@ import { runAgentTask, type AgentOrchestratorRunContext } from '../sdk/src/platf
 import { AgentMessageBus } from '../sdk/src/platform/agents/message-bus.js';
 import { TURN_BUDGET_EXHAUSTED } from '../sdk/src/platform/agents/turn-budget.js';
 import { CIRCUIT_BREAKER_TRIPPED, CONSECUTIVE_ERROR_BREAK } from '../sdk/src/platform/core/circuit-breaker.js';
+import { verificationObservationText } from '../sdk/src/platform/core/verification/archive.js';
 import type { ContractAgentHooks, ContractHoldOutcome } from '../sdk/src/platform/contract/agent-hooks.js';
 import type { ContractTurnRecord } from '../sdk/src/platform/contract/evidence.js';
 import { CONTRACT_RUNNER_AGENT_ID, dispatchNudge } from '../sdk/src/platform/contract/nudge.js';
@@ -332,7 +333,7 @@ describe('turn end', () => {
 });
 
 describe('mid-run nudge through the bus', () => {
-  test('a steer from contract-runner is drained verbatim at the next turn and its consumed event fires', async () => {
+  test('a contract-runner steer retains its private provenance and its consumed event fires on the next turn', async () => {
     const runtimeBus = new RuntimeEventBus();
     const consumed = consumedEvents(runtimeBus);
     const messageBus = new AgentMessageBus();
@@ -367,14 +368,27 @@ describe('mid-run nudge through the bus', () => {
     await runAgentTask(makeContext({ workingDirectory: workDir(), runtimeBus, messageBus, provider, contractHooks: hooks }), record);
 
     expect(userMessages(provider.requests[0])).not.toContain(NUDGE_TEXT);
-    expect(userMessages(provider.requests[1])).toContain(NUDGE_TEXT);
-    for (const content of userMessages(provider.requests[1])) expect(content).not.toContain('from contract-runner');
+    expect(userMessages(provider.requests[1])).toContain(verificationObservationText(`[Steer from ${CONTRACT_RUNNER_AGENT_ID}]: ${NUDGE_TEXT}`));
     expect(consumed).toHaveLength(1);
     expect(consumed[0]).toMatchObject({ messageId: 'u1.n1', agentId: record.id, turn: 2 });
   });
 });
 
 describe('waking a stopped unit agent', () => {
+  test('the resumed model receives retained context and runtime repair feedback as references', async () => {
+    const provider = scriptedProvider([() => reply('fixed attempt')]);
+    const record = makeRecord({ id: 'agent-resumed-context', contractId: 'ctr-00000001', contractRole: 'unit', contractUnitId: 'u1',
+      resumeSteer: { steer: NUDGE_TEXT, referenceOnly: true, priorSummary: 'Prior observed result: REVIEW_ALREADY_WRITTEN; inspect review.md before changing it.' } });
+    const hooks = scriptedHooks([() => ({ kind: 'release' })]);
+    await runAgentTask(makeContext({ workingDirectory: workDir(), runtimeBus: new RuntimeEventBus(), messageBus: new AgentMessageBus(), provider, contractHooks: hooks }), record);
+    const messages = userMessages(provider.requests[0]);
+    expect(provider.requests).toHaveLength(1);
+    expect(messages.some(content => content.includes('REVIEW_ALREADY_WRITTEN'))).toBe(true);
+    expect(messages).toContain(verificationObservationText(NUDGE_TEXT));
+    expect(messages).not.toContain(NUDGE_TEXT);
+    expect(record.status).toBe('completed');
+  });
+
   function managerRunningLoop(opts: { provider: LLMProvider; hooks: ContractAgentHooks; runtimeBus: RuntimeEventBus; taps: LoopTaps; maxTurns: number; workingDirectory: string; emitLifecycle?: boolean }) {
     const context = makeContext({
       workingDirectory: opts.workingDirectory,

@@ -10,6 +10,7 @@ import { summarizeError } from '../utils/error-display.js';
 import { logger } from '../utils/logger.js';
 import type { AgentOrchestratorRunContext } from './orchestrator-run-context.js';
 import { setAgentProgress } from './orchestrator-utils.js';
+import { appendVerificationObservation } from '../core/verification/archive.js';
 
 type ChatResponse = Awaited<ReturnType<LLMProvider['chat']>>;
 
@@ -41,7 +42,7 @@ export function reportContractTurnEnd(
 /**
  * Called where the loop would complete. Holds a contract-bound agent until the
  * runner's check answers: `release` returns false and the loop ends as usual;
- * `continue` adds the nudge verbatim as the next user turn (progress reads
+ * `continue` supplies the nudge as private repair context (progress reads
  * "Turn N · Correcting…" for that turn), queues its id to be
  * reported consumed once the next model call succeeds (the steer drain's rule),
  * and returns true so the loop takes another turn. A cancelled agent is never
@@ -61,7 +62,7 @@ export async function holdContractCompletion(
   const outcome = await hooks.holdCompletion(record, candidateOutput);
   if (outcome.kind === 'release') return false;
   if (privateNudge) privateNudge(outcome.message);
-  else conversation.addUserMessage(outcome.message);
+  else appendVerificationObservation(conversation, outcome.message);
   nudgeIdsAwaitingTurn.push(outcome.nudgeId);
   setAgentProgress(record, `Turn ${turn + 1} · Correcting…`, 'operator');
   context.emitAgentProgress(record.id, record.progress ?? '', 'operator');

@@ -42,7 +42,7 @@ export function verificationSources(state: Record<string, unknown>): Verificatio
   if (state.requirements != null) add('instruction', 'host acceptance criteria, subordinate to original user scope', state.requirements);
   const seenExecutions = new Set<string>();
   const mainCalls = new Map<string, { id: string; name?: string; arguments?: unknown }>();
-  const transcript = (messages: unknown, prefix: string, callContext = new Map<string, { id: string; name?: string; arguments?: unknown }>(), lane = 'main') => {
+  const transcript = (messages: unknown, prefix: string, callContext = new Map<string, { id: string; name?: string; arguments?: unknown }>(), lane = 'main', originalInstructions = true) => {
     if (!Array.isArray(messages)) return;
     messages.forEach((message: Record<string, unknown>, index) => {
       const calls = message.toolCalls as { id: string; name?: string; arguments?: unknown }[] | undefined;
@@ -59,7 +59,7 @@ export function verificationSources(state: Record<string, unknown>): Verificatio
       const call = message.role === 'tool' && typeof message.callId === 'string' ? callContext.get(message.callId) : undefined;
       const execution = message.role === 'tool' ? { callId: message.callId, outcome: message.outcome ?? 'unknown', ...(call ? { tool: call.name,
         ...(JSON.stringify(call.arguments ?? null).length <= 2_000 ? { exactArguments: call.arguments ?? null } : { argumentsSource: `Original assistant call ${call.id}; arguments are retained separately, not clipped or inferred.` }) } : {}) } : undefined;
-      add(message.role === 'user' ? 'instruction' : 'observation', `${prefix}[${index}]; role ${message.role}`, message, role, execution);
+      add(originalInstructions && message.role === 'user' ? 'instruction' : 'observation', `${prefix}[${index}]; role ${message.role}`, message, role, execution);
     });
   };
   const archive = state.archive as readonly { messages: unknown }[] | undefined;
@@ -74,7 +74,7 @@ export function verificationSources(state: Record<string, unknown>): Verificatio
   transcript(state.transcript, 'transcript', mainCalls);
   for (const agent of (state.delegated ?? []) as Record<string, unknown>[]) {
     add('observation', `delegated assignment/result ${agent.id}`, { ...agent, evidence: undefined });
-    transcript(agent.evidence, `delegated ${agent.id}.evidence`, new Map(), `delegated:${agent.id}`);
+    transcript(agent.evidence, `delegated ${agent.id}.evidence`, new Map(), `delegated:${agent.id}`, false);
   }
   for (const work of (state.completedWork ?? []) as Record<string, unknown>[]) {
     add('observation', `host completed contract ${work.id ?? 'unavailable'}; scoped checks and publication, not final response approval`, work);

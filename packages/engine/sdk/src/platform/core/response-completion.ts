@@ -216,13 +216,13 @@ export class ResponseCompletionGuard {
     const held = { correction: '[Progress publication check] This interim text could not be accepted. Continue the authorized work with tools; publish only useful progress supported by observations. Do not repeat the withheld prose as a final answer.', assertCurrent: () => { throw new ResponseCompletionError('rejected'); } };
     try {
       const source = retainStrictJudgmentJson({ request: input.request, response: input.response,
-        transcript: completionTranscript(input.conversation.getMessageSnapshot()), tools: input.tools, delegated: [], requirements: null, initial: null });
+        transcript: completionTranscript(verificationMessages(input.conversation, input.conversation.getMessageSnapshot()) as ConversationMessageSnapshot[]), tools: input.tools, delegated: [], requirements: null, initial: null });
       const state = this.evidenceProjection.prepare(source.snapshot);
       const transcript = JSON.stringify(source.snapshot.transcript);
       const current = () => {
         options.signal?.throwIfAborted(); options.assertCurrent?.(); source.assertCurrent();
         if (input.response !== source.snapshot.response || input.request !== source.snapshot.request
-          || JSON.stringify(completionTranscript(input.conversation.getMessageSnapshot())) !== transcript) throw new ResponseCompletionError('rejected');
+          || JSON.stringify(completionTranscript(verificationMessages(input.conversation, input.conversation.getMessageSnapshot()) as ConversationMessageSnapshot[])) !== transcript) throw new ResponseCompletionError('rejected');
       };
       current();
       const owner = captureJudgmentPort(responseProgress.name, { ...options, assertCurrent: current, prepareResultCapture: prepareJudgmentResult });

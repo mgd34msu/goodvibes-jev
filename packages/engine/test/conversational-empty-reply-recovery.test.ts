@@ -19,6 +19,7 @@ import { ChannelReplyPipeline } from '../sdk/src/platform/channels/reply-pipelin
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { emitAgentCompleted } from '../sdk/src/platform/runtime/emitters/agents.js';
 import type { AgentRecord } from '../sdk/src/platform/tools/agent/manager.js';
+import { verificationMessages, verificationObservationText } from '../sdk/src/platform/core/verification/archive.js';
 
 function record(replyStyle?: 'conversational'): AgentRecord {
   return {
@@ -55,7 +56,8 @@ describe('a conversation always gets a response', () => {
 
     // Turn 1: the model returns nothing at all.
     expect(completeOrRegenerate(agent, chat, { content: '' })).toBe(true);
-    expect(chat.messages.at(-1)).toEqual({ role: 'user', content: CONVERSATIONAL_REGENERATION_REQUEST });
+    expect(chat.messages.at(-1)).toEqual({ role: 'user', content: verificationObservationText(CONVERSATIONAL_REGENERATION_REQUEST) });
+    expect(verificationMessages(chat, chat.messages).at(-1)?.role).toBe('system');
 
     // Turn 2: asked again, it answers.
     expect(completeOrRegenerate(agent, chat, { content: "Yes, I'm here." })).toBe(false);
@@ -91,7 +93,7 @@ describe('a conversation always gets a response', () => {
     for (let attempt = 0; attempt < 5; attempt += 1) {
       expect(completeOrRegenerate(agent, chat, { content: '' })).toBe(false);
     }
-    const requests = chat.messages.filter((m) => m.content === CONVERSATIONAL_REGENERATION_REQUEST);
+    const requests = chat.messages.filter((m) => m.content === verificationObservationText(CONVERSATIONAL_REGENERATION_REQUEST));
     expect(requests).toHaveLength(1);
   });
 

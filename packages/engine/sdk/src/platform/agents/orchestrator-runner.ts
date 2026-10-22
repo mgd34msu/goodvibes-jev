@@ -18,6 +18,7 @@ import { CIRCUIT_BREAKER_TRIPPED, ConsecutiveErrorBreaker } from '../core/circui
 import { collectResponseDelegates, ResponseCompletionGuard, ResponseCompletionError } from '../core/response-completion.js';
 import { createVerificationWriter } from '../core/verification/writer.js';
 import { VerificationStore } from '../core/verification/store.js';
+import { appendVerificationObservation, beginVerificationConversation } from '../core/verification/archive.js';
 import { failureEvidence, isBillingOrCreditError, isRateLimitOrQuotaError, isContextSizeExceededError, isNetworkTransportError } from '../types/errors.js';
 import { readFailure } from '@goodvibes-jev/engine/errors';
 import { AgentSession } from './session.js';
@@ -488,17 +489,8 @@ export async function runAgentTask(
 
     conversation = new ConversationManager();
     conversation.addUserMessage(record.task);
-    // Steer-wake resume: a wedged (failed) agent re-triggered via
-    // AgentManager.wakeWithSteer carries a resumeSteer seed. Restore honest prior
-    // context (a transcript-tail summary, not a tool-call replay) and inject the
-    // steer as a fresh user turn, then clear the seed so it never re-fires.
-    if (record.resumeSteer) {
-      if (record.resumeSteer.priorSummary) {
-        conversation.addSystemMessage(record.resumeSteer.priorSummary);
-      }
-      conversation.addUserMessage(record.resumeSteer.steer);
-      record.resumeSteer = undefined;
-    }
+    const wake = record.resumeSteer ? Object.freeze({ ...record.resumeSteer }) : undefined;
+    record.resumeSteer = undefined;
     // Conversation-snapshot bridge: hand AgentManager a live accessor onto THIS
     // ConversationManager instance so a fleet tab can render a full-fidelity
     // transcript while the agent runs. `activeConversation` is a separate
@@ -564,14 +556,19 @@ export async function runAgentTask(
         },
       }),
     });
+    beginVerificationConversation(conversation);
+    if (wake) {
+      if (wake.priorSummary) appendVerificationObservation(conversation, wake.priorSummary);
+      if (wake.referenceOnly) appendVerificationObservation(conversation, wake.steer);
+      else conversation.addUserMessage(wake.steer);
+    }
     let completionCorrection = '';
     let assertFinalCompletionCurrent: (() => void) | undefined;
     // Track which inter-agent messages have already been injected so a single
     // directive/broadcast is appended to the conversation exactly once (getMessages
     // returns all unexpired messages every turn until their TTL elapses).
     const injectedMessageIds = new Set<string>();
-    // Contract nudges a completion hold added as a user turn, reported consumed
-    // exactly as a drained steer is: after the next model call succeeds.
+    // Private contract nudges are consumed only after the next model call succeeds.
     const heldNudgeIdsAwaitingTurn: string[] = [];
 
     while (continueLoop) {
@@ -618,16 +615,16 @@ export async function runAgentTask(
         if (injectedMessageIds.has(msg.id)) continue;
         injectedMessageIds.add(msg.id);
         newUserInputThisTurn = true;
-        if (msg.kind === 'steer') {
+        if (msg.kind === 'steer' && msg.from === 'operator') {
           // A human steer (ProcessRegistry.steer) is a genuine user turn, not
           // an inter-agent directive, inject it verbatim, with none of the
           // "[Kind from sender]" framing used for agent-to-agent messages.
           conversation.addUserMessage(msg.content);
-          drainedSteerMessageIds.push(msg.id);
         } else {
           const kindLabel = (msg.kind[0] ?? '').toUpperCase() + msg.kind.slice(1);
-          conversation.addUserMessage(`[${kindLabel} from ${msg.from}]: ${msg.content}`);
+          appendVerificationObservation(conversation, `[${kindLabel} from ${msg.from}]: ${msg.content}`);
         }
+        if (msg.kind === 'steer') drainedSteerMessageIds.push(msg.id);
       }
 
       const contextWindowAwarenessEnabled = context.featureFlagManager?.isEnabled('agent-context-window-awareness') ?? true;
@@ -1138,7 +1135,7 @@ export async function runAgentTask(
         }
         if (repeatObservation?.stuck && worstCount >= LOOP_USER_THRESHOLD) {
           logger.warn(`Agent ${record.id}: loop detected, ${worstTool} called ${worstCount} times with identical args`);
-          conversation.addUserMessage(
+          appendVerificationObservation(conversation,
             `You are repeating the same tool call. ${worstTool} has been called ${worstCount} times with identical requested arguments and no meaningful progress in the retained results. Do NOT call ${worstTool} with these arguments again. Identify what you were trying to accomplish and take a different action.`,
           );
         } else if (repeatObservation?.stuck && worstCount >= LOOP_SYSTEM_THRESHOLD) {

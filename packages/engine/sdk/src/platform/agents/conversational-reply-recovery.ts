@@ -23,6 +23,7 @@
  */
 import type { AgentRecord } from '../tools/agent/index.js';
 import { setAgentProgress } from './progress-audience.js';
+import { appendVerificationObservation, verificationMessages, verificationObservationText } from '../core/verification/archive.js';
 
 /**
  * What the person receives when the model produced nothing twice.
@@ -65,8 +66,8 @@ export function isConversationalRun(record: Pick<AgentRecord, 'replyStyle'>): bo
 
 /** True when the one allowed regeneration was already requested this run. */
 function regenerationAlreadySpent(conversation: RecoveryConversation): boolean {
-  return conversation.getMessageSnapshot().some(
-    (message) => message.role === 'user' && message.content === CONVERSATIONAL_REGENERATION_REQUEST,
+  return verificationMessages(conversation, conversation.getMessageSnapshot()).some(
+    (message) => message.role === 'system' && message.content === verificationObservationText(CONVERSATIONAL_REGENERATION_REQUEST),
   );
 }
 
@@ -100,7 +101,7 @@ export function completeOrRegenerate(
     return false;
   }
   if (!isConversationalRun(record) || regenerationAlreadySpent(conversation)) return false;
-  conversation.addUserMessage(CONVERSATIONAL_REGENERATION_REQUEST);
+  appendVerificationObservation(conversation, CONVERSATIONAL_REGENERATION_REQUEST);
   // OWNER. Someone waiting on a reply is owed the reason it is taking a
   // second pass.
   setAgentProgress(record, 'The reply came back empty; answering again…', 'owner');

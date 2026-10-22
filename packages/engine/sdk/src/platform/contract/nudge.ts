@@ -221,14 +221,14 @@ export function nudgeDeliveryFor(state: NudgeTargetState): NudgeDelivery | 'resp
 export interface NudgeTransport {
   readonly messageBus: Pick<AgentMessageBus, 'send'>;
   readonly agentManager: {
-    wakeWithSteer(agentId: string, steer: string, options?: { readonly allowCompleted?: boolean }): { readonly woke: boolean; readonly reason: string };
+    wakeWithSteer(agentId: string, steer: string, options?: { readonly allowCompleted?: boolean; readonly referenceOnly?: true }): { readonly woke: boolean; readonly reason: string };
   };
   /** `contract.nudgeTtlMs`: how long a mid-run nudge waits on the bus for the agent's next turn. */
   readonly nudgeTtlMs: number;
 }
 
 export type NudgeDispatch =
-  /** The held completion returns this, and the loop adds `message` as the next user turn. */
+  /** The held completion supplies this message as private repair context. */
   | { readonly kind: 'continue'; readonly message: string; readonly nudgeId: string }
   | { readonly kind: 'sent' }
   | { readonly kind: 'woke' }
@@ -236,10 +236,8 @@ export type NudgeDispatch =
   | { readonly kind: 'undelivered'; readonly reason: string };
 
 /**
- * Delivers a nudge by its recorded path. A held agent gets it as its hold's
- * continuation; a running agent through the bus as a steer, injected verbatim
- * before its next model call; a stopped agent by waking it with the text as a
- * fresh user turn (a completed one only with `allowCompleted`).
+ * Delivers repair feedback by the recorded hold, inbox or wake path. Every
+ * path preserves runtime provenance; completed units require allowCompleted.
  */
 export function dispatchNudge(nudge: Nudge, state: Exclude<NudgeTargetState, 'gone'>, transport: NudgeTransport): NudgeDispatch {
   if (state === 'held') return { kind: 'continue', message: nudge.text, nudgeId: nudge.id };
@@ -247,6 +245,6 @@ export function dispatchNudge(nudge: Nudge, state: Exclude<NudgeTargetState, 'go
     const sent = transport.messageBus.send(CONTRACT_RUNNER_AGENT_ID, nudge.agentId, nudge.text, { kind: 'steer', ttlMs: transport.nudgeTtlMs, id: nudge.id });
     return sent ? { kind: 'sent' } : { kind: 'undelivered', reason: 'the message bus refused the nudge' };
   }
-  const wake = transport.agentManager.wakeWithSteer(nudge.agentId, nudge.text, state === 'completed' ? { allowCompleted: true } : undefined);
+  const wake = transport.agentManager.wakeWithSteer(nudge.agentId, nudge.text, { referenceOnly: true, ...(state === 'completed' ? { allowCompleted: true } : {}) });
   return wake.woke ? { kind: 'woke' } : { kind: 'undelivered', reason: wake.reason };
 }

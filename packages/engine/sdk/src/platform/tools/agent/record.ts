@@ -124,10 +124,8 @@ export interface AgentRecord extends ProgressBearingRecord {
   /**
    * Transient wake seed set by {@link AgentManager.wakeWithSteer} when a steer
    * re-triggers a wedged (terminally-failed) agent. runAgentTask consumes it on
-   * the next run: it seeds the fresh conversation with a summary of the prior
-   * run's transcript tail (honest context, not a risky tool-call replay) and the
-   * steer as a user turn, then clears the field. Never persisted across a clean
-   * completion.
+   * the next run, retaining prior context and whether this is owner input or
+   * reference-only runtime feedback, then clears the field.
    */
-  resumeSteer?: { readonly steer: string; readonly priorSummary?: string | undefined } | undefined;
+  resumeSteer?: { readonly steer: string; readonly priorSummary?: string | undefined; readonly referenceOnly?: true } | undefined;
 }

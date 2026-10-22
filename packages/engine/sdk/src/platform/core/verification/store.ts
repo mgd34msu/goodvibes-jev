@@ -48,11 +48,15 @@ export class VerificationStore {
         if (value.kind === 'archive' && value.value && typeof value.value === 'object') {
           const entry = value.value as VerificationArchive;
           if (Array.isArray(entry.derived) && entry.derived.every(pair => Array.isArray(pair) && Number.isSafeInteger(pair[0]) && typeof pair[1] === 'string')) {
+            if (entry.runtimeMessages !== undefined && (!Array.isArray(entry.runtimeMessages)
+              || entry.runtimeMessages.some(pair => !Array.isArray(pair) || !Number.isSafeInteger(pair[0]) || pair[0] < 0 || typeof pair[1] !== 'string')))
+              throw new VerificationHeldError('invalid runtime message provenance');
             if (Array.isArray(entry.histories)) for (const history of entry.histories) if (history && Array.isArray(history.messages)) this.histories.set(verificationHash(history), history);
             const metadata = value.value as { historyKeys?: string[]; branch?: string };
             if (Array.isArray(metadata.historyKeys) && metadata.historyKeys.some(key => typeof key !== 'string' || !this.histories.has(key))) throw new VerificationHeldError('missing archived original source');
             this.archive = { branch: typeof metadata.branch === 'string' ? metadata.branch : 'main',
-              histories: Array.isArray(metadata.historyKeys) ? metadata.historyKeys.flatMap(key => this.histories.get(key) ?? []) : [...this.histories.values()], derived: entry.derived };
+              histories: Array.isArray(metadata.historyKeys) ? metadata.historyKeys.flatMap(key => this.histories.get(key) ?? []) : [...this.histories.values()], derived: entry.derived,
+              ...(entry.runtimeMessages ? { runtimeMessages: entry.runtimeMessages } : {}) };
             this.archives.set(this.archive.branch!, this.archive);
           }
         }
@@ -101,8 +105,11 @@ export class VerificationStore {
       if (!this.histories.has(key)) { this.append('history', key, history); this.histories.set(key, history); }
     }
     const branch = value.branch ?? 'main', previous = this.archives.get(branch);
-    const position = { branch, historyKeys: value.histories.map(history => verificationHash(history)), derived: value.derived };
-    if (!previous || JSON.stringify(previous.derived) !== JSON.stringify(value.derived) || JSON.stringify(previous.histories.map(history => verificationHash(history))) !== JSON.stringify(position.historyKeys))
+    const position = { branch, historyKeys: value.histories.map(history => verificationHash(history)), derived: value.derived,
+      ...(value.runtimeMessages?.length ? { runtimeMessages: value.runtimeMessages } : {}) };
+    if (!previous || JSON.stringify(previous.derived) !== JSON.stringify(value.derived)
+      || JSON.stringify(previous.runtimeMessages ?? []) !== JSON.stringify(value.runtimeMessages ?? [])
+      || JSON.stringify(previous.histories.map(history => verificationHash(history))) !== JSON.stringify(position.historyKeys))
       this.append('archive', verificationHash(position), position);
     this.archive = value; this.archives.set(branch, value);
   }

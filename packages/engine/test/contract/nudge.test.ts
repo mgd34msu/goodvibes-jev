@@ -175,7 +175,7 @@ describe('delivery', () => {
     expect(nudgeDeliveryFor('gone')).toBe('respawn');
   });
 
-  test('a held agent continues with the nudge as its next user turn', () => {
+  test('a held agent receives the continuation for its private repair context', () => {
     const t = transport();
     expect(dispatchNudge(nudge, 'held', t.value)).toEqual({ kind: 'continue', message: 'fix it', nudgeId: 'u1.n1' });
     expect(t.sent).toEqual([]);
@@ -192,7 +192,7 @@ describe('delivery', () => {
     const t = transport();
     expect(dispatchNudge(nudge, 'failed', t.value)).toEqual({ kind: 'woke' });
     expect(dispatchNudge(nudge, 'completed', t.value)).toEqual({ kind: 'woke' });
-    expect(t.woken).toEqual([['agent-1', 'fix it', undefined], ['agent-1', 'fix it', { allowCompleted: true }]]);
+    expect(t.woken).toEqual([['agent-1', 'fix it', { referenceOnly: true }], ['agent-1', 'fix it', { referenceOnly: true, allowCompleted: true }]]);
     expect(dispatchNudge(nudge, 'failed', transport(true, { woke: false, reason: 'unknown-agent' }).value)).toEqual({ kind: 'undelivered', reason: 'unknown-agent' });
   });
 });
