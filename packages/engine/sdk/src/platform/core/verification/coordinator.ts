@@ -149,7 +149,10 @@ export class CompletionVerification {
     const userTexts = new Set(instructions.filter(source => source.messageRole === 'user' && source.completeMessage).flatMap(source => {
       try { const value = JSON.parse(source.text); return typeof value.content === 'string' ? [value.content] : []; } catch { return []; }
     }));
-    const originals = instructions.filter(source => !((source.reference.startsWith('current user request') || source.reference.startsWith('original request at turn entry')) && userTexts.has(source.text)));
+    const currentTexts = new Set(instructions.filter(source => source.reference.startsWith('current user request')).map(source => source.text));
+    const originals = instructions.filter(source => !((source.reference.startsWith('current user request') || source.reference.startsWith('original request at turn entry')) && userTexts.has(source.text))
+      && !(source.reference.startsWith('original request at turn entry') && currentTexts.has(source.text)))
+      .sort((left, right) => Number(left.reference.startsWith('current user request')) - Number(right.reference.startsWith('current user request')));
     const exactScopeFits = bounded(originals, VERIFICATION_OVERVIEW_CHARACTERS);
     // Large instruction histories are reduced with the same source qualification
     // as observations, then the ledger is audited against EVERY original page.
@@ -170,7 +173,13 @@ export class CompletionVerification {
     catch (error) {
       if (!(error instanceof VerificationScopeFallback)) throw error;
       access.assertCurrent();
-      return originals.map(source => ({ id: `original-${source.id}`, text: source.text, sources: [source.id] }));
+      // Corrections change earlier obligations. Independent checks of each old
+      // message can resurrect a withdrawn restriction or completed task. Keep
+      // every original byte and judge their ordered meaning as one scope.
+      return [{ id: `original-${verificationHash(originals.map(source => source.id)).slice(0, 24)}`,
+        text: JSON.stringify({ meaning: 'Fulfill the active original obligations in this complete ordered instruction sequence. Later corrections supersede earlier instructions; restrictions apply from when imposed. Historical, completed or withdrawn instructions must not become new work. Preserve all still-active obligations and requested deliverables.',
+          orderedInstructions: originals.map(source => ({ reference: source.reference, text: source.text })) }),
+        sources: originals.map(source => source.id) }];
     }
   }
 

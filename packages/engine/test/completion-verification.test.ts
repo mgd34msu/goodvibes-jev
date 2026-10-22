@@ -991,6 +991,26 @@ test('unsettled scope paraphrases fall back to exact original instructions witho
   expect(result.findings).toHaveLength(1);
   const checked = fake.requests.find(entry => entry.context?.battery === 'engine.verification.requirement')!.state as never as { requirement: { text: string; id: string }; scopeBasis: string };
   expect(checked.requirement.id).toStartWith('original-');
-  expect(JSON.parse(checked.requirement.text).content).toBe(request);
+  expect(JSON.parse(JSON.parse(checked.requirement.text).orderedInstructions[0].text).content).toBe(request);
   expect(checked.scopeBasis).toContain('original instruction bytes');
+});
+
+test.each([true, false])('scope fallback keeps later authorization after its superseded restriction (current message present: %s)', async currentMessagePresent => {
+  const earlier = 'Do not edit the review report.', later = 'Correct the stale runtime statements in the same review report.';
+  const fake = fakePort((name, question, input) => {
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    const scope = (input as unknown as { requirement?: { text: string } }).requirement?.text;
+    return noulAnswer(name.startsWith('fits_') ? .99 : name === 'lost' ? .6
+      : name === 'quality_gap' && scope?.includes(earlier) && !scope.includes(later) ? .99 : .01);
+  });
+  const result = await new CompletionVerification(verificationWriter).prepare({ ...state(), request: later,
+    initial: { request: later, transcript: [{ role: 'user', content: earlier }] },
+    transcript: [{ role: 'user', content: earlier }, ...(currentMessagePresent ? [{ role: 'user', content: later }] : []),
+      { role: 'tool', callId: 'authorized-edit', content: 'Corrected only the stale runtime statements in review.md.' }] }, access(fake.port));
+  expect(result.findings).toEqual([]);
+  const checks = fake.requests.filter(entry => entry.context?.battery === 'engine.verification.requirement');
+  expect(checks).toHaveLength(1);
+  const requirement = (checks[0]!.state as unknown as { requirement: { text: string } }).requirement;
+  const originals = JSON.parse(requirement.text).orderedInstructions;
+  expect(originals.map((entry: { text: string }) => entry.text.startsWith('{') ? JSON.parse(entry.text).content : entry.text)).toEqual([earlier, later]);
 });
