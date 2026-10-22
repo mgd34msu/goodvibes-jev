@@ -642,7 +642,17 @@ export class CompletionVerification {
     for (const [position, source] of sources.entries()) { this.originals.set(source.id, source); this.sourceOrder.set(source.id, position); this.store.rememberSource(source); }
     const ledger = await this.ledger(sources.filter(source => source.kind === 'instruction'), access);
     const observations = sources.filter(source => source.kind !== 'answer');
-    let indexed = observations.reduce((total, source) => total + source.text.length, 0) > 250_000;
+    const initial = full.initial as { transcript?: readonly Record<string, unknown>[] } | null;
+    const earlierCalls = new Set((initial?.transcript ?? []).filter(message => message.role === 'tool').map(message => message.callId));
+    const currentCalls = new Set((initial?.transcript ? (full.transcript ?? []) as readonly Record<string, unknown>[] : [])
+      .filter(message => message.role === 'tool' && typeof message.callId === 'string' && !earlierCalls.has(message.callId)).map(message => message.callId));
+    const currentResults = observations.filter(source => source.execution && currentCalls.has(source.execution.callId));
+    // Current native results already provide a primary starting point. When
+    // history needs reduction merely to fit the overview, retrieve originals
+    // and audit every interval instead of drafting a tree of history summaries.
+    // An index still supplies no evidence or authority to approve completion.
+    let indexed = observations.reduce((total, source) => total + source.text.length, 0) > 250_000
+      || currentResults.length > 0 && !bounded(observations.map(verificationWireSource), VERIFICATION_OVERVIEW_CHARACTERS);
     let overview: VerificationReceipt[];
     if (indexed) overview = this.sourceIndex(observations);
     else {
@@ -685,11 +695,6 @@ export class CompletionVerification {
     // approved. Keep a bounded saved answer intact beside its exact receipt;
     // otherwise older partial work displaces the accepted result itself.
     const checkedAnswer = answerFrames.length <= 2 ? answerFrames.flat() : [...answerFrames[0]!, ...answerFrames.at(-1)!];
-    const initial = full.initial as { transcript?: readonly Record<string, unknown>[] } | null;
-    const earlierCalls = new Set((initial?.transcript ?? []).filter(message => message.role === 'tool').map(message => message.callId));
-    const currentCalls = new Set((initial?.transcript ? (full.transcript ?? []) as readonly Record<string, unknown>[] : [])
-      .filter(message => message.role === 'tool' && typeof message.callId === 'string' && !earlierCalls.has(message.callId)).map(message => message.callId));
-    const currentResults = observations.filter(source => source.execution && currentCalls.has(source.execution.callId));
     const executions = new Map<unknown, VerificationSource[]>();
     for (const source of currentResults) {
       const id = source.execution!.callId, pages = executions.get(id) ?? [];
@@ -708,7 +713,12 @@ export class CompletionVerification {
       : resultFrames.at(-1) ?? [];
     // Bounded exact upstream acceptance/result and current tool observations.
     // None of them is a permit to publish this turn's proposed response.
-    const recent = [...new Map([...hostPrimary, ...checkedAnswer, ...latestResults].map(source => [source.id, source])).values()];
+    // A small follow-up may test, edit the report, then inspect the diff. The
+    // last diff alone cannot prove its test result. Retain all current results
+    // when they fit the same two-frame budget as a bounded latest execution.
+    const currentPrimary = currentResults.length > 0 && bounded(currentResults.map(verificationWireSource), VERIFICATION_FRAME_CHARACTERS * 2)
+      ? currentResults : latestResults;
+    const recent = [...new Map([...hostPrimary, ...checkedAnswer, ...currentPrimary].map(source => [source.id, source])).values()];
     const rememberSources = () => { this.previousSources = { identity: access.identity, request: requestKey, ids: new Set(sources.map(source => source.id)) }; };
     const key = verificationHash([sources.map(source => source.id), ledger, full.response, overview.map(node => this.compactNode(node))]);
     if (this.finalEvidence?.key !== key || this.finalEvidence.identity !== access.identity)

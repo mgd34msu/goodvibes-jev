@@ -122,6 +122,44 @@ test('the exact previously approved answer remains primary beside its review rec
   expect(JSON.stringify(result.state.transcript)).toContain('ACCEPTED-RESULT-TRAILER');
 });
 
+test('a bounded native follow-up checks all current results without redrafting earlier history', async () => {
+  const before = state('EARLIER-REVIEW-OBSERVATION: original file inspection. '.repeat(900));
+  const input = { ...before, initial: { request: before.request, transcript: before.transcript },
+    transcript: [...before.transcript,
+      { role: 'tool', callId: 'native-tests', content: 'NATIVE-TEST-RESULT: two passed; the existing discount defect failed as expected.' },
+      { role: 'tool', callId: 'report-update', content: 'REPORT-UPDATE: only the verification section changed.' },
+      { role: 'tool', callId: 'final-diff', content: 'FINAL-DIFF: every original implementation and test hash is unchanged.' }],
+  };
+  const operations: string[] = [];
+  const writer: VerificationWriter = async request => { operations.push(request.operation); return verificationWriter(request); };
+  const fake = good();
+  expect((await new CompletionVerification(writer).prepare(input, access(fake.port))).findings).toHaveLength(0);
+  expect(operations).toEqual(['requirements']);
+  const first = fake.requests.find(request => request.context?.battery === 'engine.verification.requirement')!;
+  const opened = (first.state as unknown as { opened: { sources: { execution?: { callId?: string } }[] } }).opened.sources;
+  expect(opened.map(source => source.execution?.callId)).toEqual(['native-tests', 'report-update', 'final-diff']);
+  const audited = fake.requests.filter(request => request.context?.battery === 'engine.verification.audit')
+    .flatMap(request => (request.state as unknown as { sources: { id: string }[] }).sources.map(source => source.id));
+  expect(new Set(audited)).toEqual(new Set(verificationSources(input).map(source => source.id)));
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(true);
+});
+
+test('a native follow-up cannot hide contrary evidence in a medium history', async () => {
+  const before = state('Earlier original source. '.repeat(1000) + 'HIDDEN-MIDDLE-DEFECT' + ' Later original source. '.repeat(1000));
+  const input = { ...before, initial: { request: before.request, transcript: before.transcript },
+    transcript: [...before.transcript, { role: 'tool', callId: 'recent-write', content: 'A report was written.' }] };
+  const fake = fakePort((name, question, raw) => {
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    const current = raw as unknown as { sources?: unknown; opened?: { sources: unknown } };
+    return noulAnswer(name === 'missed' && JSON.stringify(current.sources).includes('HIDDEN-MIDDLE-DEFECT')
+      || name === 'unfinished' && JSON.stringify(current.opened?.sources).includes('HIDDEN-MIDDLE-DEFECT') ? .99 : .01);
+  });
+  const result = await new CompletionVerification(verificationWriter).prepare(input, access(fake.port));
+  expect(result.findings.length).toBeGreaterThan(0);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.audit')).toBe(true);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(false);
+});
+
 test('a missing-proof reading which demands source retrieves existing recovery before ordering a repair', async () => {
   const before = state('Earlier partial progress. '.repeat(15_000));
   const input = { ...before, initial: { request: before.request, transcript: before.transcript },
