@@ -6,9 +6,11 @@ import { dirname, join, resolve } from 'node:path';
 import { pathToFileURL } from 'node:url';
 import { COMMANDS, PACKAGE, SERVICE, assertOwnedFiles, atomicWrite, contained, dataOwner, digest, isReleaseInUse, plainPath, present, quote, readDataId, readInstallation, receiptPath, run, stopService, unitPath, validateLayout, withLock, type Installation, type Layout, type Run } from './installation.ts';
 
-export interface Options extends Layout { port: number; service: boolean; runtimeDir: string; workspace?: string }
+export interface Options extends Layout { port: number; service: boolean; runtimeDir: string; nodePath?: string; workspace?: string }
 const ROOT = resolve(import.meta.dir, '..');
-export function parseOptions(args: string[], home = realpathSync(process.env.HOME ?? '')): Options {
+export function parseOptions(args: string[], home = realpathSync(process.env.HOME ?? ''), runtime = {
+  bunPath: process.execPath, findNode: (): string | null => Bun.which('node'),
+}): Options {
   const values: Record<string, string> = {};
   let service: boolean | undefined;
   for (let i = 0; i < args.length; i++) {
@@ -20,11 +22,14 @@ export function parseOptions(args: string[], home = realpathSync(process.env.HOM
   }
   const prefix = resolve(values['--prefix'] ?? join(home, '.local/share/goodvibes-jev'));
   const old = readInstallation(prefix);
+  const runtimeDir = resolve(values['--runtime-dir'] ?? dirname(runtime.bunPath));
+  const adjacentNode = join(runtimeDir, 'node');
+  const nodePath = values['--runtime-dir'] || existsSync(adjacentNode) ? adjacentNode : resolve(runtime.findNode() ?? adjacentNode);
   const options = { home, prefix, binDir: resolve(values['--bin-dir'] ?? old?.binDir ?? join(home, '.local/bin')),
     dataDir: resolve(values['--data-dir'] ?? old?.dataDir ?? join(home, '.local/share/goodvibes-jev-data')),
     port: Number(values['--port'] ?? old?.port ?? 3421), service: service ?? old?.service ?? true,
     workspace: realpathSync(resolve(values['--workspace'] ?? old?.workspace ?? ROOT)),
-    runtimeDir: resolve(values['--runtime-dir'] ?? dirname(process.execPath)) };
+    runtimeDir, nodePath };
   validateLayout(options);
   if (!statSync(options.workspace).isDirectory()) throw new Error('--workspace must name a project directory.');
   if (options.workspace === home || options.workspace === '/' || contained(options.dataDir, options.workspace) || contained(options.prefix, options.workspace)) throw new Error('--workspace must name a project directory outside installation data.');
@@ -129,7 +134,10 @@ async function stage(root: string, release: string, options: Options, commit: st
   cpSync(join(root, 'products/webui/dist'), join(release, 'webui'), { recursive: true, dereference: true });
   if (!existsSync(join(release, 'webui/index.html'))) throw new Error('WebUI build did not produce index.html.');
   mkdirSync(join(release, 'runtime'));
-  for (const binary of ['bun', 'node']) { copyFileSync(join(options.runtimeDir, binary), join(release, 'runtime', binary)); chmodSync(join(release, 'runtime', binary), 0o755); }
+  for (const binary of ['bun', 'node']) {
+    copyFileSync(binary === 'node' && options.nodePath ? options.nodePath : join(options.runtimeDir, binary), join(release, 'runtime', binary));
+    chmodSync(join(release, 'runtime', binary), 0o755);
+  }
   copyFileSync(join(release, 'daemon', `goodvibes-daemon-${target}.bun.LICENSE.md`), join(release, 'runtime/BUN-LICENSE.md'));
   for (const product of ['daemon', 'tui', 'agent', 'webui']) copyFileSync(join(root, 'products', product, 'LICENSE'), join(release, product, 'LICENSE'));
   execute('bun', ['build', join(ROOT, 'scripts/uninstall.ts'), '--target=bun', '--outfile', join(release, 'uninstall.js')]);
@@ -233,7 +241,7 @@ export async function install(options: Options, hooks: InstallHooks = {}): Promi
         execute('systemctl', ['--user', 'disable', SERVICE]);
         rmSync(unitPath(options)); execute('systemctl', ['--user', 'daemon-reload']);
       }
-      const { runtimeDir: _runtimeDir, ...installedOptions } = options;
+      const { runtimeDir: _runtimeDir, nodePath: _nodePath, ...installedOptions } = options;
       const receipt: Installation = { ...installedOptions, schema: 1, package: PACKAGE, id, release: releaseName, sourceCommit: commit,
         service: options.service, unit: digest(unit), wrappers };
       atomicWrite(receiptPath(options), JSON.stringify(receipt, null, 2) + '\n');

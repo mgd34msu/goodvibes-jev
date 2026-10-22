@@ -52,6 +52,20 @@ afterEach(() => {
 });
 
 describe('suite install and uninstall', () => {
+  test('default installation locates Node separately when it is not beside Bun', () => {
+    const bunDir = join(home, 'bun-runtime'), nodeDir = join(home, 'node-runtime');
+    mkdirSync(bunDir); mkdirSync(nodeDir);
+    writeFileSync(join(bunDir, 'bun'), 'Bun runtime');
+    const nodePath = join(nodeDir, 'node'); writeFileSync(nodePath, 'Node runtime');
+    const runtime = { bunPath: join(bunDir, 'bun'), findNode: () => nodePath };
+    const defaults = parseOptions(['--no-service'], home, runtime);
+    expect(defaults.runtimeDir).toBe(bunDir);
+    expect(defaults.nodePath).toBe(nodePath);
+    expect(existsSync(defaults.nodePath!)).toBe(true);
+    const explicit = parseOptions(['--no-service', '--runtime-dir', bunDir], home, runtime);
+    expect(explicit.nodePath).toBe(join(bunDir, 'node'));
+  });
+
   test('installs all command links and preserves credentials/data on removal', async () => {
     await install(options, hooks);
     const receipt = readInstallation(options.prefix)!;
