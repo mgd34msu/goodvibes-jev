@@ -36,7 +36,7 @@ test('large-history retrieval starts with actual scoped host acceptance and stil
   const checks = fake.requests.filter(request => request.context?.battery === 'engine.verification.requirement');
   const first = checks[0]!.state as unknown as { opened: { sources: { text: string; reference: string }[] } };
   expect(first.opened.sources.some(source => source.reference.includes('; acceptance and publication;') && source.text.includes('actual-check'))).toBe(true);
-  const receipt = JSON.parse(first.opened.sources.map(source => source.text).join(''));
+  const receipt = JSON.parse(first.opened.sources.filter(source => source.reference.includes('; acceptance and publication;')).map(source => source.text).join(''));
   expect(receipt.id).toBe('finished-review');
   expect(receipt.ask).toBe('Review all source and write review.md.');
   expect(receipt.criteria).toBe(input.completedWork[1]!.criteria);
@@ -57,6 +57,27 @@ test('a first draft retains current tool results beside completed work rather th
   const first = fake.requests.find(request => request.context?.battery === 'engine.verification.requirement')!.state as unknown as { opened: { sources: { text: string; execution?: { callId?: string } }[] } };
   expect(first.opened.sources.some(source => source.text.includes('CURRENT-DELIVERY-PROOF') && source.execution?.callId === 'current-file-inspection')).toBe(true);
   expect(first.opened.sources.some(source => source.text.includes('host-completed-contract'))).toBe(true);
+});
+
+test('the exact previously approved answer remains primary beside its review receipt and current delivery proof', async () => {
+  const before = state('An earlier partial review. '.repeat(15_000));
+  const input = { ...before, initial: { request: before.request, transcript: before.transcript },
+    transcript: [...before.transcript, { role: 'tool', callId: 'current-file-inspection', content: 'Current report and ZIP exist.' }],
+    completedWork: [{ kind: 'host-completed-contract', id: 'review', status: 'passed', savedAnswerDigest: 'native-digest',
+      finalCheck: { result: 'pass' }, contentReview: { wellFormed: true, matchesSavedAnswer: true, record: { passed: true } },
+      answer: 'ACCEPTED-RESULT-HEADER: all requested source inspected.\n' + 'Exact accepted static finding. '.repeat(750) + '\nACCEPTED-RESULT-TRAILER: canonical report and ZIP delivered.' }] };
+  const fake = fakePort((name, _question, raw) => {
+    const current = raw as unknown as { opened?: { sources?: unknown[] } };
+    const body = JSON.stringify(current.opened?.sources ?? []);
+    const missing = current.opened && (!body.includes('ACCEPTED-RESULT-HEADER') || !body.includes('ACCEPTED-RESULT-TRAILER'));
+    return noulAnswer(missing && ['unfinished', 'quality_gap', 'needs_source'].includes(name) ? .99 : .01);
+  });
+  const result = await new CompletionVerification(verificationWriter).prepare(input, access(fake.port));
+  expect(result.findings).toHaveLength(0);
+  const first = fake.requests.find(request => request.context?.battery === 'engine.verification.requirement')!;
+  expect(JSON.stringify((first.state as unknown as { opened: unknown }).opened)).toContain('ACCEPTED-RESULT-TRAILER');
+  expect(JSON.stringify(result.state.transcript)).toContain('ACCEPTED-RESULT-HEADER');
+  expect(JSON.stringify(result.state.transcript)).toContain('ACCEPTED-RESULT-TRAILER');
 });
 
 test('a missing-proof reading which demands source retrieves existing recovery before ordering a repair', async () => {

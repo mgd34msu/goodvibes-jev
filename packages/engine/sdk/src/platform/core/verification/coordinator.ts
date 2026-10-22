@@ -656,6 +656,13 @@ export class CompletionVerification {
     const hostPrimary = preferred
       ? verificationFrames(preferred, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length)[0] ?? []
       : [];
+    const hostReference = hostPrimary[0]?.reference.split('; acceptance and publication;')[0];
+    const savedAnswer = hostReference ? observations.filter(source => source.reference.startsWith(`${hostReference}; exact saved answer;`)) : [];
+    const answerFrames = verificationFrames(savedAnswer, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length);
+    // The approval digest alone does not tell a reader WHICH result was
+    // approved. Keep a bounded saved answer intact beside its exact receipt;
+    // otherwise older partial work displaces the accepted result itself.
+    const checkedAnswer = answerFrames.length <= 2 ? answerFrames.flat() : [...answerFrames[0]!, ...answerFrames.at(-1)!];
     const initial = full.initial as { transcript?: readonly Record<string, unknown>[] } | null;
     const earlierCalls = new Set((initial?.transcript ?? []).filter(message => message.role === 'tool').map(message => message.callId));
     const currentCalls = new Set((initial?.transcript ? (full.transcript ?? []) as readonly Record<string, unknown>[] : [])
@@ -677,9 +684,9 @@ export class CompletionVerification {
     const latestResults = latestExecution
       ? resultFrames.length <= 2 ? resultFrames.flat() : [...resultFrames[0]!, ...resultFrames.at(-1)!]
       : resultFrames.at(-1) ?? [];
-    // At most three native frames: one coherent upstream acceptance plus two
-    // frames of this turn's actual tool result. Neither is a completion permit.
-    const recent = [...new Map([...hostPrimary, ...latestResults].map(source => [source.id, source])).values()];
+    // Bounded exact upstream acceptance/result and current tool observations.
+    // None of them is a permit to publish this turn's proposed response.
+    const recent = [...new Map([...hostPrimary, ...checkedAnswer, ...latestResults].map(source => [source.id, source])).values()];
     const rememberSources = () => { this.previousSources = { identity: access.identity, request: requestKey, ids: new Set(sources.map(source => source.id)) }; };
     const key = verificationHash([sources.map(source => source.id), ledger, full.response, overview.map(node => this.compactNode(node))]);
     if (this.finalEvidence?.key !== key || this.finalEvidence.identity !== access.identity)
