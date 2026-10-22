@@ -26,7 +26,7 @@
     "build": "bun packages/engine/scripts/build.ts && bun run products:build",
     "prepare:sdk": "bun packages/engine/scripts/prepare-sdk-package.ts",
     "sync:version": "bun packages/engine/scripts/sync-version-fallback.ts",
-    "refresh:contracts": "bun packages/engine/scripts/refresh-contract-artifacts.ts && bun packages/engine/scripts/generate-foundation-io-entries.ts && bun packages/engine/scripts/generate-openapi-contract.ts && bun packages/engine/scripts/generate-webui-facade.ts && bun packages/engine/scripts/generate-homeassistant-client.ts",
+    "refresh:contracts": "bun packages/engine/scripts/refresh-contract-artifacts.ts && bun packages/engine/scripts/generate-foundation-io-entries.ts && bun packages/engine/scripts/generate-openapi-contract.ts && bun packages/engine/scripts/generate-webui-facade.ts && bun packages/engine/scripts/generate-homeassistant-client.ts && bun packages/engine/scripts/refresh-product-contracts.ts",
     "foundation-io:generate": "bun packages/engine/scripts/generate-foundation-io-entries.ts",
     "webui-facade:generate": "bun packages/engine/scripts/generate-webui-facade.ts",
     "webui-facade:check": "bun packages/engine/scripts/generate-webui-facade.ts --check",
