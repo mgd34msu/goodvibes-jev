@@ -86,10 +86,16 @@ function safeLineage(raw: unknown, model: string): JudgmentLineage | undefined {
   if (raw === undefined) return undefined;
   const lineage = record(raw);
   const id = lineage['logicalRequestId'];
-  if (typeof id !== 'string' || !/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)) return INVALID();
-  const attempts = array(lineage['attempts'], 64);
+  // The native port losslessly encodes UUID nibbles as a-p to avoid accidental
+  // card-shaped decimal runs. Retained older receipts use ordinary UUIDs.
+  if (typeof id !== 'string' || !(/^[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(id)
+    || /^[a-p]{8}(?:-[a-p]{4}){3}-[a-p]{12}$/.test(id))) return INVALID();
+  const attempts = array(lineage['attempts'], 128);
+  const omitted = lineage['omittedAttempts'];
+  if (omitted !== undefined && (typeof omitted !== 'number' || !Number.isSafeInteger(omitted) || omitted < 0)) return INVALID();
   return {
     logicalRequestId: id,
+    ...(omitted === undefined ? {} : { omittedAttempts: omitted }),
     attempts: attempts.map((rawAttempt: unknown) => {
       const attempt = record(rawAttempt);
       const number = nonnegative(attempt['attempt']);
