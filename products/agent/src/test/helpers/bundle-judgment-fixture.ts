@@ -33,9 +33,17 @@ export function startBundleJudgmentFixture(hold = false, uncertainSetup = false)
     calls.push(body);
     entered.resolve();
     if (hold) await release.promise;
-    const state = bundleRecord(body.state);
+    const setupQuestions = ['api_key', 'cloud_account', 'local_runtime', 'no_key_free', 'self_hosted', 'subscription'];
+    const setupReading = typeof body.state === 'string' && Object.keys(bundleRecord(body.questions)).length === setupQuestions.length
+      && setupQuestions.every(name => Object.hasOwn(bundleRecord(body.questions), name));
+    const state = bundleRecord(setupReading ? JSON.parse(String(body.state)) : body.state);
     const answers = Object.fromEntries(Object.entries(bundleRecord(body.questions)).map(([name, value]) => {
       const question = bundleRecord(value);
+      if (setupReading && setupQuestions.includes(name) && question.type === 'noul') {
+        const provider = bundleRecord(state.provider);
+        const auth = provider.auth === null ? {} : bundleRecord(provider.auth);
+        return [name, { type: 'noul', noul: uncertainSetup ? .5 : name === 'subscription' && auth.mode === 'oauth' ? .99 : .01 }];
+      }
       if (name === 'credential') {
         const key = typeof state.key === 'string' ? state.key : '';
         return [name, { type: 'noul', noul: isDeclaredSecretBearingConfigKey(key) ? 0.99 : paths.has(key) ? 0.01 : 0.5 }];

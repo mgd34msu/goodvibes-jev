@@ -447,22 +447,24 @@ describe('parseCliFlags', () => {
       workingDir: root,
     });
 
-    const providersText = await captureGoodVibesCliCommand(['providers', 'inspect', 'openai-subscriber'], configManager, root);
-    expect(providersText.result).toEqual({ handled: true, exitCode: 0 });
-    expect(providersText.output).toContain('setup: Subscription');
+    await withBundleJudgmentFixture(configManager, async withBackend => {
+      const providersText = await withBackend(() => captureGoodVibesCliCommand(['providers', 'inspect', 'openai-subscriber'], configManager, root));
+      expect(providersText.result).toEqual({ handled: true, exitCode: 0 });
+      expect(providersText.output).toContain('setup: Subscription');
 
-    const providersJson = await captureGoodVibesCliCommand(['providers', 'inspect', 'openai-subscriber', '--json'], configManager, root);
-    expect(providersJson.result).toEqual({ handled: true, exitCode: 0 });
-    expect((JSON.parse(providersJson.output) as { setup: { setupClass: string } }).setup.setupClass).toBe('subscription');
+      const providersJson = await withBackend(() => captureGoodVibesCliCommand(['providers', 'inspect', 'openai-subscriber', '--json'], configManager, root));
+      expect(providersJson.result).toEqual({ handled: true, exitCode: 0 });
+      expect((JSON.parse(providersJson.output) as { setup: { setupClass: string } }).setup.setupClass).toBe('subscription');
 
-    const modelsText = await captureGoodVibesCliCommand(['models', 'current'], configManager, root);
-    expect(modelsText.result).toEqual({ handled: true, exitCode: 0 });
-    expect(modelsText.output).toContain('setup:');
-    expect(modelsText.output).toContain('provider configured:');
+      const modelsText = await withBackend(() => captureGoodVibesCliCommand(['models', 'current'], configManager, root));
+      expect(modelsText.result).toEqual({ handled: true, exitCode: 0 });
+      expect(modelsText.output).toContain('setup:');
+      expect(modelsText.output).toContain('provider configured:');
 
-    const modelsJson = await captureGoodVibesCliCommand(['models', 'current', '--json'], configManager, root);
-    expect(modelsJson.result).toEqual({ handled: true, exitCode: 0 });
-    expect((JSON.parse(modelsJson.output) as { setup: { setupClass: string } }).setup.setupClass).toBeString();
+      const modelsJson = await withBackend(() => captureGoodVibesCliCommand(['models', 'current', '--json'], configManager, root));
+      expect(modelsJson.result).toEqual({ handled: true, exitCode: 0 });
+      expect((JSON.parse(modelsJson.output) as { setup: { setupClass: string } }).setup.setupClass).toBeString();
+    });
   });
 
   test('secrets test redacts resolved secret values in text and json output', async () => {

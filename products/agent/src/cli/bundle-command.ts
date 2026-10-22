@@ -92,19 +92,14 @@ function readAuthPosture(runtime: CliCommandRuntime) {
 
 async function buildProviderReadiness(services: RuntimeServices) {
   const snapshots = await listProviderRuntimeSnapshots(services.providerRegistry, { modelFamilyEnrichment: 'none' });
-  return snapshots.map((snapshot) => ({
+  return Promise.all(snapshots.map(async (snapshot) => ({
     provider: snapshot.providerId,
     active: snapshot.active,
     configured: snapshot.runtime.auth?.configured ?? true,
     configuredVia: snapshot.runtime.auth?.mode ?? 'unknown',
     models: snapshot.modelCount,
-    setup: classifyProviderSetup({
-      providerId: snapshot.providerId,
-      authMode: snapshot.runtime.auth?.mode,
-      configured: snapshot.runtime.auth?.configured ?? true,
-      modelCount: snapshot.modelCount,
-    }),
-  }));
+    setup: await classifyProviderSetup(snapshot, { site: 'agent.support-bundle.setup' }),
+  })));
 }
 
 export async function handleBundleCommand(runtime: CliCommandRuntime, options: JudgmentReadingOptions = {}): Promise<CliCommandOutput> {
