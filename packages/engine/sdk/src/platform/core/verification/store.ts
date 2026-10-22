@@ -19,8 +19,10 @@ export class VerificationStore {
   readonly archives = new Map<string, VerificationArchive>();
   constructor(root?: string, sessionId?: string) {
     if (!root || !sessionId) return;
-    if (!isAbsolute(root) || !/^[A-Za-z0-9_-]+$/.test(sessionId)) throw new Error('Invalid verification journal location');
-    this.path = join(resolve(root), '.goodvibes', 'verification', `${sessionId}.jsonl`);
+    if (!isAbsolute(root) || !/^[A-Za-z0-9_:-]+$/.test(sessionId)) throw new Error('Invalid verification journal location');
+    // Native daemon sessions use namespaced IDs. Encode their colon so the
+    // same identity has a portable filename; legacy session names stay exact.
+    this.path = join(resolve(root), '.goodvibes', 'verification', `${encodeURIComponent(sessionId)}.jsonl`);
     this.root = resolve(root);
     try {
       this.assertDirectories();

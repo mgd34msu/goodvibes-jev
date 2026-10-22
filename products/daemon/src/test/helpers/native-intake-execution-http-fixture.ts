@@ -3,7 +3,7 @@ import { spyOn } from 'bun:test';
 import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { spawnSync } from 'node:child_process';
-import { withDecisionLog, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
+import { withDecisionLog, type JudgmentPort, type JudgmentRequest, type Questions } from '@goodvibes-jev/judgment';
 import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
 import { BenchmarkStore, ProviderRegistry, type ChatRequest, type ChatResponse, type LLMProvider, type ModelDefinition } from '@goodvibes-jev/engine/sdk/platform/providers';
 import { WorkspaceRegistrationStore, sharedWorkspaceRegisterPath, legacyWorkspaceRegisterPath } from '@goodvibes-jev/engine/sdk/platform/workspace';
@@ -13,6 +13,7 @@ import { WEBUI_METHOD_ROUTES } from '@goodvibes-jev/engine/contracts/generated/w
 import { startDaemonFixture } from '../../testing/daemon-fixture.js';
 import * as nativeComposition from '../../runtime/native-work-execution-composition.js';
 import { makeOwnedTempDir } from './owned-temp.js';
+import { observeFixtureJudgmentFloors } from './judgment-floors.js';
 import { intakeProposalResponse, fullInputProposal, type NativeIntakeHttpMethod } from './native-intake-http-fixture.js';
 
 export type NativeIntakeExecutionHttpMethod = NativeIntakeHttpMethod | `workLedger.execution.${'start' | 'status' | 'cancel' | 'resume'}`;
@@ -73,21 +74,22 @@ export async function createNativeIntakeExecutionHttpFixture(options: {
     return choiceAnswer(question, pick && choices.includes(pick) ? pick : choices.find(key => key !== 'none')!, 0.99);
   });
   const refused = fakePort((_name, question) => choiceAnswer(question, 'reject', 0.99));
-  const recorded = withDecisionLog(fake.port, daemon.services.judgment.decisionLog);
-  const recordedRefusal = withDecisionLog(refused.port, daemon.services.judgment.decisionLog);
   const judgmentRequests: JudgmentRequest<Questions>[] = [];
   const judgmentErrors: unknown[] = [];
   let delivered = false;
-  const read = spyOn(daemon.services.judgment.port, 'ask').mockImplementation(async request => {
+  const endpoint = (judgment: typeof daemon.services.judgment): JudgmentPort => ({ ...fake.port, async ask(request) {
     judgmentRequests.push(request);
     await options.beforeJudgment?.(request);
     if (request.context?.site === 'contract.check.deliverable-judge') delivered = true;
     // A second, host-owned verification follows the genuine runner checks.
     // The fault affects only that verification, never the executing unit.
     if (controls.failSettlement && delivered && request.context?.site === 'contract.check.unit-judge') throw new Error('Owned synthetic unavailable settlement');
-    try { return await (controls.refuseExecution && request.context?.site === 'work-ledger.native-start' ? recordedRefusal : recorded).ask(request); }
+    const port = controls.refuseExecution && request.context?.site === 'work-ledger.native-start' ? refused.port : fake.port;
+    try { return await withDecisionLog(port, judgment.decisionLog).ask(request); }
     catch (error) { judgmentErrors.push(error); throw error; }
-  });
+  } });
+  const read = spyOn(daemon.services.judgment.port, 'ask').mockImplementation(endpoint(daemon.services.judgment).ask);
+  const restoreFloors = observeFixtureJudgmentFloors((request, judgment) => endpoint(judgment).ask(request));
   const requests: ChatRequest[] = [];
   let originalText: string | undefined = options.resumedSourceText;
   const provider: LLMProvider = { name: 'native-intake-execution-fixture', models: ['model'], credentialAuthority: 'anonymous',
@@ -133,6 +135,6 @@ export async function createNativeIntakeExecutionHttpFixture(options: {
   let stopping: Promise<void> | undefined;
   return { root, daemon, paired, requests, judgmentRequests, judgmentErrors, controls, scopes, wire,
     contracts: () => native?.runner.list({ includeTerminal: true }) ?? [],
-    stop() { return stopping ??= daemon.stop().finally(() => { catalog.mockRestore(); read.mockRestore(); restoreDiscovery(); }); },
+    stop() { return stopping ??= daemon.stop().finally(() => { restoreFloors(); catalog.mockRestore(); read.mockRestore(); restoreDiscovery(); }); },
   };
 }

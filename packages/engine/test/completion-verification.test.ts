@@ -789,6 +789,17 @@ test('private proposal calls publish no deltas or tools and abort even when the 
   await started.promise; controller.abort(); await expect(pending).rejects.toThrow(); expect(usage).toBe(0);
 });
 
+test('namespaced native sessions retain separate portable verification journals on restart', () => {
+  const root = directory(), session = 'native-work:workspace-1';
+  const proposal = JSON.stringify({ facts: [], concerns: [] });
+  new VerificationStore(root, session).rememberProposal('proposal-1', proposal);
+  expect(readFileSync(join(root, '.goodvibes', 'verification', 'native-work%3Aworkspace-1.jsonl'), 'utf8')).toContain(proposal.replaceAll('"', '\\"'));
+  expect(new VerificationStore(root, session).proposals.get('proposal-1')).toBe(proposal);
+  expect(new VerificationStore(root, 'native-work-workspace-1').proposals.size).toBe(0);
+  for (const invalid of ['../workspace-1', 'native/workspace-1', 'native\\workspace-1', 'native%3Aworkspace-1'])
+    expect(() => new VerificationStore(root, invalid)).toThrow('Invalid verification journal location');
+});
+
 test('verification journal refuses symlinked directories and protected source data', () => {
   const root = directory(), outside = directory(); symlinkSync(outside, join(root, '.goodvibes'));
   expect(() => new VerificationStore(root, 'session')).toThrow();

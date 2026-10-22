@@ -67,6 +67,9 @@ test.each(['active', 'pending', 'handoff'] as const)('actual Agent permission li
   });
   await runtime.providerRegistry.ready();
   const previous = installJudgmentPort(fakePort((name, question, state) => {
+    if (question.type === 'noul' && ['false_blocker', 'unfinished', 'unsupported', 'unanswered', 'unnecessary_permission', 'repetitive',
+      'implementation_presented', 'verification_claimed', 'criteria_altered', 'ineffective_fix', 'irrelevant_verification',
+      'weakened_criteria', 'missing_results', 'unresolved_conflict'].includes(name)) return noulAnswer(0.01);
     expect(state).toMatchObject({ tool: 'write', arguments: args });
     if (name === 'family') return choiceAnswer(question, 'file-mutation', 0.99);
     if (name === 'mutates') return noulAnswer(0.99);
@@ -100,6 +103,7 @@ test.each(['active', 'pending', 'handoff'] as const)('actual Agent permission li
     if (!cancel) expect(executionError).toBeUndefined();
   } finally {
     providerRelease.resolve();
+    if (!settled && agentId !== undefined) runtime.agentManager.cancel(agentId);
     for (const item of broker.listApprovals()) if (item.status === 'pending' || item.status === 'claimed') await broker.cancelApproval(item.id, 'fixture-cleanup');
     await done;
     installJudgmentPort(previous);

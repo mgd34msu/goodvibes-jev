@@ -8,6 +8,7 @@ import { registerInboxSurface } from '@goodvibes-jev/engine/sdk/platform/intake'
 import { WEBUI_METHOD_ROUTES } from '@goodvibes-jev/engine/contracts/generated/webui-facade';
 import { startDaemonFixture } from '../../testing/daemon-fixture.js';
 import { makeOwnedTempDir } from './owned-temp.js';
+import { observeFixtureJudgmentFloors } from './judgment-floors.js';
 
 export type NativeIntakeHttpOperation = 'capture' | 'get' | 'admit' | 'resume' | 'cancel';
 export type NativeIntakeHttpMethod = `workLedger.intake.${NativeIntakeHttpOperation}` | 'control.auth.current' | 'workLedger.project';
@@ -46,10 +47,14 @@ export async function createNativeIntakeHttpFixture(options: {
     if (name === 'relation') return choiceAnswer(question, 'supports', 0.99);
     if (name.startsWith('part_')) return noulAnswer(0.01);
     if (name === 'refuse') return noulAnswer(0.99);
+    if (question.type === 'noul' && ['false_blocker', 'unfinished', 'unsupported', 'unanswered', 'unnecessary_permission', 'repetitive',
+      'implementation_presented', 'verification_claimed', 'criteria_altered', 'ineffective_fix', 'irrelevant_verification',
+      'weakened_criteria', 'missing_results', 'unresolved_conflict'].includes(name)) return noulAnswer(0.01);
     return choiceAnswer(question, options.final ?? 'act', 0.99);
   });
   const recorded = withDecisionLog(fake.port, daemon.services.judgment.decisionLog);
   const read = spyOn(daemon.services.judgment.port, 'ask').mockImplementation(request => recorded.ask(request));
+  const restoreFloors = observeFixtureJudgmentFloors((request, judgment) => withDecisionLog(fake.port, judgment.decisionLog).ask(request));
   const requests: ChatRequest[] = [];
   const provider: LLMProvider = { name: 'native-intake-http-fixture', models: ['model'], credentialAuthority: 'anonymous',
     modelSource: { kind: 'dated-static', asOf: '2026-01-01' }, isConfigured: () => true,
@@ -76,7 +81,7 @@ export async function createNativeIntakeHttpFixture(options: {
       ...(body === undefined ? {} : { requestBody: body }), body: await response.text() };
   }
   return { daemon, paired, fake, requests, wire, scopes,
-    async stop() { try { await daemon.stop(); } finally { read.mockRestore(); restoreDiscovery(); } },
+    async stop() { try { await daemon.stop(); } finally { restoreFloors(); read.mockRestore(); restoreDiscovery(); } },
   };
 }
 
