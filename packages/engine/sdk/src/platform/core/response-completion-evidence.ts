@@ -4,7 +4,8 @@ import { fitCompletionEvidence } from './response-completion-budget.js';
 
 /** A local projection of observations, never an invocation or a replacement user request. */
 export class CompletionEvidenceProjection {
-  private readonly namespace = crypto.randomUUID();
+  private readonly namespace = crypto.randomUUID().replace(/[0-9a-f]/g,
+    nibble => String.fromCharCode(97 + Number.parseInt(nibble, 16)));
   private readonly references = new Map<string, string>();
   private withheld = new Set<string>();
 

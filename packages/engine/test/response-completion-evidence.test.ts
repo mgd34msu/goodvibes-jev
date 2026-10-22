@@ -1,4 +1,4 @@
-import { expect, test } from 'bun:test';
+import { expect, spyOn, test } from 'bun:test';
 import { CompletionEvidenceProjection } from '../sdk/src/platform/core/response-completion-evidence.js';
 import { passesLuhn } from '../sdk/src/platform/security/card-shapes.js';
 import { snapshotJudgmentEvidence } from '../sdk/src/platform/gate/judgment-input.js';
@@ -14,6 +14,17 @@ function input(transcript: Record<string, unknown>[]) {
   return { request: 'Review the repository and write its report.', response: 'The report is written.', transcript,
     tools: ['agent', 'exec'], delegated: [], requirements: null, initial: null };
 }
+
+test('generated redaction references cannot themselves become card-shaped material', () => {
+  const uuid = spyOn(crypto, 'randomUUID').mockReturnValue('013c2c70-53ea-4240-8f43-497101781208');
+  try {
+    const projected = new CompletionEvidenceProjection().prepareFull(input([
+      { role: 'tool', content: JSON.stringify({ startedAt: Number(epoch), status: 'completed' }) },
+    ]));
+    expect(JSON.stringify(projected)).not.toContain(epoch);
+    expect(snapshotJudgmentEvidence(projected)).toEqual(projected);
+  } finally { uuid.mockRestore(); }
+});
 
 test('agent times, contract history and overflow paths remain usable observations without sending card-shaped numbers', () => {
   const original = input([
