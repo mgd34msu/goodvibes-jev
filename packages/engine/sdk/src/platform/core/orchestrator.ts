@@ -1074,9 +1074,10 @@ export class Orchestrator {
           emitStreamEnd(this.runtimeBus, createEmitterContext(this.currentSessionId, turnId), { turnId });
         }
       }
-      // Remove any partial LLM response, keep user message but mark it cancelled
-      this.conversation.removeMessagesAfter(this.turnStartMessageCount);
-      this.conversation.markLastUserMessageCancelled();
+      // Cancel the unpublished answer, retaining completed tool observations
+      // so resuming the session cannot mistake executed work for missing work.
+      this.conversation.removeMessagesAfter(this.turnStartMessageCount, { preserveCompletedTools: true });
+      this.conversation.markLastUserMessageCancelled(this.turnStartMessageCount);
       this.conversation.addSystemMessage('[Response cancelled]');
       this.turnCancellation.end(turnId);
       if (this.runtimeBus) {

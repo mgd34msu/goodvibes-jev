@@ -99,6 +99,30 @@ describe('Orchestrator async prompt lifecycle wiring', () => {
     expect(f.signals[1]).not.toBe(f.signals[0]);
   });
 
+  test('interrupting an unpublished response preserves completed tool history through save and resume', async () => {
+    const entered = deferred<void>(), prompt = deferred<string>();
+    const f = fixture(() => { entered.resolve(); return prompt.promise; });
+    const pending = f.orchestrator.handleUserInput('Inspect the report and check preservation.');
+    await entered.promise;
+    f.conversation.addAssistantMessage('Inspecting the existing report.', { toolCalls: [{ id: 'read-report', name: 'read', arguments: { path: 'REVIEW.md' } }] });
+    f.conversation.addToolResults([{ callId: 'read-report', success: true, output: 'The existing completed review.' }]);
+    f.conversation.addAssistantMessage('UNPUBLISHED-FIRST-DRAFT');
+    f.conversation.addAssistantMessage('', { toolCalls: [{ id: 'check-files', name: 'exec', arguments: { commands: [{ cmd: 'git diff --exit-code HEAD -- src test' }] } }] });
+    f.conversation.addToolResults([{ callId: 'check-files', success: true, output: 'exit_code: 0' }]);
+    f.conversation.addAssistantMessage('UNPUBLISHED-FINAL-DRAFT');
+    f.conversation.addUserMessage('A later submitted correction.');
+    f.orchestrator.abort(); await pending; prompt.resolve('Late prompt result');
+    const saved = JSON.parse(JSON.stringify(f.conversation.toJSON()));
+    const resumed = new ConversationManager(); resumed.fromJSON(saved);
+    const messages = resumed.getMessageSnapshot();
+    expect(messages.filter(message => message.role === 'tool').map(message => message.callId)).toEqual(['read-report', 'check-files']);
+    expect(messages.filter(message => message.role === 'assistant').flatMap(message => message.toolCalls?.map(call => call.id) ?? [])).toEqual(['read-report', 'check-files']);
+    expect(JSON.stringify(messages)).not.toContain('UNPUBLISHED');
+    expect(messages.find(message => message.role === 'user' && message.content === 'Inspect the report and check preservation.')).toMatchObject({ cancelled: true });
+    expect(messages.find(message => message.role === 'user' && message.content === 'A later submitted correction.')).not.toHaveProperty('cancelled');
+    expect(f.requests).toHaveLength(0);
+  });
+
   test('dispose cancels pending reads and does not start queued or later user turns', async () => {
     const pending = deferred<string>();
     const entered = deferred<void>();

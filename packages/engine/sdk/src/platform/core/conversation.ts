@@ -344,15 +344,26 @@ export class ConversationManager {
     return this.messages.length;
   }
 
-  public removeMessagesAfter(count: number): void {
+  public removeMessagesAfter(count: number, options: { readonly preserveCompletedTools?: boolean } = {}): void {
     if (count < this.messages.length) {
-      this.messages.length = count;
+      if (options.preserveCompletedTools) {
+        // Tool batches are appended only after their results settle. Preserve
+        // their exact call/result pairs: interrupting a later private answer
+        // does not undo executed work. Unsent assistant drafts never become
+        // saved answers, including drafts between completed tool batches.
+        let through = count;
+        for (let index = count; index < this.messages.length; index++) if (this.messages[index]?.role === 'tool') through = index + 1;
+        this.messages = [...this.messages.slice(0, count), ...this.messages.slice(count).filter((message, index) =>
+          message.role === 'user' || message.role === 'system'
+          || index + count < through && (message.role === 'tool' || message.role === 'assistant' && !!message.toolCalls?.length))];
+      } else this.messages.length = count;
+      this.streamingMessageIndex = -1;
       this._messagesRevision++;
     }
   }
 
-  public markLastUserMessageCancelled(): void {
-    for (let i = this.messages.length - 1; i >= 0; i--) {
+  public markLastUserMessageCancelled(beforeCount = this.messages.length): void {
+    for (let i = Math.min(beforeCount, this.messages.length) - 1; i >= 0; i--) {
       const msg = this.messages[i];
       if (msg?.role === 'user') {
         (msg as { cancelled?: boolean }).cancelled = true;
