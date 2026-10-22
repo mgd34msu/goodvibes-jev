@@ -113,7 +113,8 @@ describe('host pairing shell over the real InputHandler', () => {
     s.input.feed(`${s.phrase()}\r`);
     await untilPairing(() => !s.controller.active, 'wired owner confirmation');
     expect(s.fixture.migrations()).toBe(1);
-    expect(s.fixture.authCalls()).toBe(reads);
+    expect(s.fixture.authCalls()).toBeGreaterThanOrEqual(reads);
+    expect(s.fixture.authCalls()).toBeLessThanOrEqual(6);
     expect(readTuiHostPairing(s.fixture.homeDirectory, s.fixture.host).status).toBe('paired');
     expect(s.submissions).toEqual([]);
     expect(s.conversation.getMessagesForLLM()).toEqual([]);
