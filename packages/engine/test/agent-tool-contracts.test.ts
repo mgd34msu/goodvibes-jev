@@ -108,8 +108,23 @@ function harness(contracts: readonly Contract[] = []) {
   bus.onDomain('contracts', (envelope) => {
     if (envelope.payload.type === 'CONTRACT_SPAWN_GUARD_TRIGGERED') guardEvents.push(envelope.payload);
   });
-  return { bus, manager, runner, tool, ran, guardEvents };
+  return { bus, messageBus, manager, runner, tool, ran, guardEvents };
 }
+
+test.each(['failed', 'completed', 'cancelled'] as const)('message delivery never acknowledges a %s agent that cannot consume it', async status => {
+  const h = harness();
+  try {
+    const record = h.manager.spawn({ mode: 'spawn', task: 'Review the parser.', template: 'engineer', outsideContract: true });
+    await h.manager.join(record.id);
+    record.status = status;
+    const result = await h.tool.execute({ mode: 'message', agentId: record.id, message: 'Address the missing source references.' });
+    expect(result.success).toBe(false);
+    expect(result.error).toContain('No message was queued');
+    expect(h.messageBus.getMessages(record.id)).toEqual([]);
+    expect(h.ran).toHaveLength(1);
+    expect(record.status).toBe(status);
+  } finally { h.manager.clear(); }
+});
 
 /** A unit's sub-agent, spawned the way the phase runner spawns it. */
 function spawnUnitAgent(manager: AgentManager): AgentRecord {

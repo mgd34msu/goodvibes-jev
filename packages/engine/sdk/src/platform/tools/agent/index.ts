@@ -719,6 +719,10 @@ export function createAgentTool(config: AgentToolConfig): Tool {
           return { success: false, error: `Unknown agent: '${input.agentId}'` };
         }
 
+        if (record.status === 'failed' || record.status === 'completed' || record.status === 'cancelled') {
+          return { success: false, error: `Agent '${record.id}' is ${record.status} and has no active turn to consume this message. No message was queued. Read its retained result with mode=get; continue only unfinished authorized work with a focused assignment when needed.` };
+        }
+
         const sent = config.messageBus.send('orchestrator', input.agentId, input.message, {
           kind: input.kind ?? 'directive',
         });
