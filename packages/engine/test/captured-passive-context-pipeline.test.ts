@@ -13,6 +13,7 @@ import { codeChunkView } from '../sdk/src/platform/state/batteries/code-search-r
 import { MemoryStore, MemoryRegistry } from '../sdk/src/platform/state/index.js';
 import { MemoryEmbeddingProviderRegistry } from '../sdk/src/platform/state/memory-embeddings.js';
 import { ConfigManager } from '../sdk/src/platform/config/index.js';
+import { UserPermissionRuleStore } from '../sdk/src/platform/permissions/user-rule-store.js';
 import { createClientRuntimeServices } from '../sdk/src/platform/runtime/bootstrap.js';
 import { RuntimeEventBus, createRuntimeStore } from '../sdk/src/platform/runtime/state.js';
 import { resumeContracts } from '../sdk/src/platform/runtime/contract-composition.js';
@@ -37,7 +38,7 @@ test('required passive mutable context proof cannot skip captured execution', ()
   }
 });
 
-for (const scenario of ['allowed', 'feature-off', 'storage-off', 'zero-budget', 'mutable', 'cancel-embedding', 'revoke-embedding', 'retry-revoked', 'embedding-retry-revoked'] as const) {
+for (const scenario of ['allowed', 'feature-off', 'storage-off', 'zero-budget', 'mutable', 'cancel-embedding', 'revoke-embedding', 'restore-embedding', 'retry-revoked', 'embedding-retry-revoked'] as const) {
   test.skipIf(scenario === 'mutable' && !availability.available)(`captured passive context actual contract pipeline (${scenario})`, async () => {
     const root = makeRepo();
     // Only the two source fixtures belong in this proof corpus.
@@ -148,7 +149,7 @@ for (const scenario of ['allowed', 'feature-off', 'storage-off', 'zero-budget', 
           embeddingRetryRejected++;
           throw new Error('Scripted embedding retry stopped before a revoked transport submission');
         }
-        if ((scenario === 'cancel-embedding' || scenario === 'revoke-embedding') && request.text.includes(ORIGINAL)) {
+        if ((scenario === 'cancel-embedding' || scenario === 'revoke-embedding' || scenario === 'restore-embedding') && request.text.includes(ORIGINAL)) {
           embeddingEntered = true;
           // Uncooperative provider returns after cancellation/revocation.
           await embeddingReleased;
@@ -231,12 +232,21 @@ for (const scenario of ['allowed', 'feature-off', 'storage-off', 'zero-budget', 
     let id: string | undefined;
     try {
       id = runner.start({ ask: 'Add a CSV parser module', sessionId: 'passive-fixture', origin: 'cli', projectRoot: root, isolation: 'worktree' }).contract.id;
-      if (scenario === 'cancel-embedding' || scenario === 'revoke-embedding') {
+      if (scenario === 'cancel-embedding' || scenario === 'revoke-embedding' || scenario === 'restore-embedding') {
         await waitFor(() => embeddingEntered || ['passed', 'failed', 'cancelled', 'awaiting-owner'].includes(runner.get(id!)!.status), 'scripted embedding entry', 20_000);
         expect(embeddingEntered).toBe(true);
         if (scenario === 'cancel-embedding') runner.cancel(id, 'cancel pending captured embedding');
         else await revokeAllowed();
         releaseEmbedding();
+      }
+      if (['revoke-embedding', 'restore-embedding', 'retry-revoked', 'embedding-retry-revoked'].includes(scenario)) {
+        await waitFor(() => runner.get(id!)!.decisions.some(decision => decision.action === 'stalled'), 'native permission wait', 20_000);
+        expect(runner.get(id)!.plannerAgentIds).toHaveLength(1);
+        expect(requests).toHaveLength(scenario === 'retry-revoked' ? 1 : 0);
+        if (scenario === 'restore-embedding') {
+          if (!(runtime.userPermissionRuleStore instanceof UserPermissionRuleStore)) throw new Error('Expected the native local permission store');
+          expect(await runtime.userPermissionRuleStore.delete('revoke-original-allowed-passive')).toBe(true);
+        } else runner.cancel(id, 'cancel fixture while native read permission is withheld');
       }
       await waitFor(() => ['passed', 'failed', 'cancelled', 'awaiting-owner'].includes(runner.get(id!)!.status), 'passive pipeline settlement', 120_000).catch((error) => { throw new Error(`${error.message}; members=${memberCalls}; agents=${JSON.stringify(runtime.agentManager.list().map(r => ({ status:r.status, error:r.error })))}; toolResults=${toolResults.slice(-4).join(' | ')}`); });
       const result = runner.get(id)!;
@@ -284,7 +294,11 @@ for (const scenario of ['allowed', 'feature-off', 'storage-off', 'zero-budget', 
         expect(result.success, text).not.toBe(false);
         expect(result.error, text).toBeUndefined();
       }
-      const enabled = scenario === 'allowed' || scenario === 'mutable';
+      const enabled = scenario === 'allowed' || scenario === 'mutable' || scenario === 'restore-embedding';
+      if (scenario === 'restore-embedding') {
+        expect(result.plannerAgentIds).toHaveLength(2);
+        expect(result.decisions.some(decision => decision.action === 'resumed')).toBe(true);
+      }
       if (enabled) {
         expect(relevance.requests.length).toBeGreaterThan(0);
         expect(relevance.requests.every(request => request.context?.battery === 'engine.state.code-search'

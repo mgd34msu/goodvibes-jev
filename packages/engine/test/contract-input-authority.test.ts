@@ -133,7 +133,7 @@ for (const viewKind of ['snapshot', 'member'] as const) {
           tool: 'read',
         });
         const failureState = access === 'policy-revoked'
-          ? 'Message: captured input path is access-restricted'
+          ? 'Error type: ContractInputReadDeniedError\nMessage: captured input path is access-restricted'
           : access === 'concurrent'
             ? 'Message: captured input authority is missing or revoked'
             : undefined;
@@ -433,7 +433,7 @@ for (const viewKind of ['snapshot', 'member'] as const) {
             const failedId = access === 'concurrent' ? secondId! : id;
             const failed = runtime.agentManager.getStatus(failedId)!;
             expect(failed.status).toBe('failed');
-            expect(failed.error).toBe(failureState.slice('Message: '.length));
+            expect(failed.error).toBe(failureState.split('Message: ')[1]);
             expect(fs.readFileSync(join(root, 'allowed.ts'), 'utf8')).toBe('export const SYNTHETIC_ALLOWED_MARKER = "fixture only";\n');
             expect(fs.readFileSync(join(view, 'allowed.ts'), 'utf8')).toBe('export const SYNTHETIC_ALLOWED_MARKER = "fixture only";\n');
           }

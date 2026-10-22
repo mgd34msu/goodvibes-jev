@@ -2,7 +2,7 @@ import { bindContractPlanConsumer } from '../tools/agent/contract-binding.js';
 import { waitForTaskRecovery } from '../core/response-completion.js';
 import { assertOwnedContractSource, checkOwnedSourcePlan, hasDerivedAcceptanceChecks } from './owned-source.js';
 import { nativeContractTaskSource } from './native-source.js';
-import { withContractInputReadBatch, createContractInputAuthority, bindContractInputAuthority, assertContractInputAdmission, pinContractInputAdmission, authorizeContractInputPath, assertContractInputReadAccess, withContractInputAuthority, type ContractInputAuthority } from './input-authority.js';
+import { ContractInputReadDeniedError, withContractInputReadBatch, createContractInputAuthority, bindContractInputAuthority, assertContractInputAdmission, pinContractInputAdmission, authorizeContractInputPath, assertContractInputReadAccess, withContractInputAuthority, type ContractInputAuthority } from './input-authority.js';
 import { bindContractActionSource, getContractActionSource } from '../tools/agent/contract-binding.js';
 import { nativeContractActionSource } from './native-decisions.js';
 /**
@@ -553,12 +553,34 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
     try { await authorizeContractInputPath(authority, path, filter, signal); return true; }
     catch { return false; }
   };
+  const assertReadAccess = async (): Promise<void> => {
+    if (!authority) return;
+    let waiting = false, delay = 250;
+    for (;;) {
+      await assertCurrent();
+      try {
+        await assertContractInputReadAccess(authority, filter, signal);
+        if (waiting) { context.decide('resumed', 'Captured input read access is current; continue the existing planning attempt.'); deps.native?.changed(contract); }
+        return;
+      } catch (error) {
+        if (!(error instanceof ContractInputReadDeniedError) || signal?.aborted) throw error;
+        if (!waiting) {
+          context.decide('stalled', 'Captured input read access changed; waiting for current permission before starting another planner.');
+          deps.native?.changed(contract); waiting = true;
+        }
+        // A model cannot repair a denied native read. Keep its original input,
+        // await an actual policy change, and let cancellation drain this wait.
+        await waitForTaskRecovery(delay, signal);
+        delay = Math.min(delay * 2, 5_000);
+      }
+    }
+  };
   const map = () => deps.repositoryMap === undefined ? defaultRepositoryMap(workingDirectory, readAccessFilter, authority ? readAccessFilter : undefined) : deps.repositoryMap(workingDirectory);
   const repositoryMap = await (authority ? withContractInputReadBatch(authority, () => withContractInputAuthority(authority, map)) : map());
-  if (authority) await assertContractInputReadAccess(authority, filter, signal);
+  await assertReadAccess();
   const bounds = readPlannerBounds(deps.configManager);
   const systemPrompt = buildContractPlannerPrompt();
-  if (contract.nativeSource !== undefined) return planNativeContract(context, input, route, repositoryMap, bounds, systemPrompt, { workingDirectory, authority, assertCurrent });
+  if (contract.nativeSource !== undefined) return planNativeContract(context, input, route, repositoryMap, bounds, systemPrompt, { workingDirectory, authority, assertCurrent, assertReadAccess });
 
   let repair = 0;
   let previous: { readonly problems: readonly PlanProblem[]; readonly previousPlan: string } | undefined;
@@ -566,6 +588,7 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
     for (;;) {
       if (signal?.aborted) return { kind: 'cancelled' };
       await assertCurrent();
+      await assertReadAccess();
       const userPrompt = buildContractPlannerRequest({
         ask: contract.ask,
         nativeSource: contract.nativeSource,
@@ -596,6 +619,7 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
       if (run.agentId !== undefined) contract.plannerAgentIds.push(run.agentId);
       if (signal?.aborted) return { kind: 'cancelled' };
       await assertCurrent();
+      await assertReadAccess();
       const checked = run.status === 'completed' ? await checkPlanUntilAvailable(context, run.output, repair, signal, assertCurrent)
         : { text: run.output, plan: undefined, verdict: undefined,
           problems: [{ code: 'unparseable' as const, message: runFailureReason(run) + '. Repair this failed planning attempt; the original request remains active.' }] };
@@ -638,7 +662,7 @@ function priorOwnerReadContext(contract: Contract, deps: ContractPlannerDeps): s
 
 /** Native planning consumes durable attempt counters and semantic receipts, never an owner approval. */
 async function planNativeContract(context: PlanningContext, input: PlanContractInput, route: UnitRoute, repositoryMap: string, bounds: DecompositionBounds, systemPrompt: string,
-  admitted: { readonly workingDirectory: string; readonly authority: ContractInputAuthority | undefined; assertCurrent(): Promise<void> }): Promise<PlanningOutcome> {
+  admitted: { readonly workingDirectory: string; readonly authority: ContractInputAuthority | undefined; assertCurrent(): Promise<void>; assertReadAccess(): Promise<void> }): Promise<PlanningOutcome> {
   const { contract, deps } = context;
   const signal = input.signal ?? new AbortController().signal;
   const sourceOf = nativeContractActionSource(contract, deps.native, signal);
@@ -651,6 +675,7 @@ async function planNativeContract(context: PlanningContext, input: PlanContractI
     for (;;) {
       signal.throwIfAborted();
       await admitted.assertCurrent();
+      await admitted.assertReadAccess();
       if (needsPlan) {
         if (context.config.planRepairLimit > 0 && nativeSpent(contract, budgetKey) >= context.config.planRepairLimit + 1) {
           await decideNativeContract(contract, deps.native, { stage: 'plan', targetId: contract.id, action: 'Start another planning attempt', allowAct: false,
@@ -667,6 +692,7 @@ async function planNativeContract(context: PlanningContext, input: PlanContractI
         if (run.agentId !== undefined) contract.plannerAgentIds.push(run.agentId);
         signal.throwIfAborted();
         await admitted.assertCurrent();
+        await admitted.assertReadAccess();
         output = run.status === 'completed' ? run.output : JSON.stringify({ plannerFailure: runFailureReason(run), partialProposal: run.output });
         if (run.status !== 'completed') await waitForTaskRecovery(Math.min(250 * attempt, 5_000), signal);
         state.plannerOutputs[budgetKey] = output; deps.native?.changed(contract);

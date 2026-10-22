@@ -21,6 +21,10 @@ import { checkCapturedInputsInBatches } from '../tools/exec/captured-exec-valida
 export interface ContractInputAuthority {
   readonly kind: 'contract-input-authority';
 }
+/** A current read policy denied access, distinct from a changed or forged input. */
+export class ContractInputReadDeniedError extends Error {
+  constructor() { super('captured input path is access-restricted'); this.name = 'ContractInputReadDeniedError'; }
+}
 interface Admission {
   readonly receipt: ContractInputSnapshot;
   readonly serialized: string;
@@ -306,7 +310,7 @@ export async function authorizeContractInputPath(
   await checkedPath(state.root, rel);
   await assertBatchedInputPath(token, path, rel, signal);
   if (!(await executePolicyCheck(() => filter(original), signal)) ||
-      !(await executePolicyCheck(() => filter(path), signal))) throw new Error('captured input path is access-restricted');
+      !(await executePolicyCheck(() => filter(path), signal))) throw new ContractInputReadDeniedError();
   // Recheck both roots and paths after permission callbacks can yield/revoke.
   await assertContractInputAuthority(token, undefined, signal);
   await checkedPath(state.admission.receipt.sourceRoot, rel);
