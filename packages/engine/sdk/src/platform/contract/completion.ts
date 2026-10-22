@@ -712,6 +712,14 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     if (run.terminal) return;
     assertNativeContractSource(contract);
     assertOwnedContractSource(contract);
+    if (contract.status === 'committing' && contract.commit?.status === 'failed' && contract.inputSnapshot && contract.worktreePath) {
+      try { await assertContractInputOwner(contract.inputSnapshot, run.abort.signal); }
+      catch (error) {
+        // Owner drift requires fresh integration review. A still-active Git
+        // operation cannot be repaired by repeating accepted deliverable checks.
+        if (!(error instanceof ContractInputOwnerChangedError)) throw new PublicationPending();
+      }
+    }
     if (contract.status !== 'judging') run.moveContract('judging');
     context.ownerProgress(run);
     const judgedCriteria = judged(contract.criteria);

@@ -194,6 +194,12 @@ test('an owner index lock created after capture holds apply without deleting the
   expect(git(h.root, 'rev-parse', 'HEAD')).toBe(head);
   expect(existsSync(join(h.root, 'src/csv.ts'))).toBe(false); expect(existsSync(done.worktreePath!)).toBe(true);
   expect(done.status).not.toBe('passed');
+  const checked = done.checks.length;
+  await waitFor(() => done.decisions.filter(decision => decision.reason.startsWith('publication pending:')).length >= 2,
+    'a retained publication retry while the owner lock remains', 5_000);
+  expect(done.checks).toHaveLength(checked);
+  expect(h.agentsOf('u1')).toHaveLength(1);
+  expect(readFileSync(join(h.root, '.git/index.lock'), 'utf8')).toBe('owner lock\n');
   rmSync(join(h.root, '.git/index.lock'));
   await waitFor(() => terminal(h, contract.id), 'publication after the owner released its index lock', 5_000);
   expect(h.store.get(contract.id)?.status).toBe('passed');
