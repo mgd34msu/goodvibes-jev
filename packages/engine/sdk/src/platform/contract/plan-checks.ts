@@ -323,8 +323,8 @@ function planCheckOwner(options: PlanCheckOptions, evidence: object) {
 async function checkRepairContinuation(port: JudgmentPort, plan: ContractPlan, ask: string, options: PlanCheckOptions): Promise<CheckOutput> {
   const output = emptyOutput(), repairContext = options.native?.contract.taskEvidence;
   if (!repairContext?.includes('"kind":"completion-repair"')) return output;
-  const run = await agentBriefFidelity.run(port, { request: ask, repairContext,
-    assignments: planUnits(plan).map(unit => ({ task: [unit.title, unit.goal, unit.brief].join('\n') })) } as never,
+  const run = await agentBriefFidelity.run(port, { originalUserRequest: ask, repairContext,
+    specialistAssignments: planUnits(plan).map(unit => ({ task: [unit.title, unit.goal, unit.brief].join('\n') })) } as never,
     { ...callOptions(agentBriefFidelity.name, options), only: ['repair_restart'] });
   record(output, run.result.decisionId, run.result.usage);
   const accepted = run.readings.repair_restart.verdict === 'no' && run.readings.repair_restart.outcome === 'act';

@@ -647,9 +647,10 @@ test('a completion repair contract retains the original ask and receives its pri
 test('brief fidelity checks the real shared context and task-specific evidence instead of dropping them', async () => {
   const { tool, runner, ran } = harness();
   const fake = fakePort((name, _question, state) => {
-    const input = state as never as { context?: string; assignments: { context?: string; requiredEvidence?: string[] }[] };
+    if (name === 'delegation_forbidden') return noulAnswer(.01);
+    const input = state as never as { context?: string; specialistAssignments: { context?: string; requiredEvidence?: string[] }[] };
     const complete = input.context === 'Reuse the existing review.md and completed parser review.'
-      && input.assignments[0]?.context === input.context && input.assignments[0]?.requiredEvidence?.includes('Exact server source receipts.');
+      && input.specialistAssignments[0]?.context === input.context && input.specialistAssignments[0]?.requiredEvidence?.includes('Exact server source receipts.');
     return noulAnswer(name === 'constraint_conflict' && !complete ? .99 : .01);
   });
   installJudgmentPort(fake.port);
@@ -660,14 +661,15 @@ test('brief fidelity checks the real shared context and task-specific evidence i
   await flush();
   expect(ran).toHaveLength(1);
   expect(runner.starts).toHaveLength(0);
-  expect(fake.requests).toHaveLength(1);
+  expect(fake.requests).toHaveLength(2);
 });
 
 test('batch delegation retains read-only tools and shared execution restrictions through per-task hints', async () => {
   const h = harness();
   const fake = fakePort((name, _question, state) => {
-    const source = state as never as { assignments: { tools?: string[]; restrictTools?: boolean; executionIntent?: Record<string, unknown> }[] };
-    const assignment = source.assignments[0];
+    if (name === 'delegation_forbidden') return noulAnswer(.01);
+    const source = state as never as { specialistAssignments: { tools?: string[]; restrictTools?: boolean; executionIntent?: Record<string, unknown> }[] };
+    const assignment = source.specialistAssignments[0];
     const preserved = assignment?.tools?.join(',') === 'read' && assignment.restrictTools === true
       && assignment.executionIntent?.filesystemPolicy === 'read-only' && assignment.executionIntent?.networkPolicy === 'deny'
       && assignment.executionIntent?.riskClass === 'safe';
@@ -683,7 +685,7 @@ test('batch delegation retains read-only tools and shared execution restrictions
     await h.manager.join(record.id);
     expect(record.tools).toEqual(['read']);
     expect(record.executionIntent).toEqual({ filesystemPolicy: 'read-only', networkPolicy: 'deny', riskClass: 'safe' });
-    expect(fake.requests).toHaveLength(1);
+    expect(fake.requests).toHaveLength(2);
   } finally { h.manager.clear(); }
 });
 

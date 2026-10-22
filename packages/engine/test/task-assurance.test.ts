@@ -146,7 +146,7 @@ test('a held batch cannot be abandoned for a contract, and revised assignments a
   const revised = await tool.execute({ mode: 'batch-spawn', authoritativeTask: request, tasks: tasks.map(task => ({ ...task,
     task: task.task + ' The coordinator retains all remaining scope and writes the final consolidated artifact.' })) });
   expect(revised.success).toBe(true); expect(spawns).toBe(2); expect(contracts).toBe(0);
-  expect(accepted.requests).toHaveLength(1);
+  expect(accepted.requests).toHaveLength(2);
 });
 
 test('an uncertain whole-plan reading resolves every original requirement without a blind plan rewrite', async () => {
@@ -154,17 +154,22 @@ test('an uncertain whole-plan reading resolves every original requirement withou
   const input = { request, assignments: [{ task: 'Read review.md and return its verification result; the coordinator runs git diff.',
     tools: ['read'], restrictTools: true, executionIntent: { filesystemPolicy: 'read-only' as const } }] };
   const requirements: string[] = [];
-  const fake = fakePort((_name, _question, state) => {
-    const source = state as { request: string; requirement?: string; assignments: typeof input.assignments };
-    expect(source.request).toBe(request);
-    expect(source.assignments).toEqual(input.assignments);
+  const fake = fakePort((name, _question, state) => {
+    const source = state as { originalUserRequest: string; proposedSpecialistCount?: number; requirement?: string; specialistAssignments?: typeof input.assignments };
+    expect(source.originalUserRequest).toBe(request);
+    if (name === 'delegation_forbidden') {
+      expect(source.proposedSpecialistCount).toBe(1);
+      expect(source.specialistAssignments).toBeUndefined();
+      return noulAnswer(.01);
+    }
+    expect(source.specialistAssignments).toEqual(input.assignments);
     if (source.requirement) { requirements.push(source.requirement); return noulAnswer(.01); }
     return noulAnswer(.5);
   });
   installJudgmentPort(fake.port);
   await assertAgentBriefFidelity(input);
   expect(new Set(requirements)).toEqual(new Set(['Use one read-only agent.', 'Keep all files unchanged.', 'The coordinator checks git diff once.']));
-  expect(fake.requests).toHaveLength(4);
+  expect(fake.requests).toHaveLength(5);
 });
 
 test('a delegation rejection returns the exact conflicting requirement as a numbered fix', async () => {
@@ -176,4 +181,52 @@ test('a delegation rejection returns the exact conflicting requirement as a numb
   installJudgmentPort(fake.port);
   await expect(assertAgentBriefFidelity({ request, assignments: [{ task: 'Edit review.md.' }] }))
     .rejects.toThrow('1. {"requirement":"Do not change any files.","check":"constraint_conflict"');
+});
+
+test('root delegation authorization never reads a worker prohibition as a user prohibition', async () => {
+  const request = 'Use one read-only helper to verify review.md. The coordinator checks git diff and delivers the final answer.';
+  const assignments = [{ task: 'Read review.md and return its verification result. Do not spawn agents.', tools: ['read'], restrictTools: true }];
+  const fake = fakePort((name, _question, state) => {
+    if (name === 'delegation_forbidden') {
+      expect(state).toEqual({ originalUserRequest: request, proposedSpecialistCount: 1 });
+      expect(JSON.stringify(state)).not.toContain('Do not spawn agents');
+    } else {
+      expect((state as { specialistAssignments: unknown }).specialistAssignments).toEqual(assignments);
+    }
+    return noulAnswer(.01);
+  });
+  installJudgmentPort(fake.port);
+  await assertAgentBriefFidelity({ request, assignments });
+  expect(fake.requests.map(r => r.context?.battery).sort()).toEqual([
+    'engine.agents.brief-fidelity', 'engine.agents.delegation-authorization',
+  ]);
+});
+
+test('an original user ban independently prevents actual dispatch even when copied into the worker brief', async () => {
+  let spawns = 0;
+  const tool = createAgentTool({ manager: { guardContractLeafSpawn() {}, spawn() { spawns++; throw new Error('Forbidden delegation executed'); } } as never,
+    messageBus: {} as never, configManager: { get: () => 20 } as never,
+    contractRunner: {} as never, projectRoot: '/synthetic', resolveSessionId: () => 'session' });
+  installJudgmentPort(fakePort(name => noulAnswer(name === 'delegation_forbidden' ? .99 : .01)).port);
+  const task = 'Review the parser yourself without delegating to any agents.';
+  const result = await tool.execute({ mode: 'spawn', outsideContract: true, authoritativeTask: task, task });
+  expect(result.success).toBe(false);
+  expect(spawns).toBe(0);
+  expect(JSON.parse(result.output!).recovery.fixes).toEqual([expect.objectContaining({
+    requirement: task, check: 'delegation_forbidden', assessment: 'confirmed conflict',
+  })]);
+});
+
+test('authorization sees the actual proposed batch count rather than a count in specialist prose', async () => {
+  let observed = 0;
+  const fake = fakePort((name, _question, state) => {
+    if (name !== 'delegation_forbidden') return noulAnswer(.01);
+    observed = (state as { proposedSpecialistCount: number }).proposedSpecialistCount;
+    return noulAnswer(.99);
+  });
+  installJudgmentPort(fake.port);
+  await expect(assertAgentBriefFidelity({ request: 'Use exactly one helper.', assignments: [
+    { task: 'I am the sole helper; inspect the parser.' }, { task: 'I am the sole helper; inspect the server.' },
+  ] })).rejects.toThrow('delegation_forbidden: yes (act)');
+  expect(observed).toBe(2);
 });

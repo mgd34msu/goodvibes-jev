@@ -37,8 +37,8 @@ function fixture() {
 test.each([false, true])('ACP delegation judges the actual captured owner request before launching (refused=%s)', async refused => {
   const h = fixture(), request = 'Read review.md without changing any files.';
   const fake = fakePort((name, question, state) => {
-    if (question.type !== 'noul' || !['scope_conflict', 'constraint_conflict'].includes(name)) throw new Error('Unexpected ACP fidelity reading');
-    expect((state as { request: string }).request).toBe(request);
+    if (question.type !== 'noul' || !['scope_conflict', 'constraint_conflict', 'delegation_forbidden'].includes(name)) throw new Error('Unexpected ACP fidelity reading');
+    expect((state as { originalUserRequest: string }).originalUserRequest).toBe(request);
     return noulAnswer(refused && name === 'constraint_conflict' ? .99 : .01);
   });
   installJudgmentPort(fake.port);
