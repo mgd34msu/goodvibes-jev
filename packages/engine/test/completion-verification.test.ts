@@ -32,7 +32,7 @@ test('large-history retrieval starts with actual scoped host acceptance and stil
     ask: 'Review all source and write review.md.', status: 'passed', criteria: 'Original literal acceptance scope. '.repeat(500), finalCheck: { id: 'final-check', result: 'pass', decisionIds: ['actual-check'] },
     publication: { status: 'applied', note: 'Applied review.md.' }, answer: 'The report is saved in review.md.', units: [] }] };
   const fake = good();
-  expect((await new CompletionVerification(verificationWriter).prepare(input, access(fake.port))).findings).toHaveLength(0);
+  expect((await new CompletionVerification(verificationWriter).prepare({ ...input, initial: { request: input.request, transcript: input.transcript } }, access(fake.port))).findings).toHaveLength(0);
   const checks = fake.requests.filter(request => request.context?.battery === 'engine.verification.requirement');
   const first = checks[0]!.state as unknown as { opened: { sources: { text: string; reference: string }[] } };
   expect(first.opened.sources.some(source => source.reference.includes('; acceptance and publication;') && source.text.includes('actual-check'))).toBe(true);
@@ -45,6 +45,36 @@ test('large-history retrieval starts with actual scoped host acceptance and stil
   const audits = fake.requests.filter(request => request.context?.battery === 'engine.verification.audit');
   expect(audits.length).toBeGreaterThan(0);
   expect(JSON.stringify(audits)).toContain('Retained earlier source.');
+});
+
+test('a first draft retains current tool results beside completed work rather than demanding those tools again', async () => {
+  const before = state('Earlier retained source. '.repeat(15_000));
+  const input = { ...before, initial: { request: before.request, transcript: before.transcript },
+    transcript: [...before.transcript, { role: 'tool', callId: 'current-file-inspection', content: 'CURRENT-DELIVERY-PROOF: findings.json has 14 findings; report and ZIP exist.' }],
+    completedWork: [{ kind: 'host-completed-contract', id: 'review', status: 'passed', finalCheck: { result: 'pass' }, publication: { status: 'applied' } }] };
+  const fake = good();
+  expect((await new CompletionVerification(verificationWriter).prepare(input, access(fake.port))).findings).toHaveLength(0);
+  const first = fake.requests.find(request => request.context?.battery === 'engine.verification.requirement')!.state as unknown as { opened: { sources: { text: string; execution?: { callId?: string } }[] } };
+  expect(first.opened.sources.some(source => source.text.includes('CURRENT-DELIVERY-PROOF') && source.execution?.callId === 'current-file-inspection')).toBe(true);
+  expect(first.opened.sources.some(source => source.text.includes('host-completed-contract'))).toBe(true);
+});
+
+test('a missing-proof reading which demands source retrieves existing recovery before ordering a repair', async () => {
+  const before = state('Earlier partial progress. '.repeat(15_000));
+  const input = { ...before, initial: { request: before.request, transcript: before.transcript },
+    archive: [{ messages: [{ role: 'tool', callId: 'actual-recovery', content: 'EXISTING-RECOVERY: the required file inspection already succeeded.' }] }],
+    completedWork: [{ kind: 'host-completed-contract', id: 'review', status: 'passed', finalCheck: { result: 'pass' } }] };
+  const fake = fakePort((name, question, raw) => {
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    const current = raw as unknown as { opened?: { sources?: { text: string }[] } };
+    const recovered = current.opened?.sources?.some(source => source.text.includes('EXISTING-RECOVERY'));
+    return noulAnswer(['unfinished', 'quality_gap', 'needs_source'].includes(name) && !recovered ? .99 : .01);
+  });
+  expect((await new CompletionVerification(verificationWriter).prepare(input, access(fake.port))).findings).toHaveLength(0);
+  const checks = fake.requests.filter(request => request.context?.battery === 'engine.verification.requirement');
+  expect(checks.length).toBeGreaterThan(1);
+  expect(JSON.stringify(checks.at(-1)!.state)).toContain('EXISTING-RECOVERY');
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.source')).toBe(true);
 });
 
 test('lossless source boundaries cannot turn a long numeric identity into refused card material', () => {

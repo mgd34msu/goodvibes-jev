@@ -408,7 +408,7 @@ export class CompletionVerification {
         auditHeld = true;
       }
       if (hasPrimary && !auditHeld && run.readings.needs_source.verdict === 'no' && run.readings.needs_source.outcome === 'act') return { requirement, readings: run.readings, state, sourceExhausted: false, auditHeld: false };
-      if (hasPrimary && [run.readings.unfinished, run.readings.quality_gap].some(reading => reading.verdict === 'yes' && reading.outcome === 'act'))
+      if (hasPrimary && !sourceDemanded && [run.readings.unfinished, run.readings.quality_gap].some(reading => reading.verdict === 'yes' && reading.outcome === 'act'))
         return { requirement, readings: run.readings, state, sourceExhausted: false, auditHeld: false };
       for (;;) {
         access.assertCurrent(); if (defer()) throw new VerificationDeferredError();
@@ -584,9 +584,20 @@ export class CompletionVerification {
     // earlier failed contract ahead of the current one can otherwise leave
     // only the tail of the current receipt in the last frame.
     const preferred = [...acceptance.values()].at(-1);
-    const recent = preferred
+    const hostPrimary = preferred
       ? verificationFrames(preferred, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length)[0] ?? []
-      : verificationFrames(added, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length).at(-1) ?? [];
+      : [];
+    const initial = full.initial as { transcript?: readonly Record<string, unknown>[] } | null;
+    const earlierCalls = new Set((initial?.transcript ?? []).filter(message => message.role === 'tool').map(message => message.callId));
+    const currentCalls = new Set((initial?.transcript ? (full.transcript ?? []) as readonly Record<string, unknown>[] : [])
+      .filter(message => message.role === 'tool' && typeof message.callId === 'string' && !earlierCalls.has(message.callId)).map(message => message.callId));
+    const currentResults = observations.filter(source => source.execution && currentCalls.has(source.execution.callId));
+    const latestResults = verificationFrames(currentResults.length ? currentResults : added, VERIFICATION_FRAME_CHARACTERS,
+      source => JSON.stringify(verificationWireSource(source)).length).at(-1) ?? [];
+    // At most two native frames: the coherent upstream acceptance and this
+    // turn's actual tool observations. A first draft must not lose its own
+    // successful tools merely because no prior verification attempt exists.
+    const recent = [...new Map([...hostPrimary, ...latestResults].map(source => [source.id, source])).values()];
     const rememberSources = () => { this.previousSources = { identity: access.identity, request: requestKey, ids: new Set(sources.map(source => source.id)) }; };
     const key = verificationHash([sources.map(source => source.id), ledger, full.response, overview.map(node => this.compactNode(node))]);
     if (this.finalEvidence?.key !== key || this.finalEvidence.identity !== access.identity)
