@@ -40,6 +40,7 @@ import type { ContractStepsWithReplies } from './steps.js';
 import type { ContractStore } from './store.js';
 import { acquireSharedTree } from './workstreams.js';
 import { preserveDeclaredReadReceipts } from './private-read-receipts.js';
+import { changedFinalAcceptancePolicy } from './acceptance-policy.js';
 import { isTerminalContractStatus, isTerminalUnitStatus, type Contract, type ContractFailureKind, type ContractStatus, type ContractUnit } from './types.js';
 
 /** The step a resumed contract takes up. */
@@ -259,6 +260,18 @@ export function createContractResume(deps: ContractResumeDeps): ContractResume {
     preserveDeclaredReadReceipts(contract);
     if (contract.nativeSource === undefined) {
       const pending = contract.escalations.filter(item => item.resolvedAt === undefined);
+      if (contract.status === 'awaiting-owner' && contract.units.length > 0 && contract.units.every(unit => unit.status === 'passed')
+        && contract.groups.length > 0 && contract.groups.every(group => group.status === 'passed') && pending.length > 0
+        && pending.every(item => item.scope === 'deliverable' && item.targetId === contract.id && ['stalled', 'unsettled', 'fix-rounds-exhausted'].includes(item.reason))
+        && changedFinalAcceptancePolicy(contract, run.env.config().acceptanceStakes)) {
+        // The old checker question is superseded, not answered or approved.
+        // Re-run the retained result under the new policy with the same scope.
+        for (const item of pending) item.resolvedAt = run.env.now();
+        contract.statusBeforeOwner = undefined;
+        run.moveContract('judging');
+        run.decide('resumed', contract.id, 'Retired the obsolete final-check question after an acceptance-policy change; retained work requires fresh original-requirement and content checks before publication. No owner approval was inferred.');
+        deps.store.put(contract);
+      }
       if (contract.status === 'awaiting-owner' && contract.units.length === 0 && pending.length > 0
         && pending.every(item => item.scope === 'shape' && item.reason === 'writing-unclear')) {
         // The old shaping question is no longer a prerequisite for planning.

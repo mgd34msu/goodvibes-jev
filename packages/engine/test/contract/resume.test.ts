@@ -172,6 +172,50 @@ test('changed final-content policy rechecks retained work before resuming an uns
   expect(done.checks[1]!.result).toBe('pass');
 });
 
+test.each(['changed-passes', 'changed-fails', 'unchanged'])('a retained final-check owner wait revalidates only after a policy change (%s)', async scenario => {
+  const plan = oneUnitPlan(1);
+  plan.groups[0]!.units[0]!.role = 'research';
+  const { root, ids: [id] } = await interrupt({ plan, contract: { maxFixRounds: 1, stallLimit: 1 }, scripts: { u1: () => [{ text: 'The retained complete result.' }] },
+    planner: { run: async request => !request.systemPrompt.startsWith('You plan a repair')
+      ? { status: 'completed', output: plannerOutput(plan), elapsedMs: 0 }
+      : new Promise(resolve => request.signal!.addEventListener('abort', () => resolve({ status: 'cancelled', output: '', elapsedMs: 0 }), { once: true })) },
+    port: context => context.name === 'role' ? choiceAnswer(context.question, 'research', 0.98)
+      : judgeOf(context) === 'deliverable' && context.name === 'goal' ? noulAnswer(0.98) : undefined,
+  }, contract => ['fixing', 'awaiting-owner'].includes(contract.status) && contract.checks.length === 1, 'the retained final-check rejection');
+  let units = '', oldQuestion = '';
+  editContract(root, id!, contract => {
+    contract.statusBeforeOwner = 'fixing'; contract.status = 'awaiting-owner';
+    contract.fixRounds = 1;
+    const completedRepair = { ...contract.groups[0]!, kind: 'fix' as const, repairs: { scope: 'deliverable' as const, targetId: id!, criterionIds: [] } };
+    contract.groups[0] = completedRepair;
+    contract.decisions.push({ id: `${id}.historical-repair`, at: Date.now(), action: 'fix-planned', targetId: id!,
+      reason: `round 1: group ${completedRepair.id} with 1 unit`, decisionIds: [] });
+    if (!contract.escalations.some(item => item.resolvedAt === undefined)) contract.escalations.push({ id: `${id}.e1`, at: Date.now(), scope: 'deliverable', targetId: id!, reason: 'stalled',
+      question: 'The original goal remains unresolved.', unmetCriterionIds: [], decisionIds: contract.checks.at(-1)!.decisionIds });
+    units = JSON.stringify(contract.units); oldQuestion = contract.escalations.find(item => item.resolvedAt === undefined)!.id;
+    if (scenario !== 'unchanged') {
+      const decision = contract.decisions.findLast(item => item.targetId === `${id}.final-answer-review`)!;
+      const receipt = JSON.parse(decision.reason); receipt.policy.fulfillment.version -= 1;
+      contract.decisions[contract.decisions.indexOf(decision)] = { ...decision, reason: JSON.stringify(receipt) };
+    }
+  });
+  let checks = 0;
+  const second = restart(root, { plan, contract: { maxFixRounds: 1, stallLimit: 1 }, scripts: { u1: mustNotRun }, port: context => {
+    if (context.name === 'route') return choiceAnswer(context.question, 'owner', 0.98);
+    if (judgeOf(context) === 'deliverable' && context.name === 'goal') { checks++; if (scenario === 'changed-fails') return noulAnswer(0.98); }
+    return undefined;
+  } });
+  await second.runner.resumeAll();
+  if (scenario === 'changed-passes') await waitFor(() => terminal(second, id!), 'new policy acceptance');
+  if (scenario === 'changed-fails') await waitFor(() => contractIn(second, id!).checks.length === 2 && contractIn(second, id!).status === 'awaiting-owner', 'fresh rejection');
+  const done = contractIn(second, id!), old = done.escalations.find(item => item.id === oldQuestion)!;
+  expect(JSON.stringify(done.units)).toBe(units); expect(second.agentsOf('u1')).toEqual([]); expect(old.reply).toBeUndefined();
+  expect(done.checks.length).toBe(scenario === 'unchanged' ? 1 : 2);
+  expect(checks).toBe(scenario === 'unchanged' ? 0 : scenario === 'changed-fails' ? 2 : 1);
+  if (scenario === 'unchanged') { expect(old.resolvedAt).toBeUndefined(); expect(done.status).toBe('awaiting-owner'); }
+  else { expect(old.resolvedAt).toBeDefined(); expect(done.status).toBe(scenario === 'changed-passes' ? 'passed' : 'awaiting-owner'); }
+});
+
 test.each(['interrupted', 'privacy-refused', 'verifier-refused'])('an %s final-answer repair resumes the same round with its rejected draft and findings', async condition => {
   const plan = oneUnitPlan(1);
   plan.groups[0]!.units[0]!.role = 'research';

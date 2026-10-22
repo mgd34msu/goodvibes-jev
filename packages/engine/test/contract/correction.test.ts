@@ -249,7 +249,11 @@ function failsUntilRepairedWork(kind: 'group' | 'deliverable') {
   return (context: AnswerContext): unknown => {
     if (judgeOf(context) !== kind) return undefined;
     const { finalAnswerReview: _review, previousFulfillmentAssessment: _previous, ...work } = context.state['evidence'] as Record<string, unknown>;
-    const basis = JSON.stringify({ output: context.state['output'], work });
+    // Content approval changes the verifier phase and attaches actual execution
+    // provenance. The original prepared-evidence digest still binds the same
+    // work; a new phase label is not an implementation repair.
+    const full = work['fullSourceEvidence'] as { digest?: string } | undefined;
+    const basis = JSON.stringify({ output: context.state['output'], work: full?.digest ?? work });
     rejectedBasis ??= basis;
     return noulAnswer(basis === rejectedBasis ? UNMET : MET);
   };
