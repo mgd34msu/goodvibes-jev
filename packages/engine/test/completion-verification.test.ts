@@ -15,6 +15,7 @@ import { ResponseCompletionGuard } from '../sdk/src/platform/core/response-compl
 import { appendVerificationObservation, beginVerificationConversation, verificationHistory, verificationMessages } from '../sdk/src/platform/core/verification/archive.js';
 import { verificationWriter } from './_helpers/verification.js';
 import { retainedDelegationSources } from '../sdk/src/platform/core/verification/delegated-history.js';
+import { verificationOriginalTurns } from '../sdk/src/platform/core/verification/original-turns.js';
 import type { VerificationAccess, VerificationWriter } from '../sdk/src/platform/core/verification/types.js';
 import type { LLMProvider } from '../sdk/src/platform/providers/interface.js';
 
@@ -331,6 +332,60 @@ test('an unsettled semantic audit returns one specific private evidence question
   expect(guard.beginFinalization({ content: input.response })).not.toThrow();
 });
 
+test('native original-turn correlation preserves fragments, runtime observations and separate historical scopes', () => {
+  const sources = verificationSources({ request: 'Current report follow-up.', response: '', archive: [{ messages: [
+    { role: 'user', content: 'Archived unrelated assignment.' }, { role: 'tool', callId: 'archived', content: 'ARCHIVED-ONLY' },
+  ] }], transcript: [
+    { role: 'user', content: 'Print versions. '.repeat(1500) },
+    { role: 'system', content: 'Runtime observation: recovery completed.' },
+    { role: 'tool', callId: 'versions', content: 'ORIGINAL-VERSIONS: Bun 1.3.14, Node v26.1.0, npm 12.0.1.' },
+    { role: 'user', content: 'Current report follow-up.' },
+    { role: 'tool', callId: 'later-deletion', content: 'LATER-UNRESOLVED-DELETION' },
+  ] });
+  const correlated = verificationOriginalTurns(sources);
+  const fragments = sources.filter(source => source.reference.startsWith('transcript[0]'));
+  expect(fragments.length).toBeGreaterThan(1);
+  const turn = correlated.get(fragments[0]!.id)!;
+  expect(fragments.every(source => correlated.get(source.id) === turn)).toBe(true);
+  expect(JSON.stringify(turn)).toContain('ORIGINAL-VERSIONS');
+  expect(JSON.stringify(turn)).toContain('Runtime observation: recovery completed');
+  expect(JSON.stringify(turn)).not.toContain('ARCHIVED-ONLY');
+  expect(JSON.stringify(turn)).not.toContain('LATER-UNRESOLVED-DELETION');
+  const later = sources.find(source => source.text.includes('LATER-UNRESOLVED-DELETION'))!;
+  expect(JSON.stringify(correlated.get(later.id))).not.toContain('ORIGINAL-VERSIONS');
+  expect(Object.isFrozen(turn)).toBe(true);
+});
+
+test.each([true, false])('a historical instruction is checked against its actual original receipts, not an unrelated later claim (receipt present: %s)', async present => {
+  const history = [
+    { role: 'user', content: 'Complete the repository review.' },
+    ...state('Earlier review observations. '.repeat(6000)).transcript,
+    { role: 'user', content: 'PRINT-RUNTIME-VERSIONS: print Bun, Node and npm versions, then continue the report.' },
+    { role: 'assistant', content: '', toolCalls: [{ id: 'old-version-command', name: 'exec', arguments: { commands: [{ cmd: 'bun --version; node --version; npm --version' }] } }] },
+    { role: 'tool', callId: 'old-version-command', outcome: present ? 'ok' : 'error', content: present ? 'EXACT-ORIGINAL-VERSIONS: 1.3.14, v26.1.0, 12.0.1; exit 0.' : 'The versions command was not executed.' },
+    { role: 'assistant', content: 'Earlier response: versions were printed.' },
+  ];
+  const request = 'Retain completed work and verify the existing report without repeating earlier commands.';
+  const input = { ...state(), request, initial: { request, transcript: [...history, { role: 'user', content: request }] },
+    transcript: [...history, { role: 'user', content: request }, { role: 'tool', callId: 'current-proof', content:
+      'Completed report read. An unrelated later printed string says EXACT-ORIGINAL-VERSIONS, but is not the original command receipt.' }] };
+  const fake = fakePort((name, _question, raw) => {
+    const value = raw as unknown as { observation?: { text: string }; originalTurn?: { sources: { messageRole?: string; execution?: { callId?: string }; text: string }[] }; sources?: unknown; evidence?: { unresolvedQuestion?: string } };
+    if (name === 'missed') {
+      if (!value.observation) return noulAnswer(JSON.stringify(value.sources).includes('PRINT-RUNTIME-VERSIONS') ? .4 : .01);
+      if (!value.observation.text.includes('PRINT-RUNTIME-VERSIONS')) return noulAnswer(.01);
+      const observed = value.originalTurn?.sources.some(source => source.execution?.callId === 'old-version-command' && source.text.includes('EXACT-ORIGINAL-VERSIONS'));
+      return noulAnswer(observed ? .01 : .4);
+    }
+    return noulAnswer(name === 'unsupported' && value.evidence?.unresolvedQuestion ? .4 : .01);
+  });
+  const result = new CompletionVerification(noIssueWriter).prepare(input, access(fake.port));
+  if (present) expect((await result).findings).toEqual([]);
+  else await expect(result).rejects.toThrow('native requirement remains unsettled without an actionable repair');
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.observation-audit'
+    && JSON.stringify((request.state as never as { originalTurn?: unknown }).originalTurn ?? null).includes('old-version-command'))).toBe(true);
+});
+
 test('a small held draft retains worker evidence for its resumed fix list and fresh completion check', async () => {
   const root = directory(), sessionId = 'small-worker';
   const conversation = new ConversationManager();
@@ -356,6 +411,13 @@ test('a small held draft retains worker evidence for its resumed fix list and fr
   expect(guard.resumedRepair()).toContain('FULL-WORKER-READ');
   expect(await guard.check({ request: 'Verify the report with one worker.', response: 'The worker verified review.md.', conversation: resumed, tools: ['agent'], delegated: [] })).toBeNull();
   expect(check.requests.some(request => request.context?.battery === 'engine.core.response-completion')).toBe(true);
+  resumed.addUserMessage('Verify the report with one worker.');
+  const next = new ResponseCompletionGuard({ request: 'Verify the report with one worker.', conversation: resumed,
+    verificationStore: new VerificationStore(root, sessionId), verificationWriter });
+  expect(next.resumedRepair()).toContain('FULL-WORKER-READ');
+  expect(next.resumedRepair()).not.toContain('Fix list');
+  expect(next.resumedRepair()).toContain('cannot override a new user instruction');
+  expect(() => next.beginFinalization({ content: 'The worker verified review.md.' })).toThrow();
 });
 
 test('a no-issue diagnosis rechecks the original requirement instead of manufacturing a repair', async () => {
@@ -1303,6 +1365,21 @@ test('saved repair findings survive restart only for the same source history and
   const other = new ConversationManager(); other.addUserMessage(request); other.addToolResults([{ callId: 'different', success: true, output: 'Different source.' }]);
   expect(new ResponseCompletionGuard({ ...initial, conversation: other, verificationStore: new VerificationStore(root, 'resume-repair') }).resumedRepair()).toBe('');
   expect(new ResponseCompletionGuard({ ...initial, request: 'An unrelated task.', verificationStore: new VerificationStore(root, 'resume-repair') }).repairContext()).toBeUndefined();
+});
+
+test.each([true, false])('saved repair restoration distinguishes a new owner request from runtime feedback with identical text (owner input: %s)', async ownerInput => {
+  const root = directory(), request = 'Verify the report using one read-only worker.';
+  const conversation = new ConversationManager(); conversation.addUserMessage(request);
+  const fake = fakePort(name => noulAnswer(name === 'unsupported' ? .99 : .01)); installJudgmentPort(fake.port);
+  const initial = { request, conversation, verificationWriter, verificationStore: new VerificationStore(root, 'repair-turn') };
+  const first = new ResponseCompletionGuard(initial);
+  expect(await first.check({ request, response: 'The worker verified the report.', conversation, tools: [] })).not.toBeNull();
+  if (ownerInput) conversation.addUserMessage(request);
+  else appendVerificationObservation(conversation, request);
+  const resumed = new ConversationManager(); resumed.fromJSON(JSON.parse(JSON.stringify(conversation.toJSON())));
+  const guard = new ResponseCompletionGuard({ ...initial, conversation: resumed, verificationStore: new VerificationStore(root, 'repair-turn') });
+  expect(guard.resumedRepair().includes('Fix list')).toBe(!ownerInput);
+  expect(() => guard.beginFinalization({ content: 'The worker verified the report.' })).toThrow();
 });
 
 

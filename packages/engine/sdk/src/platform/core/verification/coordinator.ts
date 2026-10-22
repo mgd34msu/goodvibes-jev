@@ -8,6 +8,7 @@ import { VerificationHeldError, VerificationUnsettledError, VerificationSubdivis
 import type { CompletionFinding } from '../response-completion-findings.js';
 import { bindVerificationTargets } from './targets.js';
 import { retainedDelegationSources } from './delegated-history.js';
+import { verificationOriginalTurns } from './original-turns.js';
 
 const clean = (readings: Readonly<Record<string, { verdict: string; outcome: string }>>) => Object.values(readings).every(reading => reading.verdict === 'no' && reading.outcome === 'act');
 const bounded = (value: unknown, limit: number) => JSON.stringify(value).length <= limit;
@@ -81,6 +82,7 @@ export class CompletionVerification {
   private readonly nodes = new Map<string, VerificationReceipt>();
   private readonly originals = new Map<string, VerificationSource>();
   private readonly sourceOrder = new Map<string, number>();
+  private originalTurns: ReadonlyMap<string, readonly VerificationSource[]> = new Map();
   private previousSources: { identity: object; request: string; ids: Set<string> } | undefined;
   private finalEvidence: { key: string; identity: object; frontier: VerificationReceipt[]; seen: Set<string>; opened: readonly VerificationSource[]; earlier: VerificationReceipt[] } | undefined;
   constructor(private readonly writer: VerificationWriter, readonly store = new VerificationStore()) {}
@@ -360,6 +362,14 @@ export class CompletionVerification {
     return nodes;
   }
 
+  private originalTurn(sourceId: string) {
+    const members = this.originalTurns.get(sourceId);
+    if (!members) return undefined;
+    const sources = members.map(verificationWireSource);
+    if (!bounded(sources, VERIFICATION_FRAME_CHARACTERS)) return undefined;
+    return { meaning: 'Exact native observations within the SAME original user turn, bounded by original owner instructions. They retain their original times and roles. A historical instruction may already have been performed here; it does not require repeating those actions or its answer in the current turn. Plans and assistant assertions still do not prove execution. A turn boundary, cancellation or prior answer never establishes completion or erases a remaining obligation. All later original observations remain separately audited.', sources };
+  }
+
   private async audit(requirement: VerificationRequirement, caseEvidence: unknown, sources: readonly VerificationSource[], access: VerificationAccess,
     response: unknown, audited: Set<string>, accounted: Set<string>, turnContext?: VerificationTurnContext): Promise<VerificationSource[][]> {
     const pages = verificationFrames(sources, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length);
@@ -390,8 +400,9 @@ export class CompletionVerification {
         // historical page obscures which fact still needs reconciliation.
         const resolved = await ownedMapLimit(access, page, 3, async observation => {
           if (accounted.has(observation.id)) return true;
+          const originalTurn = this.originalTurn(observation.id);
           const state = { originalRequirement: requirement, currentWorkEvidence: caseEvidence, observation: verificationWireSource(observation),
-            currentTurn: turnContext?.currentTurn, proposedResponse: response };
+            ...(originalTurn ? { originalTurn } : {}), currentTurn: turnContext?.currentTurn, proposedResponse: response };
           const sourceKey = verificationHash(['original-counterevidence-v1', state]);
           if (cache.has(sourceKey)) return cache.get(sourceKey) === true;
           const exact = await verificationObservationAudit.run(access.port, state as never,
@@ -402,6 +413,7 @@ export class CompletionVerification {
           if (!settled && exact.readings.missed.outcome !== 'act') {
             const check = `${requirement.id}:audit:${observation.id}`;
             const assessment = await this.repairs({ ...turnContext, requirement, response, caseEvidence, sources: [verificationWireSource(observation)],
+              ...(originalTurn ? { originalTurn } : {}),
               unresolvedQuestion: 'Does this specific original observation still establish an unmet obligation or invalidating fact, after the supplied current primary evidence? Name its actual remaining concern, or explain with exact observations why it is resolved. Do not redraft or repeat the underlying task.',
               readings: readingEvidence(exact.readings) }, [check], access);
             // Only the current factual Jev qualification can dismiss this
@@ -726,6 +738,7 @@ export class CompletionVerification {
     access.assertCurrent();
     const currentSources = verificationSources(full);
     const sources = [...currentSources, ...retainedDelegationSources(full, this.store.sources)];
+    this.originalTurns = verificationOriginalTurns(currentSources);
     for (const source of currentSources) this.store.rememberSource(source);
     for (const [position, source] of sources.entries()) { this.originals.set(source.id, source); this.sourceOrder.set(source.id, position); }
     const ledger = await this.ledger(sources.filter(source => source.kind === 'instruction'), access);
@@ -875,12 +888,14 @@ export class CompletionVerification {
         !rechecked.resolution?.aspects.includes(name) && (name !== 'needs_source' || rechecked.sourceExhausted) && (reading.verdict !== 'no' || reading.outcome !== 'act'));
       if (stillHeld) {
         const unresolved = 'unaccountedOriginals' in rechecked.state ? rechecked.state.unaccountedOriginals[0] : undefined;
+        const originalTurn = unresolved ? this.originalTurn(unresolved.id) : undefined;
         throw new VerificationUnsettledError('native requirement remains unsettled without an actionable repair', [{
           check: `${entry.requirement.id}:evidence`, assessment: 'unresolved', localization: 'candidate-to-investigate',
           issue: unresolved ? 'Jev has not settled whether this exact historical observation is resolved by the current work evidence.'
             : 'Jev has not settled this specific original requirement from the available primary observations.',
           repair: 'Resolve this single evidence question against the existing original tool observations and current work. Identify the exact later observation which resolves it, or the specific original obligation still missing. Preserve completed work and the existing artifact. Do not restart the review, rerun unchanged tests or rewrite the report to address uncertainty alone. Perform only a concrete remaining action established by that comparison.',
           resolvedWhen: 'Fresh Jev checks settle this specific concern and the original requirement. No uncertain reading is treated as approval or as a proven defect.',
+          ...(originalTurn ? { remaining: ['Resolve this question using the existing native observations from its SAME original turn. These are historical evidence, not new executions, instructions or approval:\n' + JSON.stringify(originalTurn)] } : {}),
           passage: { reference: unresolved?.reference ?? entry.requirement.sources.join(', '),
             quote: unresolved ? typeof unresolved.text === 'string' ? unresolved.text : JSON.stringify(unresolved.text) : entry.requirement.text },
         }]);
