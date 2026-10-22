@@ -328,7 +328,7 @@ test.each([
   const policyPath = join(options.configDir, 'settings-sync.json');
   writeFileSync(policyPath, raw);
   const names = readdirSync(options.configDir);
-  expect(() => handle.getResolved()).toThrow('Host setting metadata is unavailable because managed policy could not be read.');
+  expect(() => handle.getResolved()).toThrow('Host setting metadata unavailable because managed policy could not be read.');
   expect(readFileSync(policyPath, 'utf8')).toBe(raw);
   expect(readdirSync(options.configDir)).toEqual(names);
   expect(handle.get()).toBe(false);
@@ -341,7 +341,7 @@ test('unreadable policy metadata throws a bounded error and recovers after reada
   const raw = JSON.stringify(defaultStore()); writeFileSync(policyPath, raw);
   chmodSync(policyPath, 0);
   try {
-    expect(() => handle.getResolved()).toThrow('Host setting metadata is unavailable because managed policy could not be read.');
+    expect(() => handle.getResolved()).toThrow('Host setting metadata unavailable because managed policy could not be read.');
     expect(handle.get()).toBe(false);
   } finally { chmodSync(policyPath, 0o600); }
   expect(readFileSync(policyPath, 'utf8')).toBe(raw);

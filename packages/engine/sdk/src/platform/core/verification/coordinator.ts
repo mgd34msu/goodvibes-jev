@@ -697,12 +697,12 @@ export class CompletionVerification {
       currentTurn: { entryMessageCount: initial?.transcript?.length ?? null, observationIds: currentResults.map(source => source.id),
         meaning: 'These source IDs identify actual tool observations after the native turn-entry checkpoint. Earlier executions and artifact descriptions remain historical evidence; do not treat them as actions repeated in this turn. Evaluate restrictions from when the user imposed them. All active original obligations and actual later invalidating facts remain required.' },
     };
-    // Current native results already provide a primary starting point. When
-    // history needs reduction merely to fit the overview, retrieve originals
-    // and audit every interval instead of drafting a tree of history summaries.
+    // Completed work can be reused without executing another tool. When its
+    // history no longer fits the overview, retrieve originals and audit every
+    // interval instead of rebuilding a tree of history summaries on resume.
     // An index still supplies no evidence or authority to approve completion.
     let indexed = observations.reduce((total, source) => total + source.text.length, 0) > 250_000
-      || currentResults.length > 0 && !bounded(observations.map(verificationWireSource), VERIFICATION_OVERVIEW_CHARACTERS);
+      || initial != null && !bounded(observations.map(verificationWireSource), VERIFICATION_OVERVIEW_CHARACTERS);
     let overview: VerificationReceipt[];
     if (indexed) overview = this.sourceIndex(observations);
     else {

@@ -228,7 +228,7 @@ for (const mode of ['malformed', 'unreadable'] as const) test(`host metadata sta
 });
 
 test('metadata failure while open clears stale unlocked provenance without writing', async () => {
-  await withPublicErrorText(['Host setting metadata is unavailable because managed policy could not be read.'], () => {
+  await withPublicErrorText(['Host setting metadata unavailable because managed policy could not be read.'], () => {
   const { config, handle, modal, options } = fixture();
   handle.set(false);
   expect(modal.getSelected()?.locked).toBe(false);
@@ -238,13 +238,9 @@ test('metadata failure while open clears stale unlocked provenance without writi
   expect(modal.getSelected()?.locked).toBeUndefined();
   expect(modal.getSelected()?.effectiveSource).toBeUndefined();
   expect(modal.getSelected()?.metadataUnavailable).toBeDefined();
-  expect(modal.lastSettingEffectMessage).toContain('metadata is unavailable');
+  expect(modal.lastSettingEffectMessage).toContain('metadata unavailable');
   expect(JSON.parse(readFileSync(config.getConfigPath(), 'utf8')).behavior.notificationsMetadataOnly).toBe(false);
   modal.close();
-  }, {
-    ordinaryFields: ['metadata'],
-    credentialProjections: [{ phase: 'source', target: 'span-1', parts: [{ kind: 'text', text: 'Host setting metadata is ' }, { kind: 'span', reference: 'span-1', syntax: 'assignment-value', field: 'metadata' }, { kind: 'text', text: '' }] }],
-    residualProjections: [{ parts: [{ kind: 'text', text: 'Host setting metadata is ' }, { kind: 'withheld', reference: 'span-1' }, { kind: 'text', text: '' }] }],
   });
 });
 

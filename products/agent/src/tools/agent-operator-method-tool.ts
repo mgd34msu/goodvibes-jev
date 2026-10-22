@@ -22,6 +22,7 @@ interface OperatorContractMethod {
     readonly path?: string;
   };
   readonly invokable?: boolean;
+  readonly outputSchema?: Record<string, unknown>;
 }
 
 interface OperatorMethodToolArgs {
@@ -263,6 +264,35 @@ async function stringifyOutput(value: unknown, options: Parameters<typeof redact
   if (!isRecord(protectedOutput)) throw new Error('Connected operator output could not be projected safely.');
   const text = JSON.stringify(protectedOutput, null, 2);
   return text;
+}
+
+/** The admitted native method declares its response structure. Unknown extension
+ * fields stay withheld; declared strings still undergo all egress checks. */
+function operatorResultFields(method: OperatorContractMethod): NonNullable<Parameters<typeof redactStructuredDataAsync>[1]>['declaredFields'] {
+  type Declaration = NonNullable<NonNullable<Parameters<typeof redactStructuredDataAsync>[1]>['declaredFields']>[number];
+  const fields = new Map<string, Declaration>();
+  const add = (path: readonly string[], kind: Declaration['kind'] = 'content') => {
+    const key = JSON.stringify(path);
+    if (fields.get(key)?.kind !== 'secret') fields.set(key, { path, kind });
+  };
+  for (const name of ['methodId', 'status', 'ok', 'route', 'effect', 'body', 'outcome']) add([name]);
+  const pending = [{ schema: method.outputSchema, path: ['body'] }];
+  while (pending.length) {
+    const { schema, path } = pending.pop()!;
+    if (!isRecord(schema)) continue;
+    if (isRecord(schema.properties)) for (const [name, child] of Object.entries(schema.properties)) {
+      const childPath = [...path, name];
+      add(childPath, isRecord(child) && child.writeOnly === true ? 'secret' : 'content');
+      if (isRecord(child)) pending.push({ schema: child, path: childPath });
+    }
+    if (isRecord(schema.items)) pending.push({ schema: schema.items, path: [...path, '*'] });
+    for (const union of ['anyOf', 'oneOf', 'allOf']) if (Array.isArray(schema[union])) {
+      for (const child of schema[union]) if (isRecord(child)) pending.push({ schema: child, path });
+    }
+  }
+  // These paths come from the captured native schema. Retain their immutable
+  // ownership so egress need not recapture the same declarations per field.
+  return captureStrictJudgmentJson([...fields.values()]);
 }
 
 function summarizeError(error: unknown): string {
@@ -639,7 +669,8 @@ export function createAgentOperatorMethodTool(
           body,
           ...(outcome ? { outcome } : {}),
         };
-        const formatted = await stringifyOutput(output, { signal: options?.signal, assertCurrent, secretValues: [connection.token] });
+        const formatted = await stringifyOutput(output, { signal: options?.signal, assertCurrent, secretValues: [connection.token],
+          declaredFields: operatorResultFields(methodSnapshot) });
         assertCurrent();
         if (!response.ok) return { success: false, error: formatted };
         publishOperatorMethodReceipt(route.method.id, rawArgs, options, body);

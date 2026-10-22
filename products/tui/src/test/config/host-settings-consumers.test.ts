@@ -64,7 +64,7 @@ test('host CLI refuses unreadable metadata without quarantining the policy or wr
  const { config, options } = fixture(); const handle = config.getHostBooleanSetting(KEY); handle.set(true);
  const policy = join(options.configDir, 'settings-sync.json'); writeFileSync(policy, '{');
  const c = command(config); const before = readFileSync(config.getConfigPath(), 'utf8');
- await c.run('false'); expect(c.messages.at(-1)).toContain('metadata is unavailable');
+ await c.run('false'); expect(c.messages.at(-1)).toContain('metadata unavailable');
  expect(readFileSync(policy, 'utf8')).toBe('{'); expect(readFileSync(config.getConfigPath(), 'utf8')).toBe(before);
  expect(readdirSync(options.configDir).some(name => name.startsWith('settings-sync.json.'))).toBe(false);
  expect(handle.get()).toBe(true);

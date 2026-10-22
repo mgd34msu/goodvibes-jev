@@ -710,14 +710,14 @@ test('a reported application defect does not require remediation to complete a r
   expect((await new CompletionVerification(verificationWriter).prepare(state(), access(fake.port))).findings).toHaveLength(0);
 });
 
-test('final retrieval retains bounded earlier originals without repeatedly summarizing them', async () => {
+test.each([true, false])('final retrieval retains bounded originals without resummarizing (new tool result: %s)', async newToolResult => {
   const fake = fakePort((name, question) => question.type === 'choice'
     ? choiceAnswer(question, Object.keys(question.criteria)[0]!, .99) : noulAnswer(name.startsWith('fits_') ? .99 : .01));
   const before = { ...state(), transcript: Array.from({ length: 8 }, (_, index) => ({ role: 'tool', callId: `original-${index}`,
     content: Array.from({ length: 140 }, (_, line) => `Original observation ${index}, unique line ${line}.`).join('\n') })) };
-  const input = { ...before, initial: { request: before.request, transcript: before.transcript }, transcript: [...before.transcript,
+  const input = { ...before, initial: { request: before.request, transcript: before.transcript }, transcript: newToolResult ? [...before.transcript,
     { role: 'assistant', toolCalls: [{ id: 'current-result', name: 'read', arguments: { files: [{ path: 'review.md' }] } }] },
-    { role: 'tool', callId: 'current-result', content: 'Current observed report.' }] };
+    { role: 'tool', callId: 'current-result', content: 'Current observed report.' }] : before.transcript };
   let reductions = 0;
   const writer: VerificationWriter = request => {
     if (request.operation === 'evidence' || request.operation === 'merge') reductions++;

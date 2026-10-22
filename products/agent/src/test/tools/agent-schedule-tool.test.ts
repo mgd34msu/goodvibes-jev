@@ -138,6 +138,7 @@ function schedulesListResponse(): Response {
         id: 'sched-1',
         mutationRevision: 'schedule-tool-revision',
         name: 'Daily queue review',
+        unrecognizedFixtureField: 'UNDECLARED_SCHEDULE_EXTENSION',
         labels: [],
         createdAt: 1,
         updatedAt: 2,
@@ -194,6 +195,8 @@ describe('schedule adapter tool', () => {
       expect(result).toMatchObject({ success: true });
       expect(result.output).toContain('"methodId": "automation.schedules.list"');
       expect(result.output).toContain('"sched-1"');
+      expect(result.output).not.toContain('UNDECLARED_SCHEDULE_EXTENSION');
+      expect(JSON.parse(result.output!).body.jobs[0].unrecognizedFixtureField).toBe('[REDACTED]');
       expect(requests).toEqual([{ url: 'http://127.0.0.1:3421/api/automation/schedules', method: 'GET', body: '' }]);
     } finally {
       globalThis.fetch = originalFetch;
