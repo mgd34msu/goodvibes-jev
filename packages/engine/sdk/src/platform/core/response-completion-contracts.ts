@@ -4,6 +4,15 @@ import type { ContractView } from '../contract/types.js';
 import { hashState } from '@goodvibes-jev/judgment';
 import { goalObligationSource } from '../contract/goal-obligation-proof.js';
 
+// Process-local provenance: copied tool JSON cannot mint a native work receipt.
+// These are work checkpoints, never final-response publication permits.
+const nativeWorkReceipts = new WeakMap<object, string>();
+export function isNativeCompletedWorkReceipt(original: unknown, admitted: unknown): boolean {
+  if (!original || typeof original !== 'object') return false;
+  const digest = nativeWorkReceipts.get(original);
+  return digest !== undefined && digest === hashState(admitted as Parameters<typeof hashState>[0]);
+}
+
 function recordedReview(contract: ContractView, target: string) {
   const decision = contract.decisions.findLast(entry => entry.targetId === `${contract.id}.${target}`);
   if (!decision) return null;
@@ -37,10 +46,11 @@ function recordedReview(contract: ContractView, target: string) {
 /** Runtime observations from this session, including terminal work which the
  * active-contract list intentionally omits. These are scoped receipts, never a
  * permit to publish another answer or evidence about unrelated work. */
-export function completedContractEvidence(runner: Pick<ContractRunner, 'list'>, sessionId: string) {
+export function completedContractEvidence(runner: Pick<ContractRunner, 'list'>, sessionId: string, projectRoot?: string) {
   return runner.list({ sessionId, includeTerminal: true, includeInputSnapshot: false })
     .filter(contract => contract.sessionId === sessionId && isTerminalContractStatus(contract.status))
-    .map(contract => ({
+    .map(contract => {
+      const work = {
       kind: 'host-completed-contract', id: contract.id, sessionId: contract.sessionId,
       projectRoot: contract.projectRoot, ask: contract.ask, goal: contract.goal,
       status: contract.status, completedAt: contract.completedAt ?? null,
@@ -59,5 +69,12 @@ export function completedContractEvidence(runner: Pick<ContractRunner, 'list'>, 
       answer: contract.answer ?? null, publication: contract.commit ?? null,
       error: contract.error ?? null, failureKind: contract.failureKind ?? null,
       meaning: 'Actual terminal runtime record for this identified contract and original scope. Its checks describe the saved work, not current final-response approval. A passed status alone does not establish unsupported new claims, current artifact contents, successful publication or unrelated work. Failed/cancelled checks and publication failures remain evidence. Compare the current response and original request with the exact recorded scope, checks, answer, publication and any later invalidating observations.',
-    }));
+      };
+      if (projectRoot && projectRoot === work.projectRoot && work.status === 'passed' && work.finalCheck?.result === 'pass'
+        && work.contentReview?.wellFormed && work.contentReview.matchesSavedAnswer && work.contentReview.record.passed === true
+        && work.goalCoverage?.wellFormed && work.goalCoverage.matchesSavedAnswer && work.goalCoverage.matchesOriginalScope
+        && work.goalCoverage.record.passed === true && ['applied', 'committed'].includes(String(work.publication?.status)))
+        nativeWorkReceipts.set(work, hashState(work as unknown as Parameters<typeof hashState>[0]));
+      return work;
+    });
 }

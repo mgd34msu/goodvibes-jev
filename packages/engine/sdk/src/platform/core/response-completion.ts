@@ -17,6 +17,7 @@ import { VerificationStore } from './verification/store.js';
 import { registerVerificationArchive, verificationHistory, verificationMessages } from './verification/archive.js';
 import { verificationHash } from './verification/source.js';
 import { bindVerificationTargets } from './verification/targets.js';
+import { nativeWorkCheckpoint } from './response-completion-checkpoint.js';
 
 export class ResponseCompletionError extends Error {
   constructor(readonly problem: 'rejected' | 'unavailable' | 'invalid-evidence' | 'rejected-request' | 'invalid-response' | 'capacity' = 'rejected', options?: ErrorOptions) {
@@ -304,7 +305,7 @@ export class ResponseCompletionGuard {
     }
   }
 
-  private async read(input: ResponseCompletionInput, options: JudgmentReadingOptions, onWaiting?: () => void): Promise<string | null> {
+  private async read(input: ResponseCompletionInput, options: JudgmentReadingOptions, onWaiting?: () => void, withoutCheckpoint = false): Promise<string | null> {
     options.signal?.throwIfAborted(); options.assertCurrent?.();
     const conversation = input.conversation, snapshot = conversation.getMessageSnapshot;
     const messages = captureConversationEvidence(conversation);
@@ -333,8 +334,11 @@ export class ResponseCompletionGuard {
     const port = bindVerificationTargets(owner.port);
     const readingOptions = { signal: owner.signal, beforeAttempt: owner.assertCurrent, onRetry: () => onWaiting?.() };
     let state: unknown = fullState;
+    const checkpoint = !withoutCheckpoint && JSON.stringify(fullState).length > 100_000
+      ? nativeWorkCheckpoint(input.completedWork ?? [], source.snapshot.completedWork, fullState) : undefined;
     let verificationFindings: readonly import('./response-completion-findings.js').CompletionFinding[] = [];
-    if (JSON.stringify(fullState).length > 100_000) {
+    if (checkpoint) state = checkpoint;
+    else if (JSON.stringify(fullState).length > 100_000) {
       if (!this.verification) throw new VerificationHeldError('missing private verification provider');
       let checked;
       try { checked = await this.verification.prepare(fullState, { ...readingOptions, port, identity: owner.identity, assertCurrent: owner.assertCurrent }); }
@@ -374,6 +378,9 @@ export class ResponseCompletionGuard {
     const execution = (checks[2] as PromiseFulfilledResult<Awaited<ReturnType<typeof executionAssurance.run>> | null>).value;
     owner.assertCurrent(); current();
     const publicationSource = state === fullState ? null : verificationHash(fullState);
+    // A checkpoint always needs fresh final checks, never accumulated approval
+    // from another evidence view or an earlier proposed answer.
+    if (checkpoint) this.publication = undefined;
     if (publicationSource && (this.publication?.source !== publicationSource || this.publication.identity !== owner.identity))
       this.publication = { source: publicationSource, identity: owner.identity, completion: new Set(), consolidation: new Set(), execution: new Set() };
     const qualifications = publicationSource ? this.publication! : { completion: new Set<string>(), consolidation: new Set<string>(), execution: new Set<string>() };
@@ -421,6 +428,12 @@ export class ResponseCompletionGuard {
     const executionAccepted = executionChecks.every(([aspect]) => qualifications.execution.has(aspect));
     const needsFinalSource = Object.entries(run.readings).some(([aspect, reading]) =>
       !qualifications.completion.has(aspect) && (!verificationFindings.length || !['unfinished', 'unanswered'].includes(aspect)));
+    if (checkpoint && (needsFinalSource || !executionAccepted
+      || Object.keys(consolidation?.readings ?? {}).some(aspect => !qualifications.consolidation.has(aspect)))) {
+      run.recordAction('This native work checkpoint does not settle every current final check; retrieve retained originals before requesting any working-model repair.');
+      batch.abort();
+      return this.read(input, options, onWaiting, true);
+    }
     if (state !== fullState && this.verification && (needsFinalSource || (!executionAccepted && !verificationFindings.length))) {
       const opened = await this.verification.openFinal(state, { completion: run.readings, consolidation: consolidation?.readings ?? null, execution: execution?.readings ?? null },
         { ...readingOptions, port, identity: owner.identity, assertCurrent: owner.assertCurrent });
@@ -429,7 +442,7 @@ export class ResponseCompletionGuard {
         consolidation?.recordAction('Retrieve primary evidence before declaring a synthesis defect.');
         execution?.recordAction('Retrieve primary evidence before declaring an execution defect.');
         batch.abort();
-        return this.read(input, options, onWaiting);
+        return this.read(input, options, onWaiting, withoutCheckpoint);
       }
     }
     if (Object.keys(run.readings).every(aspect => qualifications.completion.has(aspect))

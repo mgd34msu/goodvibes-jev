@@ -8,6 +8,7 @@ import { verificationSources } from '../sdk/src/platform/core/verification/sourc
 import { ConversationManager } from '../sdk/src/platform/core/conversation.js';
 import { ResponseCompletionGuard } from '../sdk/src/platform/core/response-completion.js';
 import { hashState } from '@goodvibes-jev/judgment';
+import { goalObligationSource } from '../sdk/src/platform/contract/goal-obligation-proof.js';
 
 const originalPort = installJudgmentPort(undefined);
 afterEach(() => installJudgmentPort(originalPort));
@@ -19,6 +20,90 @@ const contract = (overrides: Record<string, unknown> = {}) => ({ id: 'work', ses
   criteria: [{ id: 'c1', text: 'Review all source', disposition: 'judge', status: 'met', readings: [{ checkId: check.id, probabilityUnmet: .01, decisionId: 'real-reading' }] }],
   checks: [check], decisions: [], units: [{ id: 'work.u1', goal: 'Review source', status: 'passed', checks: [check] }],
   answer: 'Findings are in review.md.', commit: { status: 'applied', note: 'Applied review.md.' }, ...overrides }) as unknown as ContractView;
+
+function approvedWork(projectRoot = '/project') {
+  const view = contract({ criteria: [{ id: 'c1', text: 'Review all source and deliver review.md.', disposition: 'judged', status: 'met', readings: [] }] });
+  const content = { schemaVersion: 2, passed: true, outputDigest: hashState(view.answer!),
+    stateHash: hashState('actual-reviewed-state'), evidenceDigest: hashState('actual-reviewed-evidence'),
+    policy: { fulfillment: { name: 'contract.deliverable-judge', version: 5 }, content: { name: 'contract.final-answer-review', version: 9 }, stakes: 'high' },
+    readings: { unfinished: { probability: .01, verdict: 'no', outcome: 'act' }, unsupported: { probability: .01, verdict: 'no', outcome: 'act' } },
+    decisionIds: ['actual-content-review'], fulfillmentDecisionIds: ['actual-original-scope-check'] };
+  const scope = { schemaVersion: 1, passed: true, policy: { name: 'contract.goal-obligations', version: 1 },
+    outputDigest: hashState(view.answer!), literalSourceDigest: hashState(goalObligationSource(view)), stateHash: hashState('actual-scope-state'),
+    sourceJudgmentDecisionIds: ['actual-original-scope-check'], decisionIds: ['actual-scope-implication'],
+    reading: { probability: .01, verdict: 'no', outcome: 'act' }, sourceGoal: { probability: .01, verdict: 'no', outcome: 'act' } };
+  const accepted = { ...view, decisions: [
+    { id: 'work.d1', at: 100, action: 'passed' as const, targetId: 'work.final-answer-review', reason: JSON.stringify(content), decisionIds: ['actual-content-review'] },
+    { id: 'work.d2', at: 100, action: 'passed' as const, targetId: 'work.goal-obligations', reason: JSON.stringify(scope), decisionIds: ['actual-scope-implication'] },
+  ] };
+  return completedContractEvidence({ list: () => [accepted] }, 'session', projectRoot);
+}
+
+function handoff() {
+  const conversation = new ConversationManager();
+  conversation.addUserMessage('Review all source and deliver review.md.');
+  conversation.addToolResults([{ callId: 'old-progress', success: true, output: 'Earlier partial-review observation. '.repeat(10_000) }]);
+  conversation.addUserMessage('Review all source and deliver review.md.');
+  conversation.addUserMessage('Deliver the accepted review. Preserve files.');
+  const request = 'Deliver the accepted review. Preserve files.';
+  const guard = new ResponseCompletionGuard({ request, conversation, verificationWriter: async () => { throw new Error('FULL-ORIGINAL-RETRIEVAL'); } });
+  conversation.addToolResults([{ callId: 'current-delivery', success: true, output: 'CURRENT-DELIVERY: review.md exists and contains the approved findings.' }]);
+  return { guard, input: { request, response: 'The completed review is in review.md.', conversation, tools: ['read'], completedWork: approvedWork() } };
+}
+
+test('a native scoped work checkpoint still requires fresh final gates, preserves repeated instructions and the exact current observations', async () => {
+  const { guard, input } = handoff(), fake = fakePort(() => noulAnswer(.01)); installJudgmentPort(fake.port);
+  expect(await guard.check(input)).toBeNull();
+  const current = fake.requests.find(request => request.context?.battery === 'engine.core.response-completion')!.state as unknown as {
+    nativeWorkCheckpoint: unknown; originalInstructions: unknown; transcript: { role: string; content: unknown }[]; completedWork: unknown };
+  expect(current.nativeWorkCheckpoint).toBeDefined();
+  expect(current.transcript.filter(message => message.role === 'user' && message.content === 'Review all source and deliver review.md.')).toHaveLength(2);
+  expect(JSON.stringify(current.originalInstructions)).toContain('Preserve files');
+  expect(JSON.stringify(current.transcript)).toContain('CURRENT-DELIVERY');
+  expect(JSON.stringify(current.transcript)).not.toContain('Earlier partial-review observation');
+  expect(JSON.stringify(current.completedWork)).toContain('actual-scope-implication');
+  expect(fake.requests.some(request => request.context?.battery === 'engine.core.execution-assurance')).toBe(true);
+});
+
+test.each(['copied', 'mutated'] as const)('a %s completed-work record cannot substitute for a native checkpoint', async mode => {
+  const { guard, input } = handoff();
+  if (mode === 'copied') input.completedWork = JSON.parse(JSON.stringify(input.completedWork));
+  else input.completedWork[0]!.answer = 'Changed after native acceptance.';
+  const fake = fakePort(() => noulAnswer(.01)); installJudgmentPort(fake.port);
+  await expect(guard.check(input)).rejects.toThrow();
+  expect(fake.requests.some(request => (request.state as unknown as { nativeWorkCheckpoint?: unknown }).nativeWorkCheckpoint)).toBe(false);
+  expect(() => guard.beginFinalization({ content: input.response })).toThrow();
+});
+
+test('a current invalidating observation holds the checkpoint and retrieves originals before asking for a model rewrite', async () => {
+  const { guard, input } = handoff();
+  input.conversation.addToolResults([{ callId: 'later-change', success: true, output: 'INVALIDATED-DELIVERY: the report was subsequently removed.' }]);
+  const fake = fakePort((name, _question, raw) => noulAnswer(name === 'unfinished' && JSON.stringify(raw).includes('INVALIDATED-DELIVERY') ? .99 : .01));
+  installJudgmentPort(fake.port);
+  await expect(guard.check(input)).rejects.toThrow();
+  expect(fake.requests.some(request => (request.state as unknown as { nativeWorkCheckpoint?: unknown }).nativeWorkCheckpoint)).toBe(true);
+  expect(() => guard.beginFinalization({ content: input.response })).toThrow();
+});
+
+test('completed work in another project cannot qualify a checkpoint', async () => {
+  const { guard, input } = handoff();
+  input.completedWork = approvedWork('/another-project');
+  const fake = fakePort(() => noulAnswer(.01)); installJudgmentPort(fake.port);
+  await expect(guard.check(input)).rejects.toThrow();
+  expect(fake.requests.some(request => (request.state as unknown as { nativeWorkCheckpoint?: unknown }).nativeWorkCheckpoint)).toBe(false);
+  expect(() => guard.beginFinalization({ content: input.response })).toThrow();
+});
+
+test('an uncovered original obligation remains in the checkpoint and a fresh check retrieves full sources before repair', async () => {
+  const { guard, input } = handoff();
+  input.conversation.addUserMessage('Also deliver the UNFINISHED-SECOND-ARTIFACT.');
+  const fake = fakePort((name, _question, raw) => noulAnswer(name === 'unfinished' && JSON.stringify(raw).includes('UNFINISHED-SECOND-ARTIFACT') ? .99 : .01));
+  installJudgmentPort(fake.port);
+  await expect(guard.check(input)).rejects.toThrow();
+  const current = fake.requests.find(request => (request.state as unknown as { nativeWorkCheckpoint?: unknown }).nativeWorkCheckpoint);
+  expect(JSON.stringify(current?.state)).toContain('UNFINISHED-SECOND-ARTIFACT');
+  expect(() => guard.beginFinalization({ content: input.response })).toThrow();
+});
 
 test('completed evidence includes terminal work from only this session without loading repository manifests', () => {
   let requested: unknown;

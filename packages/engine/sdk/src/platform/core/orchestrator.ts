@@ -1002,7 +1002,7 @@ export class Orchestrator {
         }
         return !blockedContracts.has(record.contractId);
       },
-      getCompletedWork: () => completedContractEvidence(this.contractRunner, this.currentSessionId),
+      getCompletedWork: () => completedContractEvidence(this.contractRunner, this.currentSessionId, configManager.getWorkingDirectory() ?? undefined),
       getCompletionRequirements: () => {
         const lineage = getSessionLineageTracker(this.coreServices, this.ownedSessionLineageTracker);
         const plan = isNativeConversationTurn() ? null : this.coreServices.planManager?.getActive(this.currentSessionId);
