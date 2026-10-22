@@ -28,7 +28,7 @@ import type { StoreApi } from 'zustand';
 import { YesNoItem } from '@goodvibes-jev/judgment';
 import { z } from 'zod/v4';
 
-// @public (undocumented)
+// @public
 export function allowTerminalWrite<T>(fn: () => T): T;
 
 // Warning: (ae-forgotten-export) The symbol "ConfigManager" needs to be exported by the entry point index.d.ts
@@ -1569,7 +1569,7 @@ export function writeTreeStatusMarker(line: Line, glyph: string | null, fg: stri
 // sdk/src/platform/runtime/fleet/registry.ts:105:5 - (ae-forgotten-export) The symbol "TriggerManager" needs to be exported by the entry point index.d.ts
 // sdk/src/platform/runtime/fleet/registry.ts:106:5 - (ae-forgotten-export) The symbol "ScheduleManager" needs to be exported by the entry point index.d.ts
 // terminal-shell/src/cli-config-owner.ts:36:55 - (ae-forgotten-export) The symbol "GoodVibesConfig" needs to be exported by the entry point index.d.ts
-// terminal-shell/src/terminal-output-guard.ts:70:3 - (ae-forgotten-export) The symbol "WritableStreamLike" needs to be exported by the entry point index.d.ts
+// terminal-shell/src/terminal-output-guard.ts:72:3 - (ae-forgotten-export) The symbol "WritableStreamLike" needs to be exported by the entry point index.d.ts
 
 // (No @packageDocumentation comment for this package)
 

@@ -13497,6 +13497,15 @@ export interface OperatorMethodOutputMap {
                 returnedContent?: string;
                 contentKind?: "cited-source" | "declared-reference";
             })[];
+            commandEvidence?: readonly ({
+                agentId: string;
+                callId: string;
+                turn: number;
+                callIndex: number;
+                command: string;
+                success: boolean;
+                head: string;
+            })[];
             lastReport?: {
                 version: 1;
                 summary?: string;
@@ -13693,6 +13702,15 @@ export interface OperatorMethodOutputMap {
                     returnedLines: number;
                     returnedContent?: string;
                     contentKind?: "cited-source" | "declared-reference";
+                })[];
+                commandEvidence?: readonly ({
+                    agentId: string;
+                    callId: string;
+                    turn: number;
+                    callIndex: number;
+                    command: string;
+                    success: boolean;
+                    head: string;
                 })[];
                 lastReport?: {
                     version: 1;
@@ -14621,6 +14639,15 @@ export interface OperatorMethodOutputMap {
                     returnedContent?: string;
                     contentKind?: "cited-source" | "declared-reference";
                 })[];
+                commandEvidence?: readonly ({
+                    agentId: string;
+                    callId: string;
+                    turn: number;
+                    callIndex: number;
+                    command: string;
+                    success: boolean;
+                    head: string;
+                })[];
                 lastReport?: {
                     version: 1;
                     summary?: string;
@@ -14817,6 +14844,15 @@ export interface OperatorMethodOutputMap {
                         returnedLines: number;
                         returnedContent?: string;
                         contentKind?: "cited-source" | "declared-reference";
+                    })[];
+                    commandEvidence?: readonly ({
+                        agentId: string;
+                        callId: string;
+                        turn: number;
+                        callIndex: number;
+                        command: string;
+                        success: boolean;
+                        head: string;
                     })[];
                     lastReport?: {
                         version: 1;
@@ -15754,6 +15790,15 @@ export interface OperatorMethodOutputMap {
                     returnedContent?: string;
                     contentKind?: "cited-source" | "declared-reference";
                 })[];
+                commandEvidence?: readonly ({
+                    agentId: string;
+                    callId: string;
+                    turn: number;
+                    callIndex: number;
+                    command: string;
+                    success: boolean;
+                    head: string;
+                })[];
                 lastReport?: {
                     version: 1;
                     summary?: string;
@@ -15950,6 +15995,15 @@ export interface OperatorMethodOutputMap {
                         returnedLines: number;
                         returnedContent?: string;
                         contentKind?: "cited-source" | "declared-reference";
+                    })[];
+                    commandEvidence?: readonly ({
+                        agentId: string;
+                        callId: string;
+                        turn: number;
+                        callIndex: number;
+                        command: string;
+                        success: boolean;
+                        head: string;
                     })[];
                     lastReport?: {
                         version: 1;
