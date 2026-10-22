@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { compactMessages, getCompactionEvents } from '../sdk/src/platform/core/context-compaction.js';
 import type { CompactionContext } from '../sdk/src/platform/core/compaction-types.js';
@@ -21,7 +21,7 @@ const context = (overrides: Partial<CompactionContext> = {}): CompactionContext 
   contextWindow: 100_000, trigger: 'manual', extractionModelId: 'test/model', ...overrides,
 });
 function installed(answer: (battery: string, state: unknown) => unknown) {
-  const { port, requests } = fakePort((name, question) => name === 'kind' ? choiceAnswer(question, 'secret', 0.99) : noulAnswer(0.95));
+  const { port, requests } = fakePort(() => noulAnswer(0.95));
   const wrapped: JudgmentPort = { ...port, async ask(request) {
     const result = await port.ask(request);
     if (!request.context?.battery?.startsWith('engine.compaction.')) return result;
@@ -42,7 +42,7 @@ describe('structured compaction canonical source selection', () => {
     const result = await compactMessages(context(), providers);
     expect(result.sections.find(section => section.id === 'resolved-problems')?.content).toContain('"no resolved problems"');
     expect(result.sections.find(section => section.id === 'recent-conversation')?.content).toBe('[user]: Preserve the API.\n\n[assistant]: Fixed the parser that printed "no resolved problems"; tests pass.');
-    assertReadingPartition(requests, ['engine.compaction.conversation-substance', 'engine.compaction.conversation-substance', 'engine.compaction.resolved-problem-evidence', 'engine.compaction.resolved-problem-evidence'], compactionCompleteFields);
+    assertReadingPartition(requests, ['engine.compaction.conversation-substance', 'engine.compaction.conversation-substance', 'engine.compaction.resolved-problem-evidence', 'engine.compaction.resolved-problem-evidence']);
   });
   test('typed no suppresses positive-looking prose without lexical guesses', async () => {
     installed(battery => noulAnswer(battery.endsWith('resolved-problem-evidence') ? 0.01 : 0.99));
@@ -91,7 +91,7 @@ describe('structured compaction canonical source selection', () => {
       { role: 'user' as const, content: 'A is reopened; B remains fixed.' },
     ];
     await compactMessages(context({ messages }), providers);
-    const selected = assertReadingPartition(requests, [...Array<string>(3).fill('engine.compaction.conversation-substance'), ...Array<string>(3).fill('engine.compaction.resolved-problem-evidence')], compactionCompleteFields);
+    const selected = assertReadingPartition(requests, [...Array<string>(3).fill('engine.compaction.conversation-substance'), ...Array<string>(3).fill('engine.compaction.resolved-problem-evidence')]);
     for (const request of selected) {
       expect(Object.keys(request.questions)).toEqual(['selected']);
       const source = (request.state as { conversation: string }).conversation;
@@ -118,8 +118,8 @@ describe('structured compaction canonical source selection', () => {
   });
   test('cancellation returns promptly even for an uncooperative dependency', async () => {
     let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
-    const { port } = fakePort((name, question) => name === 'kind' ? choiceAnswer(question, 'secret', 0.99) : noulAnswer(0.99));
-    installJudgmentPort({ ...port, ask: async request => { if (request.context?.battery === 'engine.redaction.field-kind') return port.ask(request); expect(request.context?.battery).toBe('engine.compaction.conversation-substance'); expect(Object.keys(request.questions)).toEqual(['selected']); entered(); return new Promise(() => {}); } });
+    const { port } = fakePort(() => noulAnswer(0.99));
+    installJudgmentPort({ ...port, ask: async request => { expect(request.context?.battery).toBe('engine.compaction.conversation-substance'); expect(Object.keys(request.questions)).toEqual(['selected']); entered(); return new Promise(() => {}); } });
     const controller = new AbortController();
     const result = compactMessages(context({ signal: controller.signal }), providers);
     await started; controller.abort(new Error('cancelled'));
@@ -128,8 +128,8 @@ describe('structured compaction canonical source selection', () => {
   test('source replacement retires delayed readings', async () => {
     let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
     let release!: () => void; const ready = new Promise<void>(resolve => { release = resolve; });
-    const { port } = fakePort((name, question) => name === 'kind' ? choiceAnswer(question, 'secret', 0.99) : noulAnswer(0.99));
-    installJudgmentPort({ ...port, async ask(request) { if (request.context?.battery === 'engine.redaction.field-kind') return port.ask(request); expect(request.context?.battery).toBe('engine.compaction.conversation-substance'); expect(Object.keys(request.questions)).toEqual(['selected']); entered(); await ready; return port.ask(request); } });
+    const { port } = fakePort(() => noulAnswer(0.99));
+    installJudgmentPort({ ...port, async ask(request) { expect(request.context?.battery).toBe('engine.compaction.conversation-substance'); expect(Object.keys(request.questions)).toEqual(['selected']); entered(); await ready; return port.ask(request); } });
     const ctx = context(); const result = compactMessages(ctx, providers);
     await started; ctx.messages.push({ role: 'user', content: 'New requirement.' }); release();
     await expect(result).rejects.toThrow('Compaction source changed');
@@ -137,8 +137,8 @@ describe('structured compaction canonical source selection', () => {
   test('standing instruction mutation rejects a delayed production caller', async () => {
     let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
     let release!: () => void; const ready = new Promise<void>(resolve => { release = resolve; });
-    const { port } = fakePort((name, question) => name === 'kind' ? choiceAnswer(question, 'secret', 0.99) : noulAnswer(0.99));
-    installJudgmentPort({ ...port, async ask(request) { if (request.context?.battery === 'engine.redaction.field-kind') return port.ask(request); expect(request.context?.battery).toBe('engine.compaction.conversation-substance'); expect(Object.keys(request.questions)).toEqual(['selected']); entered(); await ready; return port.ask(request); } });
+    const { port } = fakePort(() => noulAnswer(0.99));
+    installJudgmentPort({ ...port, async ask(request) { expect(request.context?.battery).toBe('engine.compaction.conversation-substance'); expect(Object.keys(request.questions)).toEqual(['selected']); entered(); await ready; return port.ask(request); } });
     const ctx = context({ instructionChain: 'Original instruction.' }); let replacements = 0;
     const host: ConversationCompactionHost = { getMessageCount: () => ctx.messages.length, getMessagesForLLM: () => ctx.messages,
       replaceMessagesForLLM: () => { replacements++; }, getSessionMemoryStore: () => null,
@@ -150,7 +150,7 @@ describe('structured compaction canonical source selection', () => {
   test('canonical failure retires older prose request and suppresses its late private error', async () => {
     let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
     let reject!: (error: Error) => void; const delayed = new Promise<never>((_, fail) => { reject = fail; });
-    const { port } = fakePort((name, question) => name === 'kind' ? choiceAnswer(question, 'secret', 0.99) : noulAnswer(0.99));
+    const { port } = fakePort(() => noulAnswer(0.99));
     installJudgmentPort({ ...port, async ask() { await started; throw new Error('SYNTHETIC_PRIVATE_SELECTION'); } });
     let providerSignal: AbortSignal | undefined;
     const older = { getForModel: () => ({ chat: (request: { signal?: AbortSignal }) => {
@@ -176,7 +176,7 @@ describe('structured compaction canonical source selection', () => {
     ] }), providers);
     const tools = result.sections.find(section => section.id === 'tool-results')!.content;
     expect(tools).toContain('call-7'); expect(tools).toContain('src/parser.ts'); expect(tools).toContain('Done');
-    const selected = assertReadingPartition(requests, ['engine.compaction.conversation-substance', 'engine.compaction.tool-result-relevance', 'engine.compaction.resolved-problem-evidence'], [...compactionStartFields, 'warnings', ...compactionCompleteFields.slice(compactionStartFields.length)]);
+    const selected = assertReadingPartition(requests, ['engine.compaction.conversation-substance', 'engine.compaction.tool-result-relevance', 'engine.compaction.resolved-problem-evidence']);
     for (const request of selected) {
       expect(Object.keys(request.questions)).toEqual(['selected']);
       expect(JSON.stringify(request.state)).toContain('call-7');
@@ -209,8 +209,8 @@ describe('structured compaction canonical source selection', () => {
   });
   test('port replacement retires an in-flight selection', async () => {
     let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
-    const { port } = fakePort((name, question) => name === 'kind' ? choiceAnswer(question, 'secret', 0.99) : noulAnswer(0.99));
-    installJudgmentPort({ ...port, ask: async request => { if (request.context?.battery === 'engine.redaction.field-kind') return port.ask(request); expect(request.context?.battery).toBe('engine.compaction.conversation-substance'); expect(Object.keys(request.questions)).toEqual(['selected']); entered(); return new Promise(() => {}); } });
+    const { port } = fakePort(() => noulAnswer(0.99));
+    installJudgmentPort({ ...port, ask: async request => { expect(request.context?.battery).toBe('engine.compaction.conversation-substance'); expect(Object.keys(request.questions)).toEqual(['selected']); entered(); return new Promise(() => {}); } });
     const result = compactMessages(context(), providers);
     await started; installJudgmentPort(port);
     await expect(result).rejects.toThrow();
@@ -232,15 +232,9 @@ describe('structured compaction canonical source selection', () => {
   });
 });
 
-function assertReadingPartition(requests: ReadonlyArray<{ context?: { battery?: string }; questions: object; state: unknown }>, batteries: readonly string[], fields: readonly string[]) {
-  const diagnostic = requests.filter(request => request.context?.battery === 'engine.redaction.field-kind');
-  const feature = requests.filter(request => request.context?.battery !== 'engine.redaction.field-kind');
-  expect(requests).toHaveLength(batteries.length + fields.length);
-  expect(feature.map(request => request.context?.battery)).toEqual([...batteries]);
-  expect(diagnostic.map(request => request.state)).toEqual(fields.map(field => ({ field })));
-  for (const request of diagnostic) expect(Object.keys(request.questions)).toEqual(['kind']);
-  return feature;
+function assertReadingPartition(requests: ReadonlyArray<{ context?: { battery?: string }; questions: object; state: unknown }>, batteries: readonly string[]) {
+  expect(requests).toHaveLength(batteries.length);
+  expect(requests.map(request => request.context?.battery)).toEqual([...batteries]);
+  expect(requests.some(request => Object.hasOwn(request.questions, 'kind'))).toBe(false);
+  return requests;
 }
-
-const compactionStartFields = ['trigger', 'messageCount', 'tokensBeforeEstimate', 'agentCount', 'contractCount'];
-const compactionCompleteFields = [...compactionStartFields, 'modelId', 'messagesBeforeCompaction', 'messagesAfterCompaction', 'tokensAfterEstimate', 'tokensSaved', 'sectionsIncluded', 'validationWarnings', 'instructionsReinjected'];
