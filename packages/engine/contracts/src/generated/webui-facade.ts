@@ -8397,6 +8397,17 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
               "contentKind": "declared-reference"
             }
           ],
+          "commandEvidence": [
+            {
+              "agentId": "sample",
+              "callId": "sample",
+              "turn": 0,
+              "callIndex": 0,
+              "command": "sample",
+              "success": false,
+              "head": "sample"
+            }
+          ],
           "lastReport": {
             "version": 1,
             "summary": "sample",
@@ -8622,6 +8633,17 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                   "returnedLines": 0,
                   "returnedContent": "sample",
                   "contentKind": "declared-reference"
+                }
+              ],
+              "commandEvidence": [
+                {
+                  "agentId": "sample",
+                  "callId": "sample",
+                  "turn": 0,
+                  "callIndex": 0,
+                  "command": "sample",
+                  "success": false,
+                  "head": "sample"
                 }
               ],
               "lastReport": {
@@ -9433,6 +9455,17 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                   "contentKind": "declared-reference"
                 }
               ],
+              "commandEvidence": [
+                {
+                  "agentId": "sample",
+                  "callId": "sample",
+                  "turn": 0,
+                  "callIndex": 0,
+                  "command": "sample",
+                  "success": false,
+                  "head": "sample"
+                }
+              ],
               "lastReport": {
                 "version": 1,
                 "summary": "sample",
@@ -9658,6 +9691,17 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                       "returnedLines": 0,
                       "returnedContent": "sample",
                       "contentKind": "declared-reference"
+                    }
+                  ],
+                  "commandEvidence": [
+                    {
+                      "agentId": "sample",
+                      "callId": "sample",
+                      "turn": 0,
+                      "callIndex": 0,
+                      "command": "sample",
+                      "success": false,
+                      "head": "sample"
                     }
                   ],
                   "lastReport": {
@@ -10486,6 +10530,17 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                 "contentKind": "declared-reference"
               }
             ],
+            "commandEvidence": [
+              {
+                "agentId": "sample",
+                "callId": "sample",
+                "turn": 0,
+                "callIndex": 0,
+                "command": "sample",
+                "success": false,
+                "head": "sample"
+              }
+            ],
             "lastReport": {
               "version": 1,
               "summary": "sample",
@@ -10711,6 +10766,17 @@ export const WEBUI_METHOD_SAMPLES: Readonly<Record<string, WebuiMethodSample>> =
                     "returnedLines": 0,
                     "returnedContent": "sample",
                     "contentKind": "declared-reference"
+                  }
+                ],
+                "commandEvidence": [
+                  {
+                    "agentId": "sample",
+                    "callId": "sample",
+                    "turn": 0,
+                    "callIndex": 0,
+                    "command": "sample",
+                    "success": false,
+                    "head": "sample"
                   }
                 ],
                 "lastReport": {

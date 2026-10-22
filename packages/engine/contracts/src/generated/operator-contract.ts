@@ -34925,6 +34925,45 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                       "additionalProperties": false
                     }
                   },
+                  "commandEvidence": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "agentId": {
+                          "type": "string"
+                        },
+                        "callId": {
+                          "type": "string"
+                        },
+                        "turn": {
+                          "type": "number"
+                        },
+                        "callIndex": {
+                          "type": "number"
+                        },
+                        "command": {
+                          "type": "string"
+                        },
+                        "success": {
+                          "type": "boolean"
+                        },
+                        "head": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "agentId",
+                        "turn",
+                        "callIndex",
+                        "callId",
+                        "command",
+                        "success",
+                        "head"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
                   "lastReport": {
                     "oneOf": [
                       {
@@ -35994,6 +36033,45 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                               "path",
                               "returnedRanges",
                               "returnedLines"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
+                        "commandEvidence": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "agentId": {
+                                "type": "string"
+                              },
+                              "callId": {
+                                "type": "string"
+                              },
+                              "turn": {
+                                "type": "number"
+                              },
+                              "callIndex": {
+                                "type": "number"
+                              },
+                              "command": {
+                                "type": "string"
+                              },
+                              "success": {
+                                "type": "boolean"
+                              },
+                              "head": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "agentId",
+                              "turn",
+                              "callIndex",
+                              "callId",
+                              "command",
+                              "success",
+                              "head"
                             ],
                             "additionalProperties": false
                           }
@@ -41654,6 +41732,45 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                             "additionalProperties": false
                           }
                         },
+                        "commandEvidence": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "agentId": {
+                                "type": "string"
+                              },
+                              "callId": {
+                                "type": "string"
+                              },
+                              "turn": {
+                                "type": "number"
+                              },
+                              "callIndex": {
+                                "type": "number"
+                              },
+                              "command": {
+                                "type": "string"
+                              },
+                              "success": {
+                                "type": "boolean"
+                              },
+                              "head": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "agentId",
+                              "turn",
+                              "callIndex",
+                              "callId",
+                              "command",
+                              "success",
+                              "head"
+                            ],
+                            "additionalProperties": false
+                          }
+                        },
                         "lastReport": {
                           "oneOf": [
                             {
@@ -42723,6 +42840,45 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                     "path",
                                     "returnedRanges",
                                     "returnedLines"
+                                  ],
+                                  "additionalProperties": false
+                                }
+                              },
+                              "commandEvidence": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "agentId": {
+                                      "type": "string"
+                                    },
+                                    "callId": {
+                                      "type": "string"
+                                    },
+                                    "turn": {
+                                      "type": "number"
+                                    },
+                                    "callIndex": {
+                                      "type": "number"
+                                    },
+                                    "command": {
+                                      "type": "string"
+                                    },
+                                    "success": {
+                                      "type": "boolean"
+                                    },
+                                    "head": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "agentId",
+                                    "turn",
+                                    "callIndex",
+                                    "callId",
+                                    "command",
+                                    "success",
+                                    "head"
                                   ],
                                   "additionalProperties": false
                                 }
@@ -48487,6 +48643,45 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                           "additionalProperties": false
                         }
                       },
+                      "commandEvidence": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "agentId": {
+                              "type": "string"
+                            },
+                            "callId": {
+                              "type": "string"
+                            },
+                            "turn": {
+                              "type": "number"
+                            },
+                            "callIndex": {
+                              "type": "number"
+                            },
+                            "command": {
+                              "type": "string"
+                            },
+                            "success": {
+                              "type": "boolean"
+                            },
+                            "head": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "agentId",
+                            "turn",
+                            "callIndex",
+                            "callId",
+                            "command",
+                            "success",
+                            "head"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
                       "lastReport": {
                         "oneOf": [
                           {
@@ -49556,6 +49751,45 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                   "path",
                                   "returnedRanges",
                                   "returnedLines"
+                                ],
+                                "additionalProperties": false
+                              }
+                            },
+                            "commandEvidence": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "agentId": {
+                                    "type": "string"
+                                  },
+                                  "callId": {
+                                    "type": "string"
+                                  },
+                                  "turn": {
+                                    "type": "number"
+                                  },
+                                  "callIndex": {
+                                    "type": "number"
+                                  },
+                                  "command": {
+                                    "type": "string"
+                                  },
+                                  "success": {
+                                    "type": "boolean"
+                                  },
+                                  "head": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "agentId",
+                                  "turn",
+                                  "callIndex",
+                                  "callId",
+                                  "command",
+                                  "success",
+                                  "head"
                                 ],
                                 "additionalProperties": false
                               }

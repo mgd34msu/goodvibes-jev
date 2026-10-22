@@ -5902,6 +5902,17 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "contentKind": "declared-reference"
             }
           ],
+          "commandEvidence": [
+            {
+              "agentId": "sample",
+              "callId": "sample",
+              "turn": 0,
+              "callIndex": 0,
+              "command": "sample",
+              "success": false,
+              "head": "sample"
+            }
+          ],
           "lastReport": {
             "version": 1,
             "summary": "sample",
@@ -6127,6 +6138,17 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                   "returnedLines": 0,
                   "returnedContent": "sample",
                   "contentKind": "declared-reference"
+                }
+              ],
+              "commandEvidence": [
+                {
+                  "agentId": "sample",
+                  "callId": "sample",
+                  "turn": 0,
+                  "callIndex": 0,
+                  "command": "sample",
+                  "success": false,
+                  "head": "sample"
                 }
               ],
               "lastReport": {
@@ -6940,6 +6962,17 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                   "contentKind": "declared-reference"
                 }
               ],
+              "commandEvidence": [
+                {
+                  "agentId": "sample",
+                  "callId": "sample",
+                  "turn": 0,
+                  "callIndex": 0,
+                  "command": "sample",
+                  "success": false,
+                  "head": "sample"
+                }
+              ],
               "lastReport": {
                 "version": 1,
                 "summary": "sample",
@@ -7165,6 +7198,17 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                       "returnedLines": 0,
                       "returnedContent": "sample",
                       "contentKind": "declared-reference"
+                    }
+                  ],
+                  "commandEvidence": [
+                    {
+                      "agentId": "sample",
+                      "callId": "sample",
+                      "turn": 0,
+                      "callIndex": 0,
+                      "command": "sample",
+                      "success": false,
+                      "head": "sample"
                     }
                   ],
                   "lastReport": {
@@ -7994,6 +8038,17 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                 "contentKind": "declared-reference"
               }
             ],
+            "commandEvidence": [
+              {
+                "agentId": "sample",
+                "callId": "sample",
+                "turn": 0,
+                "callIndex": 0,
+                "command": "sample",
+                "success": false,
+                "head": "sample"
+              }
+            ],
             "lastReport": {
               "version": 1,
               "summary": "sample",
@@ -8219,6 +8274,17 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                     "returnedLines": 0,
                     "returnedContent": "sample",
                     "contentKind": "declared-reference"
+                  }
+                ],
+                "commandEvidence": [
+                  {
+                    "agentId": "sample",
+                    "callId": "sample",
+                    "turn": 0,
+                    "callIndex": 0,
+                    "command": "sample",
+                    "success": false,
+                    "head": "sample"
                   }
                 ],
                 "lastReport": {
