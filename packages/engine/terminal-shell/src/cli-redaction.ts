@@ -29,6 +29,7 @@ import { mapLimit } from '@goodvibes-jev/judgment';
 import { captureJudgmentPort, type JudgmentPortCapture, type JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { captureOwnedJson, retainStrictJudgmentJson } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { redactSensitiveDataAsync, redactStructuredDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { supportBundleFields } from './support-bundle-fields.js';
 
 export const REDACTED_VALUE = '<redacted>';
 
@@ -211,7 +212,9 @@ export async function redactSerializedSecrets(serialized: string, secretValues: 
   catch { return redactSensitiveDataAsync(output, { ...options, secretValues }); }
   // This parse belongs solely to this export. Keep a native immutable snapshot
   // while the caller's owner continues to fence configuration and publication.
-  const protectedValue = await redactStructuredDataAsync(captureOwnedJson(parsed), { ...options, secretValues });
+  const protectedValue = await redactStructuredDataAsync(captureOwnedJson(parsed), {
+    ...options, secretValues, declaredFields: supportBundleFields(),
+  });
   const result = JSON.stringify(protectedValue, null, 2);
   if (result === undefined) throw new Error('Redacted bundle is not JSON.');
   return result;

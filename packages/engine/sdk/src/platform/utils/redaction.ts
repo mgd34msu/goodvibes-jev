@@ -410,6 +410,16 @@ export interface RedactionOptions extends JudgmentReadingOptions {
   readonly secretValues?: readonly string[];
   readonly purpose?: 'redaction' | 'export';
 }
+
+export interface StructuredRedactionOptions extends RedactionOptions {
+  /** Native schema paths; `*` matches an array element, never an object subtree.
+   * Declarations retain structure, while every string still passes egress checks.
+   * Existing secret and owner-profile roles cannot be weakened. */
+  readonly declaredFields?: readonly {
+    readonly path: readonly string[];
+    readonly kind: 'secret' | 'owner_profile' | 'content' | 'other';
+  }[];
+}
 type OutgoingSpan = CredentialCandidate & { readonly field?: string; readonly syntax: 'assignment-value' | 'candidate-token' };
 
 function outgoingSpans(text: string): OutgoingSpan[] {
@@ -644,11 +654,26 @@ export function redactStructuredData(value: unknown): unknown {
 }
 
 /** Shared asynchronous egress recursion. Field values never enter field-role readings. */
-export async function redactStructuredDataAsync(value: unknown, options: RedactionOptions = {}): Promise<unknown> {
+export async function redactStructuredDataAsync(value: unknown, options: StructuredRedactionOptions = {}): Promise<unknown> {
   const signal = options.signal, ownerCurrent = options.assertCurrent;
   let source: ReturnType<typeof captureRedactionSource>, snapshot: unknown, retainedValue: ReturnType<typeof retainOwnedJson>;
   const purpose = options.purpose, originalSecrets = options.secretValues;
   const secretSource = retainOwnedJson(originalSecrets ?? []), capturedSecrets = secretSource.snapshot;
+  const originalFields = options.declaredFields;
+  const declaredSource = retainOwnedJson(originalFields ?? []);
+  const declarations = new Map<string, FieldKind>();
+  const declaredSnapshot = declaredSource.snapshot;
+  if (!Array.isArray(declaredSnapshot)) return '[REDACTED]';
+  for (const declaration of declaredSnapshot) {
+    if (declaration === null || typeof declaration !== 'object' || Array.isArray(declaration)
+      || !('path' in declaration) || !('kind' in declaration)) return '[REDACTED]';
+    const { path, kind } = declaration;
+    if (!Array.isArray(path) || path.length === 0 || !path.every(segment => typeof segment === 'string' && segment.length > 0)
+      || (kind !== 'secret' && kind !== 'owner_profile' && kind !== 'content' && kind !== 'other')) return '[REDACTED]';
+    const key = JSON.stringify(path.map(segment => segment === '*' ? null : segment));
+    if (declarations.has(key)) return '[REDACTED]';
+    declarations.set(key, kind);
+  }
   const secretLiterals: string[] = [];
   if (!Array.isArray(capturedSecrets)) return '[REDACTED]';
   for (const secret of capturedSecrets) {
@@ -701,8 +726,9 @@ export async function redactStructuredDataAsync(value: unknown, options: Redacti
   const assertSource = () => {
     assertRedactionCurrent(ownerCurrent); source.assertCurrent();
     if (signal?.aborted || options.signal !== signal || options.assertCurrent !== ownerCurrent
-      || options.purpose !== purpose || options.secretValues !== originalSecrets) throw new Error('Structured redaction source is no longer current');
-    secretSource.assertCurrent(); retainedValue.assertCurrent();
+      || options.purpose !== purpose || options.secretValues !== originalSecrets || options.declaredFields !== originalFields)
+      throw new Error('Structured redaction source is no longer current');
+    secretSource.assertCurrent(); declaredSource.assertCurrent(); retainedValue.assertCurrent();
   };
   const assertCurrent = () => { if (readingOwner) readingOwner.assertCurrent(); else assertSource(); };
   const reading = { ...options, assertCurrent };
@@ -736,7 +762,7 @@ export async function redactStructuredDataAsync(value: unknown, options: Redacti
   }
   type FieldReading = { readonly kind: 'reference'; readonly safeKey: string; readonly value: unknown }
     | { readonly kind: 'semantic'; readonly safeKey: string; readonly fieldKind: FieldKind | undefined };
-  async function visit(entry: unknown, path: readonly string[] = []): Promise<unknown> {
+  async function visit(entry: unknown, path: readonly string[] = [], schemaPath: readonly (string | null)[] = []): Promise<unknown> {
     assertCurrent();
     if (typeof entry === 'string') {
       // A fixed credential-reference sentinel, never a raw secret value.
@@ -759,7 +785,7 @@ export async function redactStructuredDataAsync(value: unknown, options: Redacti
     }
     if (Array.isArray(entry)) {
       const output: unknown[] = [];
-      for (const [index, child] of entry.entries()) output.push(await visit(child, [...path, String(index)]));
+      for (const [index, child] of entry.entries()) output.push(await visit(child, [...path, String(index)], [...schemaPath, null]));
       return output;
     }
     if (entry !== null && typeof entry === 'object') {
@@ -782,7 +808,10 @@ export async function redactStructuredDataAsync(value: unknown, options: Redacti
             if (typeof protectedKey !== 'string') throw new Error('Protected field name is unavailable');
             safeKey = protectedKey;
           }
-          return { kind: 'semantic', safeKey, fieldKind: safeKey === key ? await fields.read(key) : undefined };
+          let fieldKind = safeKey === key ? await fields.read(key) : undefined;
+          if (safeKey === key && fieldKind !== 'secret' && fieldKind !== 'owner_profile')
+            fieldKind = declarations.get(JSON.stringify([...schemaPath, key])) ?? fieldKind;
+          return { kind: 'semantic', safeKey, fieldKind };
         }));
         assertCurrent();
         for (const [index, [key, descriptor]] of batch.entries()) {
@@ -795,7 +824,7 @@ export async function redactStructuredDataAsync(value: unknown, options: Redacti
           Object.defineProperty(output, outputKey, { value: reading.kind === 'reference' ? reading.value
             : child === '<redacted>' ? child : reading.fieldKind === undefined ? '[REDACTED]'
               : reading.fieldKind === 'secret' ? protectedFieldValue(child)
-                : reading.fieldKind === 'owner_profile' ? '[REDACTED_PROFILE]' : await visit(child, [...path, key]), enumerable: true });
+                : reading.fieldKind === 'owner_profile' ? '[REDACTED_PROFILE]' : await visit(child, [...path, key], [...schemaPath, key]), enumerable: true });
         }
       }
       return output;

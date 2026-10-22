@@ -50,3 +50,33 @@ test('redacted key collisions preserve every field without creating a new creden
   expect(result).toEqual({ 'password=[REDACTED]': '[REDACTED]', 'password=[REDACTED] [1]': '[REDACTED]' });
   expect(snapshotJudgmentEvidence(result)).toEqual(result); expect(() => snapshotJudgmentInput(result)).toThrow();
 });
+
+test('native field declarations preserve only their scoped structure and still protect values', async () => {
+  const fake = fixture();
+  const result = await redactStructuredDataAsync({ diagnostics: { providers: [{ configured: true,
+    loginPassword: 'synthetic-private-password', privateExtra: 'synthetic-private-extra' }] },
+    extension: { providers: [{ configured: true }] } }, { declaredFields: [
+    { path: ['diagnostics', 'providers'], kind: 'content' },
+    { path: ['diagnostics', 'providers', '*', 'configured'], kind: 'other' },
+    { path: ['diagnostics', 'providers', '*', 'loginPassword'], kind: 'other' },
+  ] });
+  expect(result).toEqual({ diagnostics: { providers: [{ configured: true, loginPassword: '[REDACTED]', privateExtra: '[REDACTED]' }] },
+    extension: { providers: '[REDACTED]' } });
+  expect(JSON.stringify(fake.requests)).not.toContain('synthetic-private');
+  expect(fake.requests.some(request => Object.hasOwn(request.questions, 'kind'))).toBe(false);
+  expect(await redactStructuredDataAsync({ diagnostics: { providers: { '*': { configured: true } } } }, { declaredFields: [
+    { path: ['diagnostics', 'providers'], kind: 'content' },
+    { path: ['diagnostics', 'providers', '*', 'configured'], kind: 'other' },
+  ] })).toEqual({ diagnostics: { providers: { '*': '[REDACTED]' } } });
+});
+
+test('changing field declarations while a string is inspected withholds the result', async () => {
+  const entered = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();
+  const fake = fakePort(async () => { entered.resolve(); await release.promise; return noulAnswer(0.001); });
+  installJudgmentPort(fake.port);
+  const declaration = { path: ['diagnostics', 'publicLabel'], kind: 'content' as const };
+  const pending = redactStructuredDataAsync({ diagnostics: { publicLabel: 'public label' } }, { declaredFields: [declaration] });
+  await entered.promise;
+  declaration.path.push('changed'); release.resolve();
+  expect(await pending).toBe('[REDACTED]');
+});
