@@ -14,6 +14,7 @@ import { snapshotJudgmentEvidence } from '../sdk/src/platform/gate/judgment-inpu
 import { ResponseCompletionGuard } from '../sdk/src/platform/core/response-completion.js';
 import { appendVerificationObservation, beginVerificationConversation, verificationHistory, verificationMessages } from '../sdk/src/platform/core/verification/archive.js';
 import { verificationWriter } from './_helpers/verification.js';
+import { retainedDelegationSources } from '../sdk/src/platform/core/verification/delegated-history.js';
 import type { VerificationAccess, VerificationWriter } from '../sdk/src/platform/core/verification/types.js';
 import type { LLMProvider } from '../sdk/src/platform/providers/interface.js';
 
@@ -24,6 +25,11 @@ const good = () => fakePort(() => noulAnswer(.01));
 const access = (port: VerificationAccess['port'], identity = {}, signal?: AbortSignal): VerificationAccess => ({ port, identity, ...(signal ? { signal } : {}), assertCurrent: () => signal?.throwIfAborted() });
 const state = (content = 'Observed source.') => ({ request: 'Review all source and write review.md.', response: 'The report is saved in review.md.', transcript: [{ role: 'tool', callId: 'read-1', content }], tools: ['read', 'write'], requirements: null, delegated: [], initial: null });
 const directory = () => { const value = mkdtempSync(join(tmpdir(), 'completion-verification-')); directories.push(value); return value; };
+const unopenedAuditSource = (raw: unknown) => {
+  const state = raw as { sources?: { id: string }[]; caseEvidence?: { sources?: { id: string }[] } };
+  const opened = new Set(state.caseEvidence?.sources?.map(source => source.id));
+  return state.sources?.some(source => !opened.has(source.id)) === true;
+};
 
 test('native runtime feedback is evidence while an identical owner message remains an instruction', () => {
   const conversation = new ConversationManager();
@@ -132,7 +138,7 @@ test('retrieval indexes remain native locations instead of becoming another set 
     const context = raw as unknown as { sources?: { id: string }[] };
     if (name === 'missed') for (const source of context.sources ?? []) audited.add(source.id);
     if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
-    return noulAnswer(name === 'missed' ? .99 : .01);
+    return noulAnswer(name === 'missed' && unopenedAuditSource(raw) ? .99 : .01);
   });
   const writer: VerificationWriter = request => {
     if (request.operation === 'requirements') return verificationWriter(request);
@@ -150,6 +156,206 @@ test('retrieval indexes remain native locations instead of becoming another set 
   expect(result.findings).toHaveLength(0); expect(summaries).toBeGreaterThan(0);
   const originals = verificationSources(input).filter(source => source.kind !== 'answer');
   expect(new Set(originals.map(source => source.id))).toEqual(audited);
+});
+
+test('resuming retains the actual worker read behind its native parent receipt without reviving the worker', async () => {
+  const root = directory(), sessionId = 'retained-worker';
+  const parent = [
+    { role: 'assistant', content: '', toolCalls: [{ id: 'spawn-worker', name: 'agent', arguments: { mode: 'spawn', outsideContract: true, task: 'Read review.md only.' } }] },
+    { role: 'tool', callId: 'spawn-worker', outcome: 'ok', content: JSON.stringify({ agentId: 'worker', status: 'spawned' }) },
+  ];
+  const before = { ...state('Earlier retained progress. '.repeat(15000)), transcript: [...parent], delegated: [
+    { id: 'worker', task: 'Read review.md only.', status: 'completed', output: 'Report consistency verified.', evidence: [
+      { role: 'user', content: 'Read review.md only. Do not spawn agents.' },
+      { role: 'assistant', content: '', toolCalls: [{ id: 'actual-read', name: 'read', arguments: { path: 'review.md' } }] },
+      { role: 'tool', callId: 'actual-read', outcome: 'ok', content: 'EXACT-RETAINED-REPORT-READ: native results 2 passed, 1 failed, exit 1.' },
+    ] },
+  ] };
+  const store = new VerificationStore(root, sessionId);
+  for (const source of verificationSources(before)) store.rememberSource(source);
+  const restartedStore = new VerificationStore(root, sessionId);
+  const full = { ...state(), transcript: [...parent, { role: 'tool', callId: 'older-history', content: 'Earlier retained progress. '.repeat(15000) }],
+    initial: { request: 'Review all source and write review.md.', transcript: parent }, delegated: [] };
+  const restored = retainedDelegationSources(full, restartedStore.sources);
+  expect(restored.some(source => source.text.includes('EXACT-RETAINED-REPORT-READ'))).toBe(true);
+  expect(restored.every(source => source.kind === 'observation')).toBe(true);
+  expect(restored.every(source => source.reference.includes('Not a new execution'))).toBe(true);
+  expect(retainedDelegationSources({ transcript: [], delegated: [] }, restartedStore.sources)).toEqual([]);
+  expect(retainedDelegationSources({ transcript: parent, delegated: [{ id: 'worker' }] }, restartedStore.sources)).toEqual([]);
+  const fake = fakePort((_name, _question, raw) => {
+    const input = raw as unknown as { requirement?: unknown; opened?: { sources: { text: string }[] } };
+    if (input.requirement && input.opened)
+      expect(input.opened.sources.some(source => source.text.includes('EXACT-RETAINED-REPORT-READ'))).toBe(true);
+    return noulAnswer(.01);
+  });
+  const checked = await new CompletionVerification(verificationWriter, restartedStore).prepare(full, access(fake.port));
+  expect(checked.findings).toEqual([]);
+  const publication = checked.state.transcript as { role: string; content: unknown }[];
+  expect(publication.some(message => message.role === 'user' && JSON.stringify(message.content).includes('Do not spawn agents'))).toBe(false);
+  expect(publication.some(message => message.role === 'system' && JSON.stringify(message.content).includes('Do not spawn agents'))).toBe(true);
+  expect([...restartedStore.sources.values()].some(source => source.reference.includes('retained historical worker observation'))).toBe(false);
+});
+
+test('native recovery reuses exact original scope without drafting another pair of paraphrases', async () => {
+  let resolved = false, scopeProposals = 0;
+  const writer: VerificationWriter = request => {
+    if (request.operation === 'requirements') scopeProposals++;
+    return noIssueWriter(request);
+  };
+  const fake = fakePort((name, _question, raw) => noulAnswer(name === 'lost' ? .99 : name === 'quality_gap'
+    && (raw as { requirement?: unknown }).requirement && !resolved ? .4 : .01));
+  const verifier = new CompletionVerification(writer), owner = access(fake.port), input = state('Completed review and delivery observed.');
+  await expect(verifier.prepare(input, owner)).rejects.toThrow('native requirement remains unsettled without an actionable repair');
+  expect(scopeProposals).toBe(2);
+  resolved = true;
+  expect((await verifier.prepare(input, owner)).findings).toEqual([]);
+  expect(scopeProposals).toBe(2);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(true);
+});
+
+test('later primary proof rechecks an earlier held audit instead of retaining its stale uncertainty forever', async () => {
+  const history = Array.from({ length: 80 }, (_, i) => ({ role: 'tool', callId: `old-${i}`, content:
+    (i === 0 ? 'LATER-RECOVERED-PRIMARY-PROOF\n' : '')
+      + Array.from({ length: 90 }, (_, line) => `Historical observation ${i}, record ${line}: this earlier attempt was pending.`).join('\n') }));
+  const input = { ...state(), initial: { request: 'Review all source and write review.md.', transcript: history },
+    transcript: [...history, { role: 'tool', callId: 'current-status', content: 'Worker launched; retrieve the actual result.' }] };
+  let reconsidered = false;
+  const held = new Set<string>();
+  const fake = fakePort((name, question, raw) => {
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    const context = raw as unknown as { requirement?: unknown; opened?: { sources: unknown[] }; caseEvidence?: { sources: unknown }; sources?: { id: string }[] };
+    if (name !== 'missed') {
+      const unresolved = context.requirement && context.opened && context.opened.sources.length > 1
+        && !JSON.stringify(context.opened.sources).includes('LATER-RECOVERED-PRIMARY-PROOF');
+      return noulAnswer(unresolved && name === 'quality_gap' ? .4 : unresolved && name === 'needs_source' ? .99 : .01);
+    }
+    const resolved = JSON.stringify(context.caseEvidence?.sources).includes('LATER-RECOVERED-PRIMARY-PROOF');
+    for (const source of context.sources ?? []) {
+      if (resolved && held.has(source.id)) reconsidered = true;
+      if (!resolved) held.add(source.id);
+    }
+    return noulAnswer(resolved ? .01 : .99);
+  });
+  const result = await new CompletionVerification(noIssueWriter).prepare(input, access(fake.port));
+  expect(result.findings).toEqual([]);
+  expect(reconsidered).toBe(true);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(true);
+});
+
+test('an uncertain history page is resolved against its individual originals without rechecking or redrafting the whole task', async () => {
+  const history = [...state('Earlier observations. '.repeat(1800)).transcript,
+    { role: 'tool', callId: 'old-report', content: 'OLD-REPORT-VERSION: native verification was still blocked.' }];
+  const input = { ...state(), initial: { request: state().request, transcript: history },
+    transcript: [...history, { role: 'tool', callId: 'current-read', content: 'Completed review and delivery observed. Actual later report read: native verification completed.' }] };
+  const diagnosed: string[] = [];
+  const writer: VerificationWriter = request => {
+    if (request.operation === 'findings') diagnosed.push(...(request.context as { checks: string[] }).checks);
+    return noIssueWriter(request);
+  };
+  const fake = fakePort((name, _question, raw) => {
+    const value = raw as unknown as { observation?: { text: string }; sources?: unknown };
+    if (name === 'missed') return noulAnswer(value.observation
+      ? value.observation.text.includes('OLD-REPORT-VERSION') ? .4 : .01 : .4);
+    return noulAnswer(.01);
+  });
+  expect((await new CompletionVerification(writer).prepare(input, access(fake.port))).findings).toEqual([]);
+  expect(diagnosed).toHaveLength(1);
+  expect(diagnosed[0]).toContain(':audit:');
+  const judgments = fake.requests.filter(request => request.context?.battery === 'engine.verification.observation-audit');
+  const expected = verificationSources(input).filter(source => source.kind !== 'answer');
+  expect(new Set(judgments.map(request => (request.state as never as { observation: { id: string } }).observation.id)))
+    .toEqual(new Set(expected.map(source => source.id)));
+  expect(fake.requests.filter(request => request.context?.battery === 'engine.verification.no-issue')).toHaveLength(1);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(true);
+});
+
+test.each([.4, .99])('a factual dismissal held at %s cannot clear an uncertain original-source audit', async probability => {
+  const history = state('Retained history. '.repeat(2000)).transcript;
+  const input = { ...state(), initial: { request: state().request, transcript: history },
+    transcript: [...history, { role: 'tool', callId: 'current', content: 'Completed review and delivery observed.' }] };
+  const fake = fakePort((name, _question, raw) => {
+    const evidence = (raw as unknown as { evidence?: { unresolvedQuestion?: string } }).evidence;
+    return noulAnswer(name === 'missed' ? .4 : name === 'unsupported' && evidence?.unresolvedQuestion ? probability : .01);
+  });
+  await expect(new CompletionVerification(noIssueWriter).prepare(input, access(fake.port)))
+    .rejects.toThrow('native requirement remains unsettled without an actionable repair');
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.no-issue')).toBe(true);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(false);
+});
+
+test('a definite invalidating original cannot be dismissed by a confident no-issue assessment', async () => {
+  const history = [...state('Earlier history. '.repeat(2000)).transcript,
+    { role: 'tool', callId: 'destructive-edit', content: 'LATER-DELETION: the accepted review.md was emptied and never restored.' }];
+  const input = { ...state(), initial: { request: state().request, transcript: history },
+    transcript: [...history, { role: 'tool', callId: 'status', content: 'The old completed report was previously written.' }] };
+  const fake = fakePort((name, _question, raw) => {
+    const observation = (raw as unknown as { observation?: unknown }).observation;
+    return noulAnswer(name === 'missed' ? observation ? JSON.stringify(observation).includes('LATER-DELETION') ? .99 : .01 : .4 : .01);
+  });
+  await expect(new CompletionVerification(noIssueWriter).prepare(input, access(fake.port)))
+    .rejects.toThrow('native requirement remains unsettled without an actionable repair');
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(false);
+});
+
+test('an unsettled semantic audit returns one specific private evidence question instead of retrying it as an outage', async () => {
+  const conversation = new ConversationManager(), request = 'Retain the completed review and deliver its report.';
+  conversation.addUserMessage(request);
+  conversation.addToolResults([{ callId: 'old-history', success: true, output: 'Earlier progress. '.repeat(6000) },
+    { callId: 'old-report', success: true, output: 'OLD-REPORT-QUESTION: was this earlier blocked-runtime statement superseded?' }]);
+  const guard = new ResponseCompletionGuard({ request, conversation, verificationWriter: noIssueWriter });
+  conversation.addToolResults([{ callId: 'current', success: true, output: 'Completed review and delivery observed.' }]);
+  let resolved = false, waits = 0;
+  const fake = fakePort((name, _question, raw) => {
+    const value = raw as unknown as { observation?: { text: string }; evidence?: { unresolvedQuestion?: string } };
+    return noulAnswer(name === 'missed' ? value.observation
+      ? !resolved && value.observation.text.includes('OLD-REPORT-QUESTION') ? .4 : .01 : .4
+      : name === 'unsupported' && value.evidence?.unresolvedQuestion && !resolved ? .4 : .01);
+  });
+  installJudgmentPort(fake.port);
+  const input = { request, response: 'The review is in review.md.', conversation, tools: [] };
+  const before = conversation.getMessageSnapshot();
+  const correction = await guard.checkUntilAvailable(() => input, { signal: AbortSignal.timeout(2000) }, () => waits++);
+  expect(correction).toContain('OLD-REPORT-QUESTION');
+  expect(correction).toContain('"assessment":"unresolved"');
+  expect(correction).toContain('Do not restart the review');
+  expect(waits).toBe(0);
+  expect(conversation.getMessageSnapshot()).toEqual(before);
+  expect(() => guard.beginFinalization({ content: input.response })).toThrow();
+  resolved = true;
+  // An unchanged cached question is not an invitation to sample new answers
+  // until one permits publication. Actual new evidence must settle the hold.
+  expect(await guard.checkUntilAvailable(() => input)).not.toBeNull();
+  conversation.addToolResults([{ callId: 'compare-existing-versions', success: true,
+    output: 'Existing receipts compared: OLD-REPORT-QUESTION refers to the earlier report version. The later complete read establishes that native verification completed; no new test run or artifact edit occurred.' }]);
+  expect(await guard.checkUntilAvailable(() => input)).toBeNull();
+  expect(guard.beginFinalization({ content: input.response })).not.toThrow();
+});
+
+test('a small held draft retains worker evidence for its resumed fix list and fresh completion check', async () => {
+  const root = directory(), sessionId = 'small-worker';
+  const conversation = new ConversationManager();
+  conversation.addUserMessage('Verify the report with one worker.');
+  conversation.addAssistantMessage('', { toolCalls: [{ id: 'spawn-worker', name: 'agent', arguments: { mode: 'spawn', outsideContract: true, task: 'Read review.md only.' } }] });
+  conversation.addToolResults([{ callId: 'spawn-worker', success: true, output: JSON.stringify({ agentId: 'worker', status: 'spawned' }) }]);
+  const fake = fakePort(name => noulAnswer(name === 'unsupported' ? .99 : .01)); installJudgmentPort(fake.port);
+  const original = new ResponseCompletionGuard({ request: 'Verify the report with one worker.', conversation,
+    verificationStore: new VerificationStore(root, sessionId), verificationWriter });
+  expect(await original.check({ request: 'Verify the report with one worker.', response: 'The worker verified review.md.', conversation, tools: ['agent'],
+    delegated: [{ id: 'worker', task: 'Read review.md only.', status: 'completed', output: 'Report verified.', evidence: [
+      { role: 'tool', callId: 'full-read', outcome: 'ok', content: 'FULL-WORKER-READ survives the small direct completion path.' },
+    ] }] })).toBeString();
+  const resumed = new ConversationManager(); resumed.fromJSON(JSON.parse(JSON.stringify(conversation.toJSON())));
+  const check = fakePort((_name, _question, raw) => {
+    const packet = (raw as { retainedWorkerObservations?: unknown }).retainedWorkerObservations;
+    expect(JSON.stringify(packet)).toContain('FULL-WORKER-READ');
+    return noulAnswer(.01);
+  });
+  installJudgmentPort(check.port);
+  const guard = new ResponseCompletionGuard({ request: 'Verify the report with one worker.', conversation: resumed,
+    verificationStore: new VerificationStore(root, sessionId), verificationWriter });
+  expect(guard.resumedRepair()).toContain('FULL-WORKER-READ');
+  expect(await guard.check({ request: 'Verify the report with one worker.', response: 'The worker verified review.md.', conversation: resumed, tools: ['agent'], delegated: [] })).toBeNull();
+  expect(check.requests.some(request => request.context?.battery === 'engine.core.response-completion')).toBe(true);
 });
 
 test('a no-issue diagnosis rechecks the original requirement instead of manufacturing a repair', async () => {
@@ -438,7 +644,7 @@ test('uncertain history audits settle against the exact page and current proof w
   const input = { ...before, initial: { request: before.request, transcript: before.transcript },
     transcript: [...before.transcript, { role: 'tool', callId: 'current-proof', content: 'The complete review was accepted and the canonical report exists.' }],
     completedWork: [{ kind: 'host-completed-contract', id: 'review', status: 'passed', finalCheck: { result: 'pass' } }] };
-  const fake = fakePort(name => noulAnswer(name === 'missed' ? .4 : .01));
+  const fake = fakePort((name, _question, raw) => noulAnswer(name === 'missed' && !(raw as { observation?: unknown }).observation ? .4 : .01));
   const result = await new CompletionVerification(verificationWriter).prepare(input, access(fake.port));
   expect(result.findings).toHaveLength(0);
   expect(fake.requests.some(request => request.context?.site === 'engine.verification.audit-refinement')).toBe(true);
@@ -459,19 +665,20 @@ test('a real gap found while refining an uncertain audit remains held', async ()
   expect((await new CompletionVerification(verificationWriter).prepare(input, access(fake.port))).findings.length).toBeGreaterThan(0);
 });
 
-test('opening held original pages never restarts the audit of pages already checked in the same immutable case', async () => {
+test('held page audits repeat only for a changed evidence context and still cover every original', async () => {
   const before = state('Earlier progress record. '.repeat(15_000));
   const input = { ...before, initial: { request: before.request, transcript: before.transcript },
     transcript: [...before.transcript, { role: 'tool', callId: 'current-proof', content: 'CURRENT-PROOF: the requested review and report were accepted.' }],
     completedWork: [{ kind: 'host-completed-contract', id: 'review', status: 'passed', finalCheck: { result: 'pass' } }] };
-  const fake = fakePort((name, question) => question.type === 'choice'
-    ? choiceAnswer(question, Object.keys(question.criteria)[0]!, .99) : noulAnswer(name === 'missed' ? .99 : .01));
+  const fake = fakePort((name, question, raw) => question.type === 'choice'
+    ? choiceAnswer(question, Object.keys(question.criteria)[0]!, .99) : noulAnswer(name === 'missed' && unopenedAuditSource(raw) ? .99 : .01));
   const result = await new CompletionVerification(verificationWriter).prepare(input, access(fake.port));
   expect(result.findings).toHaveLength(0);
-  const pages = fake.requests.filter(request => request.context?.battery === 'engine.verification.audit')
-    .flatMap(request => (request.state as unknown as { sources: { id: string }[] }).sources.map(source => source.id));
+  const audits = fake.requests.filter(request => request.context?.battery === 'engine.verification.audit');
+  const pages = audits.flatMap(request => (request.state as unknown as { sources: { id: string }[] }).sources.map(source => source.id));
   expect(pages.length).toBeGreaterThan(10);
-  expect(new Set(pages).size).toBe(pages.length);
+  expect(new Set(pages)).toEqual(new Set(verificationSources(input).filter(source => source.kind !== 'answer').map(source => source.id)));
+  expect(new Set(audits.map(request => JSON.stringify(request.state))).size).toBe(audits.length);
   expect(fake.requests.filter(request => request.context?.battery === 'engine.verification.requirement').length).toBeGreaterThan(5);
 });
 
@@ -487,7 +694,7 @@ test('related original pages stay exact together instead of being rewritten betw
     const originals = current.opened?.sources?.filter(source => source.execution?.callId === 'read-1') ?? [];
     if (originals.length >= 4) retainedTogether = true;
     const partial = originals.length > 0 && originals.length < 4;
-    return noulAnswer(name === 'missed' || partial && name === 'needs_source' ? .99 : partial && name === 'quality_gap' ? .4 : .01);
+    return noulAnswer(name === 'missed' && unopenedAuditSource(raw) || partial && name === 'needs_source' ? .99 : partial && name === 'quality_gap' ? .4 : .01);
   });
   const checked = await new CompletionVerification(verificationWriter).prepare(input, access(fake.port));
   expect(checked.findings).toHaveLength(0);
@@ -508,8 +715,8 @@ test('publication reuses qualified earlier case records instead of expanding and
     }
     return verificationWriter(request);
   };
-  const fake = fakePort((name, question) => question.type === 'choice'
-    ? choiceAnswer(question, Object.keys(question.criteria)[0]!, .99) : noulAnswer(name === 'missed' ? .99 : .01));
+  const fake = fakePort((name, question, raw) => question.type === 'choice'
+    ? choiceAnswer(question, Object.keys(question.criteria)[0]!, .99) : noulAnswer(name === 'missed' && unopenedAuditSource(raw) ? .99 : .01));
   const result = await new CompletionVerification(writer).prepare(input, access(fake.port));
   expect(result.findings).toHaveLength(0);
   expect(earlier.size).toBeGreaterThan(0);

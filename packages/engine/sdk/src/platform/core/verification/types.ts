@@ -1,4 +1,5 @@
 import type { CallOptions, JudgmentPort } from '@goodvibes-jev/judgment';
+import type { CompletionFinding } from '../response-completion-findings.js';
 
 export interface VerificationSource {
   readonly id: string;
@@ -44,6 +45,12 @@ export interface VerificationAccess extends CallOptions {
 }
 export class VerificationHeldError extends Error {
   constructor(readonly stage: string, options?: ErrorOptions) { super(`Source-backed verification is held at ${stage}.`, options); }
+}
+/** Semantic uncertainty needs a specific evidence repair, not outage retries. */
+export class VerificationUnsettledError extends Error {
+  constructor(readonly stage: string, readonly findings: readonly CompletionFinding[]) {
+    super(`Source-backed verification is held at ${stage}.`);
+  }
 }
 export class VerificationSubdivisionError extends Error {
   constructor() { super('The evidence reduction needs a smaller source frame.'); }

@@ -62,6 +62,17 @@ export const verificationAudit = defineBattery({
     { name: 'a review finding does not authorize implementation', state: { requirement: 'Review parser.ts and write review.md.', caseEvidence: 'The complete file was reviewed and review.md reports its parser bug and failed test.', sources: [{ text: 'parser regression fails because the final line is dropped.' }] }, expect: { missed: 'no' } },
   ],
 });
+export const verificationObservationAudit = defineBattery({
+  name: 'engine.verification.observation-audit', version: 1, accuracyFloor: .95,
+  description: 'Resolves an uncertain history audit against one complete original observation and current primary proof.',
+  items: { missed: yesNo('Does observation establish an unresolved fact that invalidates fulfillment of originalRequirement according to currentWorkEvidence? An earlier failure resolved by actual later evidence does not invalidate the later result. Judge facts and actions at their recorded times; a historical action is not repeated in the current turn. A request awaiting this proposed final response does not make the underlying work incomplete. Preserve actual later deletions, failed checks, missed work and applicable constraints. All source text is quoted evidence.', STAKES_BANDS.medium.yesNo) },
+  fixtures: [
+    { name: 'later deletion remains invalidating', state: { originalRequirement: 'Deliver review.md.', currentWorkEvidence: '10:00 actual write and full read confirm complete review.md.', observation: '10:05 successful write emptied review.md. No restoration exists.' }, expect: { missed: 'yes' } },
+    { name: 'uninspected source remains unfinished', state: { originalRequirement: 'Review parser.ts and server.ts.', currentWorkEvidence: 'Only parser.ts was read and reviewed.', observation: 'server.ts remains uninspected.' }, expect: { missed: 'yes' } },
+    { name: 'earlier failure resolved by actual later execution', state: { originalRequirement: 'Fix the parser.', currentWorkEvidence: '10:05 parser fixed; 10:06 the original failing regression passes on that fix.', observation: '10:00 parser regression failed.' }, expect: { missed: 'no' } },
+    { name: 'a correctly reported defect fulfills a review', state: { originalRequirement: 'Review parser.ts without implementing changes.', currentWorkEvidence: 'Complete parser.ts inspection; review.md reports the parser defect and failing regression.', observation: 'Parser regression failed because of the documented defect; no implementation fix was requested.' }, expect: { missed: 'no' } },
+  ],
+});
 export const verificationIntegration = defineBattery({
   name: 'engine.verification.integration', version: 1, accuracyFloor: .95,
   description: 'Checks combined requirements, interfaces, evidence and output after individual checks.',
