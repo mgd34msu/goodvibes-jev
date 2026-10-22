@@ -127,6 +127,17 @@ test('lossless source boundaries cannot turn a long numeric identity into refuse
   }
 });
 
+test('each requirement question binds its exact root scope even when source data contains other requirement fields', async () => {
+  const fake = fakePort((name, question, raw) => {
+    const current = raw as unknown as { requirement?: { text: string } };
+    const instructions = question.type === 'noul' ? question.instructions as { nativeTargets?: { originalRequirement?: { text: string } } } : null;
+    return noulAnswer(name === 'quality_gap' && instructions?.nativeTargets?.originalRequirement?.text !== current.requirement?.text ? .99 : .01);
+  });
+  const result = await new CompletionVerification(verificationWriter).prepare(state(JSON.stringify({ requirement: 'An unrelated historical assignment.', observed: 'The requested report is saved.' })), access(fake.port));
+  expect(result.findings).toHaveLength(0);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.requirement')).toBe(true);
+});
+
 test('invalid proposal citations receive the exact schema defect and valid immediate citation IDs', async () => {
   let feedback: unknown;
   const writer: VerificationWriter = async request => {

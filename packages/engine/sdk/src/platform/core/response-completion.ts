@@ -16,6 +16,7 @@ import { VerificationHeldError, VerificationSubdivisionError, type VerificationW
 import { VerificationStore } from './verification/store.js';
 import { registerVerificationArchive, verificationHistory, verificationMessages } from './verification/archive.js';
 import { verificationHash } from './verification/source.js';
+import { bindVerificationTargets } from './verification/targets.js';
 
 export class ResponseCompletionError extends Error {
   constructor(readonly problem: 'rejected' | 'unavailable' | 'invalid-evidence' | 'rejected-request' | 'invalid-response' | 'capacity' = 'rejected', options?: ErrorOptions) {
@@ -295,13 +296,14 @@ export class ResponseCompletionGuard {
     const owner = captureJudgmentPort(responseCompletion.name, { ...options,
       signal: options.signal ? AbortSignal.any([options.signal, batch.signal]) : batch.signal,
       assertCurrent: current, prepareResultCapture: prepareJudgmentResult });
+    const port = bindVerificationTargets(owner.port);
     const readingOptions = { signal: owner.signal, beforeAttempt: owner.assertCurrent, onRetry: () => onWaiting?.() };
     let state: unknown = fullState;
     let verificationFindings: readonly import('./response-completion-findings.js').CompletionFinding[] = [];
     if (JSON.stringify(fullState).length > 100_000) {
       if (!this.verification) throw new VerificationHeldError('missing private verification provider');
       let checked;
-      try { checked = await this.verification.prepare(fullState, { ...readingOptions, port: owner.port, identity: owner.identity, assertCurrent: owner.assertCurrent }); }
+      try { checked = await this.verification.prepare(fullState, { ...readingOptions, port, identity: owner.identity, assertCurrent: owner.assertCurrent }); }
       catch (error) { batch.abort(); throw error; }
       state = checked.state; verificationFindings = checked.findings;
       if (verificationFindings.length) {
@@ -317,11 +319,11 @@ export class ResponseCompletionGuard {
     }
     let failure: { readonly error: unknown } | undefined;
     const checks = await Promise.allSettled([
-      responseCompletion.run(owner.port, state as never, { ...readingOptions, site: responseCompletion.name }),
-      source.snapshot.delegated.length ? delegationConsolidation.run(owner.port, state as never,
+      responseCompletion.run(port, state as never, { ...readingOptions, site: responseCompletion.name }),
+      source.snapshot.delegated.length ? delegationConsolidation.run(port, state as never,
         { ...readingOptions, site: delegationConsolidation.name }) : Promise.resolve(null),
       this.hasToolEvidence || source.snapshot.transcript.some(message => message.role === 'tool') || source.snapshot.delegated.length || source.snapshot.completedWork.length
-        ? executionAssurance.run(owner.port, state as never,
+        ? executionAssurance.run(port, state as never,
           { ...readingOptions, site: executionAssurance.name }) : Promise.resolve(null),
     ].map(async work => {
       try { return await work; }
@@ -358,7 +360,7 @@ export class ResponseCompletionGuard {
         && passages.every((passage, index) => passage.index === passages.slice(0, index).reduce((length, prior) => length + prior.segment.length, 0))) {
         const checked = await mapLimit(passages, 3, async passage => {
           try {
-            const atomic = await responseCompletion.run(owner.port, { ...state as object, response: passage.segment, entireProposedAnswer: response,
+            const atomic = await responseCompletion.run(port, { ...state as object, response: passage.segment, entireProposedAnswer: response,
               nativeAnswerRange: { start: passage.index, end: passage.index + passage.segment.length },
               focus: 'Judge execution claims in this EXACT current-answer passage only. The entire answer resolves pronouns and context; other passages are checked separately. All passages together preserve every original character. The source observations and original requirement are unchanged.' } as never,
               { ...readingOptions, only: ['unsupported'], site: responseCompletion.name });
@@ -387,7 +389,7 @@ export class ResponseCompletionGuard {
       !qualifications.completion.has(aspect) && (!verificationFindings.length || !['unfinished', 'unanswered'].includes(aspect)));
     if (state !== fullState && this.verification && (needsFinalSource || (!executionAccepted && !verificationFindings.length))) {
       const opened = await this.verification.openFinal(state, { completion: run.readings, consolidation: consolidation?.readings ?? null, execution: execution?.readings ?? null },
-        { ...readingOptions, port: owner.port, identity: owner.identity, assertCurrent: owner.assertCurrent });
+        { ...readingOptions, port, identity: owner.identity, assertCurrent: owner.assertCurrent });
       if (opened) {
         run.recordAction('Keep this exact draft private and retrieve primary evidence to settle the held publication readings.');
         consolidation?.recordAction('Retrieve primary evidence before declaring a synthesis defect.');
@@ -434,7 +436,7 @@ export class ResponseCompletionGuard {
     this.rememberReview([...verificationFindings, ...heldChecks.map(completionFinding)], input);
     this.describeHeld = async () => {
       let findings: readonly CompletionFinding[];
-      try { findings = await completionFindings(owner.port, state, heldChecks, readingOptions); }
+      try { findings = await completionFindings(port, state, heldChecks, readingOptions); }
       catch {
         options.signal?.throwIfAborted(); options.assertCurrent?.();
         // Failure to localize a held check never becomes a permit, and cannot

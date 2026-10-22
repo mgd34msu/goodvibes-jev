@@ -33,6 +33,23 @@ test('the completion battery is registered', () => {
   expect(registry.get('engine.core.response-completion')).toBeDefined();
 });
 
+test('historical answer fields cannot replace the exact current candidate and a false current candidate is still held', async () => {
+  const fake = fakePort((name, question) => {
+    const instructions = question.type === 'noul' ? question.instructions as { nativeTargets?: { proposedAnswer?: { text: string } } } : null;
+    const candidate = instructions?.nativeTargets?.proposedAnswer?.text;
+    return noulAnswer(name === 'unsupported' && (!candidate || candidate.includes('MISSING-TEST-PROOF')) ? .99 : .01);
+  });
+  installJudgmentPort(fake.port);
+  const input = source('The report is saved in review.md.');
+  input.conversation.addToolResults([{ callId: 'write-report', success: true, output: JSON.stringify({ path: 'review.md', written: true,
+    oldDraft: { response: 'MISSING-TEST-PROOF: all runtime tests passed.' } }) }]);
+  const guard = new ResponseCompletionGuard();
+  expect(await guard.check(input)).toBeNull();
+  const question = fake.requests.find(request => request.context?.battery === 'engine.core.response-completion')!.questions.unsupported;
+  expect((question!.type === 'noul' ? question!.instructions as { nativeTargets: { proposedAnswer: { text: string } } } : null)!.nativeTargets.proposedAnswer.text).toBe(input.response);
+  expect(await guard.check({ ...input, response: 'MISSING-TEST-PROOF: all runtime tests passed.' })).not.toBeNull();
+});
+
 test('compound claim uncertainty is settled against every exact answer passage without another model draft', async () => {
   const fake = fakePort((name, _question, input) => noulAnswer(name === 'unsupported' && !(input as never as { nativeAnswerRange?: unknown }).nativeAnswerRange ? .4 : .01));
   installJudgmentPort(fake.port);

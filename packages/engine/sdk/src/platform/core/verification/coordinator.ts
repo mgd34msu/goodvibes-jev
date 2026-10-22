@@ -6,6 +6,7 @@ import { VERIFICATION_FRAME_CHARACTERS, VERIFICATION_OVERVIEW_CHARACTERS, verifi
 import { VerificationStore } from './store.js';
 import { VerificationHeldError, VerificationSubdivisionError, type VerificationAccess, type VerificationReceipt, type VerificationRequirement, type VerificationSource, type VerificationSummary, type VerificationWriter } from './types.js';
 import type { CompletionFinding } from '../response-completion-findings.js';
+import { bindVerificationTargets } from './targets.js';
 
 const clean = (readings: Readonly<Record<string, { verdict: string; outcome: string }>>) => Object.values(readings).every(reading => reading.verdict === 'no' && reading.outcome === 'act');
 const bounded = (value: unknown, limit: number) => JSON.stringify(value).length <= limit;
@@ -549,7 +550,7 @@ export class CompletionVerification {
   }
 
   async prepare(full: Record<string, unknown>, access: VerificationAccess): Promise<{ state: Record<string, unknown>; findings: readonly CompletionFinding[] }> {
-    return this.ownedAttempt(access, local => this.prepareAttempt(full, local));
+    return this.ownedAttempt({ ...access, port: bindVerificationTargets(access.port) }, local => this.prepareAttempt(full, local));
   }
   private async prepareAttempt(full: Record<string, unknown>, access: VerificationAccess): Promise<{ state: Record<string, unknown>; findings: readonly CompletionFinding[] }> {
     access.assertCurrent();
