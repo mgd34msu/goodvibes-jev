@@ -34,7 +34,7 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
     // accidentally contain a card-shaped numeric run; omit that metadata at
     // the native transport instead of rejecting an otherwise valid judgment.
     // Borrowed results and all unknown response fields remain strictly screened.
-    if (/\d{13,}/.test(value)) return undefined;
+    if (/\d{13,}/.test(value.replace(/-/g, ''))) return undefined;
     return value;
   };
 
@@ -43,7 +43,10 @@ export function createSystemOnePort(config: JudgmentConfig): JudgmentPort {
     health: () => health.map((item) => ({ ...item })),
     async ask<const Q extends Questions>(request: JudgmentRequest<Q>): Promise<JudgmentResult<Q>> {
       const started = performance.now();
-      const logicalRequestId = crypto.randomUUID();
+      // These locally generated opaque keys need no decimal spelling. Retain
+      // every UUID bit without accidental card-shaped runs across hyphens.
+      const logicalRequestId = crypto.randomUUID().replace(/[0-9a-f]/g,
+        nibble => String.fromCharCode(97 + Number.parseInt(nibble, 16)));
       const attempts: JudgmentAttempt[] = [];
       let attemptCount = 0;
       const lineage = () => ({ logicalRequestId, attempts: [...attempts],

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { isDeepStrictEqual } from 'node:util';
 import { captureJudgmentPort, installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -364,11 +364,16 @@ test('exact bounded latency metadata does not become card material', () => {
   expect(() => prepareJudgmentResult(questions()).capture(privateResult)).toThrow(JudgmentInputError);
 });
 
-test('optional native request identifiers cannot turn a valid judgment into a card-material recovery loop', async () => {
+test.each(['req_4111111111111111', '013c2c70-53ea-4240-8f43-497101781208'])('native diagnostic identities cannot reset a valid judgment: %s', async requestId => {
+  // This is a randomly generated UUID, not payment data. Its digits across
+  // the final hyphen happen to pass the same checksum as a card number.
+  const generated = '013c2c70-53ea-4240-8f43-497101781208';
+  expect(judgmentInputProblem(generated)).toBe('card-material');
+  const uuid = spyOn(crypto, 'randomUUID').mockReturnValue(generated);
   const native = createSystemOnePort({ endpoint: { kind: 'hosted', baseURL: 'https://judge.test', apiKey: 'synthetic-key' },
     model: 'jev-1.13.0', timeoutMs: 1_000, retry: {}, fetch: async () => new Response(JSON.stringify({
       model: 'jev-1.13.0', answers: { checked: { type: 'noul', noul: .01 } }, usage: { input_tokens: 1, output_tokens: 1 },
-    }), { status: 200, headers: { 'content-type': 'application/json', 'x-typesafe-request-id': 'req_4111111111111111' } }) });
+    }), { status: 200, headers: { 'content-type': 'application/json', 'x-typesafe-request-id': requestId } }) });
   using log = new SqliteDecisionLog(':memory:');
   const prior = installJudgmentPort(withDecisionLog(native, log));
   try {
@@ -377,7 +382,8 @@ test('optional native request identifiers cannot turn a valid judgment into a ca
     expect(result.answers.checked.noul).toBe(.01);
     expect(result.requestId).toBeUndefined();
     expect(result.lineage!.attempts[0]!.requestId).toBeUndefined();
+    expect(result.lineage!.logicalRequestId).toMatch(/^[a-p-]+$/);
     expect(log.query()).toHaveLength(1);
     expect(log.query()[0]!.status).toBe('answered');
-  } finally { installJudgmentPort(prior); }
+  } finally { uuid.mockRestore(); installJudgmentPort(prior); }
 });
