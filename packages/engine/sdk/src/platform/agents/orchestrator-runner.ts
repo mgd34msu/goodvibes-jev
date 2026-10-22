@@ -176,6 +176,7 @@ async function executeToolCalls(
   callHistoryWindow: number,
   context: AgentOrchestratorRunContext,
   assertObservationCurrent: () => void,
+  onToolSettled: (result: ToolResult) => void,
 ): Promise<ToolResult[]> {
   // Capture before any asynchronous admission work; a later lookup can belong
   // to a replacement run rather than the owner of this batch.
@@ -219,6 +220,8 @@ async function executeToolCalls(
         resultPreview: (result.output ?? result.error ?? '').slice(0, 500),
         timestamp: new Date().toISOString(),
       });
+      assertCallCurrent();
+      onToolSettled({ ...result });
     };
     try {
       if (context.autonomousSource !== undefined) {
@@ -1066,6 +1069,7 @@ export async function runAgentTask(
         // Capture only IDs before execution; cancellation must never publish a
         // late tool payload or reread mutable tool arguments/results.
         const terminalCallIds = response.toolCalls.map(call => call.id);
+        const settledResults: ToolResult[] = [];
         let assistantPublished = false;
         try {
           try {
@@ -1075,19 +1079,22 @@ export async function runAgentTask(
             catch { terminal.assertCurrent(); assertToolObservationCurrent(); response = { ...response, content: '' }; }
             conversation.addAssistantMessage(response.content, { toolCalls: response.toolCalls, usage: response.usage });
             assistantPublished = true;
-            results = await executeToolCalls(response.toolCalls, toolRegistry, session, turn, record, callHistory, CALL_HISTORY_WINDOW, context, assertToolObservationCurrent);
+            results = await executeToolCalls(response.toolCalls, toolRegistry, session, turn, record, callHistory, CALL_HISTORY_WINDOW, context, assertToolObservationCurrent,
+              result => { settledResults.push(result); });
           } finally { await batch?.release(); }
           assertToolObservationCurrent();
         } catch (error) {
-          // Close this already-published batch mechanically, then use the
-          // existing cancellation lifecycle. No result/session/hook/contract or
-          // repeat-reading publication is allowed through this separate seam.
+          // Preserve only receipts that crossed their original per-call
+          // fences before cancellation. The unfinished calls receive fixed
+          // cancellation outcomes; no late payload, hook or contract report
+          // can enter through this separate mechanical closure.
           if (assistantPublished && ownsCancelledConversation()) {
             // This catch runs once, before the normal batch result append. A
             // prior turn may legitimately reuse these IDs; it is not this batch.
-            activeConversation.addToolResults([...new Set(terminalCallIds)].map(callId => ({
+            const settledIds = new Set(settledResults.map(result => result.callId));
+            activeConversation.addToolResults([...settledResults, ...[...new Set(terminalCallIds)].filter(callId => !settledIds.has(callId)).map(callId => ({
               callId, success: false, cancelled: true, error: 'Tool invocation cancelled',
-            })));
+            }))]);
           }
           throw error;
         }

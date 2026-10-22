@@ -1,6 +1,6 @@
 import { bindContractPlanConsumer } from '../sdk/src/platform/tools/agent/contract-binding.js';
 import { afterEach, beforeEach, describe, expect, test, spyOn } from 'bun:test';
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from 'node:fs';
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { installJudgmentPort, bindJudgmentPortAuthority } from '@goodvibes-jev/engine/errors';
@@ -18,6 +18,7 @@ import { AGENT_OWNER_TERMINAL_GUARD } from '../sdk/src/platform/gate/policy/inde
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { emitAgentCompleted } from '../sdk/src/platform/runtime/emitters/agents.js';
 import { registry } from '../sdk/src/platform/core/judgment-registry.js';
+import { ConversationManager } from '../sdk/src/platform/core/conversation.js';
 
 const roots: string[] = [];
 let previous: ReturnType<typeof installJudgmentPort>;
@@ -325,6 +326,30 @@ describe('review regressions: complete observation through tool effects', () => 
 });
 
 describe('cancelled batch mechanical transcript closure', () => {
+  test('a completed worker write retains its full receipt when a later call is cancelled and history is restored', async () => {
+    const receipt = 'WRITE-COMPLETED: original evidence retained.\n' + 'Full receipt detail. '.repeat(100);
+    const f = setup(1, count => count === 1 ? receipt : 'LATE-RESULT-MUST-NOT-PUBLISH');
+    f.record.task = 'Write evidence and complete the next step.';
+    f.controls.batchSize = 3;
+    const entered = deferred(), release = deferred(), path = join(f.root, 'evidence.txt');
+    f.controls.beforeTool = async () => {
+      if (f.executions === 1) { writeFileSync(path, 'Actual completed evidence.'); return; }
+      entered.resolve(); await release.promise;
+    };
+    const pending = runAgentTask(f.context, f.record); await entered.promise;
+    f.record.status = 'cancelled'; f.controller.abort(); release.resolve(); await pending;
+    expect(readFileSync(path, 'utf8')).toBe('Actual completed evidence.');
+    const restored = new ConversationManager(); restored.fromJSON({ messages: JSON.parse(JSON.stringify(f.snapshot)) });
+    const results = restored.getMessageSnapshot().filter(message => message.role === 'tool');
+    expect(results.map(({ callId, outcome }) => ({ callId, outcome }))).toEqual([
+      { callId: 'call-1-0', outcome: 'ok' }, { callId: 'call-1-1', outcome: 'cancelled' }, { callId: 'call-1-2', outcome: 'cancelled' },
+    ]);
+    expect(results[0]!.content).toBe(receipt);
+    expect(JSON.stringify(results)).not.toContain('LATE-RESULT-MUST-NOT-PUBLISH');
+    expect(f.executions).toBe(2);
+    expect(f.completed).toHaveLength(0);
+  });
+
   test('cancelled tool batch records only fixed terminal outcomes, no late payload or remaining effects', async () => {
     const f = setup(1, () => 'LATE_PRIVATE_TOOL_PAYLOAD'), entered = deferred(), release = deferred();
     f.controls.batchSize = 2;
