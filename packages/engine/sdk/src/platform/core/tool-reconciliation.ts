@@ -81,8 +81,8 @@ export function buildSyntheticResult(
   return {
     callId: call.id,
     success: false,
-    error: `[RECONCILED] Tool call '${call.name}' (id: ${call.id}) was not executed, the turn ended before results could be produced. Reason: ${reason}.`,
-    instruction: 'Do not retry the same call unless you are certain the underlying condition has changed.',
+    error: `[RECONCILED] Tool call '${call.name}' (id: ${call.id}) has no retained result. Its execution status is unknown; inspect the actual target state before retrying. Reason: ${reason}.`,
+    instruction: 'Preserve completed work. Inspect retained receipts and the actual target state before retrying a call whose result is missing.',
     synthetic: true,
     reason,
   };

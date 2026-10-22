@@ -1318,21 +1318,38 @@ export class Orchestrator {
 
   private async executeToolCalls(turnId: string, calls: ToolCall[], sourceOf: () => AutonomousToolSource): Promise<ToolResult[]> {
     if (calls.length > 0) markNativeConversationTurnEffectsPossible();
-    const results = await executeToolCalls({
-      autonomousSource: sourceOf,
-      turnSignal: this.abortController?.signal,
-      hookOwner: this.turnHookOwner ?? undefined,
-      toolRegistry: this.toolRegistry,
-      permissionManager: this.permissionManager,
-      hookDispatcher: bindTurnHookDispatcher(this.hookDispatcher, this.turnHookOwner),
-      runtimeBus: this.runtimeBus,
-      sessionId: this.currentSessionId,
-      emitterContext: (id) => createEmitterContext(this.currentSessionId, id),
-      onToolExecuted: this.coreServices.codeIndexReindexScheduler
-        ? (toolName, args, success) => this.coreServices.codeIndexReindexScheduler!.onToolExecuted(toolName, args, success)
-        : undefined,
-      toolCallSignals: this.toolCallAborts,
-    }, turnId, calls);
+    const settled: ToolResult[] = [];
+    const conversation = this.conversation, pendingAtStart = this._pendingToolCalls;
+    let results: ToolResult[];
+    try {
+      results = await executeToolCalls({
+        autonomousSource: sourceOf,
+        turnSignal: this.abortController?.signal,
+        hookOwner: this.turnHookOwner ?? undefined,
+        toolRegistry: this.toolRegistry,
+        permissionManager: this.permissionManager,
+        hookDispatcher: bindTurnHookDispatcher(this.hookDispatcher, this.turnHookOwner),
+        runtimeBus: this.runtimeBus,
+        sessionId: this.currentSessionId,
+        emitterContext: (id) => createEmitterContext(this.currentSessionId, id),
+        onToolExecuted: this.coreServices.codeIndexReindexScheduler
+          ? (toolName, args, success) => this.coreServices.codeIndexReindexScheduler!.onToolExecuted(toolName, args, success)
+          : undefined,
+        toolCallSignals: this.toolCallAborts,
+        onToolSettled: result => { settled.push(result); },
+      }, turnId, calls);
+    } catch (error) {
+      if (settled.length) {
+        // The batch did not return, but these effects already have real receipts.
+        // Retain them before cancellation reconciliation synthesizes missing ones.
+        conversation.addToolResults(settled);
+        if (this._pendingToolCalls === pendingAtStart) {
+          const resolved = new Set(settled.map(result => result.callId));
+          this._pendingToolCalls = pendingAtStart.filter(call => !resolved.has(call.id));
+        }
+      }
+      throw error;
+    }
     // Per-model edit-failure + exec-expectation-miss telemetry (measurement only;
     // must never disturb the tool-execution path, so model resolution is defensive).
     let model = 'unknown';

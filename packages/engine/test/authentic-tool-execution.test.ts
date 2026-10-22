@@ -452,3 +452,34 @@ test.each(['unchanged', 'cancel', 'authority', 'registration'])('registered read
   else await expect(pending).rejects.toThrow();
   await expect(registry.executePrepared(call, admission)).rejects.toThrow();
 });
+
+test.each(['unchanged', 'cancel', 'authority', 'registration'])('partial-batch retention respects read publication fences: %s', async change => {
+  let revoked = false;
+  const started = deferred<void>(), finish = deferred<void>(), controller = new AbortController();
+  const config = { getAutonomousSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} }, autoApprove: revoked, directory: '/synthetic/project' }),
+    isAutoApproveEnabled: () => revoked, getSnapshot: () => ({ permissions: { mode: 'prompt', tools: {} } }), getWorkingDirectory: () => '/synthetic/project' } as PermissionConfigReader;
+  const { registry, manager } = fixture(async () => ({ success: true, output: 'Read result subject to final publication checks.' }),
+    { async project(request) { return { status: 'projected', args: request.args, resultPublication: 'read-only', async release() { started.resolve(); await finish.promise; } }; } }, config);
+  const retained: string[] = [];
+  const pending = runEmbedding({ ...embeddingDeps(manager, registry, manager.admitAutonomous.bind(manager)), turnSignal: controller.signal,
+    onToolSettled: result => { retained.push(result.output ?? result.error ?? ''); } });
+  await started.promise;
+  expect(retained).toEqual([]);
+  if (change === 'cancel') controller.abort();
+  else if (change === 'authority') revoked = true;
+  else if (change === 'registration') registry.unregister('exec');
+  finish.resolve();
+  if (change === 'unchanged') {
+    expect(await pending).toHaveLength(1);
+    expect(retained).toEqual(['Read result subject to final publication checks.']);
+  } else if (change === 'cancel') {
+    await expect(pending).rejects.toThrow();
+    expect(retained.join('')).not.toContain('Read result subject to final publication checks.');
+  } else {
+    const results = await pending;
+    expect(results).toHaveLength(1);
+    expect(results[0]!.success).toBe(false);
+    expect(results[0]!.output).toBeUndefined();
+    expect(retained.join('')).not.toContain('Read result subject to final publication checks.');
+  }
+});

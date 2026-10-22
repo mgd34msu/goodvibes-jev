@@ -89,6 +89,8 @@ export type ToolExecutionDeps = {
   turnSignal?: AbortSignal | undefined;
   /** Additive caller observation restriction; never execution permission. */
   assertCurrent?: (() => void) | undefined;
+  /** Retain each actual settled receipt even when a later call or hook aborts the batch. */
+  onToolSettled?: ((result: ToolResult) => void) | undefined;
   toolRegistry: ToolRegistry;
   permissionManager: Pick<PermissionManager, 'checkDetailed' | 'check' | 'admitAutonomous' | 'autonomousPreparation'>
     & Partial<Pick<PermissionManager, 'prepareAutonomousOwner' | 'projectAutonomousChoices' | 'releaseAutonomousChoices'>>;
@@ -97,7 +99,7 @@ export type ToolExecutionDeps = {
   sessionId: string;
   emitterContext: EmitterContextFactory;
   /**
-   * Stage B: called once per executed tool with (toolName, resolved args, success) so a
+   * Called once per executed tool with (toolName, resolved args, success) so a
    * code-index reindex scheduler can debounce an incremental reindex of touched files. Invoked
    * for BOTH success and failure (the scheduler no-ops on failure); never awaited, it must not
    * block the tool-result path.
@@ -155,6 +157,8 @@ export async function executeToolCalls(
     let admission: AutonomousPermissionAdmission | undefined;
     let inputProjection: ProjectedToolCall | undefined;
     let choiceProjection: AutonomousChoiceProjection | undefined;
+    let settledResult: ToolResult | undefined;
+    const appendResult = (result: ToolResult) => { settledResult = { ...result }; results.push(result); };
     // Production managers/registries use the migrated path. The boolean seam is
     // retained only for pre-existing duck-typed test/embedding implementations.
     const autonomous = typeof deps.permissionManager.admitAutonomous === 'function'
@@ -205,7 +209,7 @@ export async function executeToolCalls(
             callId: call.id, turnId, tool: call.name, error: error.message,
             durationMs: 0, result: toToolResultSummary(result),
           });
-          results.push(result);
+          appendResult(result);
           continue;
         }
         call = { id: prepared.callId, name: prepared.name, arguments: prepared.args };
@@ -271,7 +275,7 @@ export async function executeToolCalls(
           denial: buildToolDenial(denialSource),
           ...(checkResult.autonomousDecision ? { autonomousDecision: checkResult.autonomousDecision } : {}),
         };
-        results.push(deniedResult);
+        appendResult(deniedResult);
         if (deps.runtimeBus) {
           emitToolFailed(deps.runtimeBus, deps.emitterContext(turnId), {
             callId: call.id,
@@ -325,7 +329,7 @@ export async function executeToolCalls(
                 result: toToolResultSummary(deniedResult),
               });
             }
-            results.push(deniedResult);
+            appendResult(deniedResult);
             continue;
           }
         } catch (hookErr) {
@@ -519,9 +523,9 @@ export async function executeToolCalls(
       }
 
       assertTurnActive();
-      results.push(result);
+      appendResult(result);
     } catch (error) {
-      if (earlyCallSignal?.aborted && !turnSignal?.aborted) results.push(toCancelledResult(call.id, admission?.result.autonomousDecision
+      if (earlyCallSignal?.aborted && !turnSignal?.aborted) appendResult(toCancelledResult(call.id, admission?.result.autonomousDecision
         ? { callId: call.id, success: false, autonomousDecision: admission.result.autonomousDecision } : null));
       else throw error;
     } finally {
@@ -533,6 +537,10 @@ export async function executeToolCalls(
         ...(inputToRelease ? [Promise.resolve().then(() => deps.toolRegistry.releaseProjected(inputToRelease))] : []),
       ]);
       if (cleanup.some(result => result.status === 'rejected')) throw new Error('Tool input projection cleanup failed');
+      // Retention observes the same publication fences as the ordinary result.
+      // Never leak a current call's output through recovery after revocation.
+      assertTurnActive();
+      if (settledResult) deps.onToolSettled?.(settledResult);
     }
   }
 

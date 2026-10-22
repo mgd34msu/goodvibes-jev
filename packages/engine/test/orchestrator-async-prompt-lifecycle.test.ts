@@ -5,6 +5,9 @@ import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { waitFor } from './_helpers/test-timeout.js';
 import type { ChatResponse } from '../sdk/src/platform/providers/interface.js';
 import { afterEach, describe, expect, test } from 'bun:test';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { Orchestrator, type OrchestratorOptions } from '../sdk/src/platform/core/orchestrator.js';
 import { ConversationManager } from '../sdk/src/platform/core/conversation.js';
 import { ToolRegistry } from '../sdk/src/platform/tools/registry.js';
@@ -54,10 +57,11 @@ function fixture(getSystemPrompt: NonNullable<OrchestratorOptions['getSystemProm
     get: (key: string) => key === 'behavior.autoCompactThreshold' ? 0 : false,
     getCategory: () => ({}), getWorkingDirectory: () => process.cwd(),
   } as unknown as ConfigManager;
+  const toolRegistry = new ToolRegistry();
   const orchestrator = new Orchestrator({
     ...identity,
-    conversation, toolRegistry: new ToolRegistry(), getViewportHeight: () => 10, scrollToEnd: () => {},
-    permissionManager: { getMode: () => 'plan' } as unknown as PermissionManager,
+    conversation, toolRegistry, getViewportHeight: () => 10, scrollToEnd: () => {},
+    permissionManager: { getMode: () => 'plan', check: async () => true } as unknown as PermissionManager,
     getSystemPrompt: (signal) => { signals.push(signal); return getSystemPrompt(signal); },
     services: {
       agentManager: { list: () => [], spawn: () => { throw new Error('unexpected agent spawn'); } },
@@ -66,7 +70,7 @@ function fixture(getSystemPrompt: NonNullable<OrchestratorOptions['getSystemProm
   });
   orchestrator.setCoreServices({ configManager, providerRegistry });
   orchestrators.push(orchestrator);
-  return { orchestrator, conversation, requests, signals };
+  return { orchestrator, conversation, requests, signals, toolRegistry };
 }
 
 describe('Orchestrator async prompt lifecycle wiring', () => {
@@ -141,6 +145,42 @@ describe('Orchestrator async prompt lifecycle wiring', () => {
       expect.objectContaining({ callId: 'interrupted-read', content: expect.stringContaining('[RECONCILED]') }),
     ]);
     expect(f.requests).toHaveLength(0);
+  });
+
+  test('cancelling a later call preserves an earlier actual effect and receipt through save and resume', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'settled-tool-receipt-'));
+    const entered = deferred<void>();
+    const calls = [
+      { id: 'completed-effect', name: 'record-evidence', arguments: {} },
+      { id: 'interrupted-work', name: 'pending-work', arguments: {} },
+      { id: 'never-started', name: 'unexpected-work', arguments: {} },
+    ];
+    const f = fixture(async () => '', [{ content: '', toolCalls: calls, usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'tool_call' }]);
+    let writes = 0, unexpected = 0;
+    f.toolRegistry.register({ definition: { name: 'record-evidence', description: 'Record the completed observation.', parameters: { type: 'object' } },
+      execute: async () => { writes++; writeFileSync(join(root, 'evidence'), 'actual completed work'); return { success: true, output: 'Actual receipt: evidence recorded once.' }; } });
+    f.toolRegistry.register({ definition: { name: 'pending-work', description: 'Wait for cancellation.', parameters: { type: 'object' } },
+      execute: async (_args, options) => new Promise(resolve => {
+        options!.signal!.addEventListener('abort', () => resolve({ success: false, output: 'Pending work stopped after its signal was aborted.' }), { once: true });
+        entered.resolve();
+      }) });
+    f.toolRegistry.register({ definition: { name: 'unexpected-work', description: 'Must never start after cancellation.', parameters: { type: 'object' } },
+      execute: async () => { unexpected++; return { success: true }; } });
+    try {
+      const turn = f.orchestrator.handleUserInput('Record the evidence once, then inspect the pending work.');
+      await entered.promise;
+      expect(readFileSync(join(root, 'evidence'), 'utf8')).toBe('actual completed work');
+      f.orchestrator.abort(); await turn;
+      const resumed = new ConversationManager(); resumed.fromJSON(JSON.parse(JSON.stringify(f.conversation.toJSON())));
+      const saved = resumed.getMessageSnapshot();
+      const completed = saved.filter(message => message.role === 'tool' && message.callId === 'completed-effect');
+      expect(completed).toHaveLength(1);
+      if (completed[0]?.role !== 'tool') throw new Error('The completed tool receipt was not retained.');
+      expect(completed[0]!.content).toBe('Actual receipt: evidence recorded once.');
+      expect(completed[0]!.outcome).toBe('ok');
+      expect(saved.filter(message => message.role === 'assistant').flatMap(message => message.toolCalls ?? []).map(call => call.id)).toEqual(calls.map(call => call.id));
+      expect(writes).toBe(1); expect(unexpected).toBe(0);
+    } finally { f.orchestrator.abort(); rmSync(root, { recursive: true, force: true }); }
   });
 
   test('dispose cancels pending reads and does not start queued or later user turns', async () => {
