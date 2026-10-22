@@ -12,9 +12,16 @@ import {
   revokeContractInputAuthority,
 } from './input-authority.js';
 import { assertContractExecutionView, assertContractInputObjects, assertContractInputOwner } from './input-snapshot.js';
+import { publicationInputOwner, consumePublicationInput, type PublicationInputAdmission } from './publication-input.js';
 
 const applyTails = new Map<string, Promise<void>>();
 const MAX_METADATA_BYTES = 256 * 1024 * 1024;
+
+export class ContractPublicationConflictError extends Error {
+  constructor(readonly paths: readonly string[], options?: ErrorOptions) {
+    super('captured result patch does not fit the current owner; preserve both versions for focused integration', options);
+  }
+}
 
 function git(root: string, args: readonly string[], output?: number): Buffer {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GIT_')));
@@ -37,6 +44,7 @@ async function applyDelta(
   contract: Contract,
   filter: ReadAccessFilter | undefined,
   signal: AbortSignal,
+  publication?: PublicationInputAdmission,
 ): Promise<number> {
   const snapshot = contract.inputSnapshot;
   const view = contract.worktreePath;
@@ -44,6 +52,7 @@ async function applyDelta(
   if (!snapshot || !view || !branch) throw new Error('captured result has no admitted input/workspace');
   if (!filter) throw new Error('captured result requires original-owner read authorization');
   const root = snapshot.sourceRoot;
+  const owner = publication ? publicationInputOwner(publication, contract) : snapshot;
   const authority = await createContractInputAuthority(contract, view, { signal, mutable: true, branch });
   let patchDirectory: string | undefined;
   try {
@@ -107,17 +116,19 @@ async function applyDelta(
       resultHead,
       '--',
     ], patchFd); } finally { closeSync(patchFd); }
-    await assertContractInputOwner(snapshot, signal);
+    await assertContractInputOwner(owner, signal);
     if (paths.length === 0) return 0;
     // Default git apply is all-or-nothing on a failed hunk; never use --reject,
     // --3way, --index, --cached or a reset against the owner's working tree.
-    git(root, ['apply', '--check', '--binary', '--whitespace=nowarn', patch]);
+    try { git(root, ['apply', '--check', '--binary', '--whitespace=nowarn', patch]); }
+    catch (error) { throw new ContractPublicationConflictError(paths, { cause: error }); }
     for (const path of paths) await authorizeContractInputPath(authority, path, filter, signal);
     await assertContractInputAuthority(authority, view, signal);
-    await assertContractInputOwner(snapshot, signal);
+    await assertContractInputOwner(owner, signal);
     if (git(view, ['rev-parse', 'HEAD']).toString('utf8').trim() !== resultHead)
       throw new Error('captured result changed during apply admission');
     signal.throwIfAborted();
+    if (publication) consumePublicationInput(publication, contract);
     // No await between the final admission and synchronous Git application.
     // External noncooperating filesystem writers remain outside this transaction.
     git(root, ['apply', '--binary', '--whitespace=nowarn', patch]);
@@ -133,12 +144,13 @@ export async function applyCapturedInputDelta(
   contract: Contract,
   filter: ReadAccessFilter | undefined,
   signal: AbortSignal,
+  publication?: PublicationInputAdmission,
 ): Promise<number> {
   const root = contract.projectRoot;
   const previous = applyTails.get(root) ?? Promise.resolve();
   const operation = previous.then(() => {
     signal.throwIfAborted();
-    return applyDelta(contract, filter, signal);
+    return applyDelta(contract, filter, signal, publication);
   });
   const tail = operation.then(
     () => undefined,

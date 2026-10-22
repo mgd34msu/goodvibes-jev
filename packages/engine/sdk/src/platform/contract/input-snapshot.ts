@@ -303,6 +303,12 @@ async function capture(root: string, options: CaptureContractInputOptions): Prom
   } finally { await rm(temporary, { recursive: true, force: true }); }
 }
 
+/** A working owner change can be assessed for publication without replacing
+ * the original captured input or treating a repository replacement as drift. */
+export class ContractInputOwnerChangedError extends Error {
+  constructor(readonly change: 'head' | 'index' | 'paths' | 'file', message: string) { super(message); }
+}
+
 /** Full recorded readset recheck. No writes and no best-effort empty fallback. */
 export async function assertContractInputOwner(snapshot: ContractInputSnapshot, signal?: AbortSignal): Promise<void> {
   const root = snapshot.sourceRoot;
@@ -310,14 +316,15 @@ export async function assertContractInputOwner(snapshot: ContractInputSnapshot, 
   await assertOwnerGitIdle(root, signal);
   if (await realpath(root) !== root || directoryIdentity(await lstat(root, { bigint: true })) !== snapshot.sourceIdentity) throw new Error('contract input source root was replaced');
   if (await repositoryIdentity(root) !== snapshot.gitIdentity) throw new Error('contract input Git directory was replaced');
-  if (gitText(root, ['rev-parse', 'HEAD']) !== snapshot.ownerHead || gitText(root, ['rev-parse', '--abbrev-ref', 'HEAD']) !== snapshot.ownerRef) throw new Error('contract input owner HEAD or branch changed');
-  if (indexFingerprint(root) !== snapshot.indexFingerprint) throw new Error('contract input owner index changed');
+  if (gitText(root, ['rev-parse', '--abbrev-ref', 'HEAD']) !== snapshot.ownerRef) throw new Error('contract input owner HEAD or branch changed');
+  if (gitText(root, ['rev-parse', 'HEAD']) !== snapshot.ownerHead) throw new ContractInputOwnerChangedError('head', 'contract input owner HEAD or branch changed');
+  if (indexFingerprint(root) !== snapshot.indexFingerprint) throw new ContractInputOwnerChangedError('index', 'contract input owner index changed');
   await assertNoSpecialFiles(root, snapshot.exclusions, signal);
-  if (JSON.stringify(paths(root, snapshot.exclusions)) !== JSON.stringify(snapshot.files.map((file) => file.path))) throw new Error('contract input owner path set changed');
+  if (JSON.stringify(paths(root, snapshot.exclusions)) !== JSON.stringify(snapshot.files.map((file) => file.path))) throw new ContractInputOwnerChangedError('paths', 'contract input owner path set changed');
   for (const file of snapshot.files) {
     signal?.throwIfAborted();
     const current = (await readEntry(root, file.path, { signal })).file;
-    if (current.kind !== file.kind || current.mode !== file.mode || current.digest !== file.digest || current.identity !== file.identity) throw new Error(`contract input owner changed: ${file.path}`);
+    if (current.kind !== file.kind || current.mode !== file.mode || current.digest !== file.digest || current.identity !== file.identity) throw new ContractInputOwnerChangedError('file', `contract input owner changed: ${file.path}`);
   }
   signal?.throwIfAborted();
   await assertOwnerGitIdle(root, signal);

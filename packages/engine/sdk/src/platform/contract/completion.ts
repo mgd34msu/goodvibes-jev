@@ -28,14 +28,15 @@ import { assertOwnedContractSource, hasDerivedAcceptanceChecks } from './owned-s
  * - The answer goes to the owner record; the status line to the operator
  *   audience only.
  *
- * Verdicts, gates and the commit are code; only the two judges are Jev.
+ * Original-scope, content and publication compatibility have separate Jev checks.
  */
-import { assertContractInputOwner, assertContractInputObjects, assertContractExecutionView } from './input-snapshot.js';
-import { applyCapturedInputDelta } from './input-apply.js';
+import { assertContractInputOwner, assertContractInputObjects, assertContractExecutionView, ContractInputOwnerChangedError } from './input-snapshot.js';
+import { applyCapturedInputDelta, ContractPublicationConflictError } from './input-apply.js';
+import { admitPublicationInput, type PublicationInputAdmission } from './publication-input.js';
 import { contractSourceScope } from './work-receipts.js';
 
 import { spawnSync } from 'node:child_process';
-import { judgmentPort } from '@goodvibes-jev/engine/errors';
+import { judgmentPort, captureJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { hashState, JudgmentContextLimitError, mapLimit, type JsonValue, type YesNoReading } from '@goodvibes-jev/judgment';
 import { AgentWorktree, IsolatedWorktree } from '../agents/worktree.js';
 import { excludeUntouchedLaunchResidue } from '../orchestration/dirty-guard.js';
@@ -65,6 +66,7 @@ import { finalAnswerEvidence, finalContentEvidence } from './final-answer-eviden
 import { answerClaimScopes, completeAnswerClaimCoverage, scopedClaimQuestion, type AnswerClaimReview, type AnswerClaimScope } from './final-answer-claims.js';
 import { judgmentExecutionEvidence } from './judgment-execution-evidence.js';
 import { GOAL_OBLIGATIONS } from './batteries/goal-obligations.js';
+import { publicationOwner } from './batteries/publication-owner.js';
 import { goalObligationSource, goalObligationQuestion, type GoalObligationProof } from './goal-obligation-proof.js';
 
 /** Decision sites, as the decision log records them. */
@@ -148,6 +150,8 @@ class PublicationPending extends Error {
 export function createCompletion(context: StepContext, correction: Pick<Correction, 'groupFailed' | 'deliverableFailed'>): Completion {
   const config = () => readContractConfig(context.configManager);
   const pendingVerifications = new WeakMap<ContractRun, Map<string, Promise<void>>>();
+  const publicationRepairs = new WeakMap<ContractRun, { evidence: JsonValue; decisionIds: readonly string[] }>();
+  const publicationAssessments = new WeakMap<ContractRun, { evidence: JsonValue; decisionIds: readonly string[] }>();
 
   /** Retain work on an unavailable check or unpublished result. Retries validate
    * the current evidence; the owned wait ends immediately when stopped. */
@@ -756,8 +760,19 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     run.emit({ type: 'CONTRACT_COMMITTED', contractId: contract.id, status: commit.status, ...(commit.hash === undefined ? {} : { hash: commit.hash }), note: commit.note });
     if (commit.status === 'failed' && contract.isolation === 'worktree') {
       context.ownerProgress(run);
+      const repair = publicationRepairs.get(run);
+      if (repair) {
+        publicationRepairs.delete(run);
+        run.moveContract('judging');
+        await correction.deliverableFailed(run, { unmet: [], unshown: [], gates: [], decisionIds: repair.decisionIds,
+          output: JSON.stringify({ preservedAcceptedAnswer: answer, publication: commit, evidence: repair.evidence,
+            remaining: 'Resolve only the observed owner/result integration or missing compatibility evidence. Preserve the original captured source, every accepted inspection/result and the newer owner edits. Do not restart the original task or repeat unchanged acceptance/publication attempts. The original result delta must apply cleanly to the current owner and the original requested behavior must still hold.' }) });
+        return;
+      }
       throw new PublicationPending();
     }
+    publicationAssessments.delete(run);
+    publicationRepairs.delete(run);
     run.control.finishPassed({ answer: answer.length > 0 ? answer : CONTRACT_PASSED_WITHOUT_OUTPUT, statusLine: describeContractOutcome(contract) });
   }
 
@@ -772,19 +787,57 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     const { contract } = run;
     const root = contract.projectRoot;
     const branch = contract.branch!;
+    let publication: PublicationInputAdmission | undefined;
     if (contract.inputSnapshot === undefined) return { status: 'failed', note: `not applied: legacy contract has no recorded input receipt; the work stays on branch ${branch}` };
     try {
       assertContractInputObjects(contract.inputSnapshot, contract.projectRoot);
       assertContractExecutionView(contract.inputSnapshot, contract.worktreePath!, branch);
       await assertContractInputOwner(contract.inputSnapshot, run.abort.signal);
     }
-    catch (error) { return { status: 'failed', note: `not applied: ${summarizeError(error)}; the work stays on branch ${branch}` }; }
-    if (contract.inputSnapshot.dirty) {
+    catch (error) {
+      if (!(error instanceof ContractInputOwnerChangedError))
+        return { status: 'failed', note: `not applied: ${summarizeError(error)}; the work stays on branch ${branch}` };
       try {
-        const files = await applyCapturedInputDelta(contract, context.plannerDeps(run).readAccessFilter, run.abort.signal);
+        const admitted = await admitPublicationInput(contract, context.plannerDeps(run).readAccessFilter, run.abort.signal, async evidence => {
+          const site = 'contract.publication-owner', usage = emptyJudgmentUsage();
+          const owner = captureJudgmentPort(site, { signal: run.abort.signal, assertCurrent: () => assertOwnedContractSource(contract) });
+          try {
+            let stateHash: string | undefined;
+            const observed: typeof owner.port = { ...owner.port, ask(request) {
+              stateHash = hashState(request.state);
+              return owner.port.ask(request);
+            } };
+            const checked = await publicationOwner.run(meteredPort(nativeContractPort(contract, context.native, observed, run.abort.signal), usage),
+              evidence as never, { site, signal: owner.signal, beforeAttempt: owner.assertCurrent });
+            owner.assertCurrent();
+            if (!stateHash) throw new Error('Publication assessment has no native state binding');
+            const accepted = Object.values(checked.readings).every(reading => reading.verdict === 'no' && reading.outcome === 'act');
+            const decisionIds = checked.result.decisionId ? [checked.result.decisionId] : [];
+            run.decide('checked', `${contract.id}.publication-owner`, JSON.stringify({ policy: { name: publicationOwner.name, version: publicationOwner.version },
+              stateHash, readings: checked.readings, passed: accepted }), decisionIds);
+            checked.recordAction(accepted ? 'Later owner changes preserve the original requested result; actual permissions, exact current owner/result identities and clean patch application still gate publication.'
+              : 'Retain accepted work and newer owner edits; resolve the specific integration/evidence gap instead of repeating the unchanged publication.');
+            if (!accepted) { publicationRepairs.set(run, { evidence, decisionIds }); return null; }
+            publicationAssessments.set(run, { evidence, decisionIds });
+            return owner.assertCurrent;
+          } finally { addJudgmentUsage(contract.judgmentUsage, usage); }
+        });
+        if (!admitted) return { status: 'failed', note: `not applied: later owner changes need focused integration verification; the work stays on branch ${branch}` };
+        publication = admitted;
+      } catch (recoveryError) {
+        return { status: 'failed', note: `not applied: ${summarizeError(recoveryError)}; the work stays on branch ${branch}` };
+      }
+    }
+    if (contract.inputSnapshot.dirty || publication) {
+      try {
+        const files = await applyCapturedInputDelta(contract, context.plannerDeps(run).readAccessFilter, run.abort.signal, publication);
         if (files === 0) return { status: 'skipped', note: 'commit skipped: the contract changed no files; owner changes preserved' };
         return { status: 'applied', note: `applied ${files} file${files === 1 ? '' : 's'} as uncommitted changes; pre-existing owner edits and staging preserved${commitOn ? '; automatic commit deferred for the dirty input baseline' : ''}` };
       } catch (error) {
+        const assessment = publicationAssessments.get(run);
+        if (error instanceof ContractPublicationConflictError && assessment)
+          publicationRepairs.set(run, { evidence: { originalAssessment: assessment.evidence, conflictPaths: [...error.paths],
+            observation: 'Actual git apply --check rejected this original result delta against the current owner. No owner changes were applied. Preserve both versions and repair only this integration.' }, decisionIds: assessment.decisionIds });
         return { status: 'failed', note: `not applied: ${summarizeError(error)}; the work stays on branch ${branch}` };
       }
     }

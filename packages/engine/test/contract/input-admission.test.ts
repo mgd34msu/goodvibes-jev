@@ -12,7 +12,7 @@ let harness: Harness | undefined;
 afterEach(() => { harness?.dispose(); harness = undefined; for (const root of extraRoots.splice(0)) rmSync(root, { recursive: true, force: true }); });
 
 for (const stale of [false, true]) {
-  test(`${stale ? 'stale clean owner input is retained' : 'dirty owner input applies only result delta'} without changing index/history`, async () => {
+  test(`${stale ? 'later independent owner edits are revalidated and preserved' : 'dirty owner input applies only result delta'} without changing index/history`, async () => {
     let ownerAtApply = '';
     let indexAtApply: Buffer<ArrayBuffer>;
     let headAtApply = '';
@@ -30,17 +30,17 @@ for (const stale of [false, true]) {
     await waitFor(() => terminal(h, contract.id), 'retained result', 15_000);
     const done = h.store.get(contract.id)!;
     expect(done.status).toBe('passed');
-    expect(done.commit?.status).toBe(stale ? 'failed' : 'applied');
-    if (stale) expect(done.commit?.note).toBe(`not applied: contract input owner changed: README.md; the work stays on branch ${done.branch}`);
-    else expect(done.commit?.note).toContain('uncommitted changes');
+    expect(done.commit?.status).toBe('applied');
+    expect(done.commit?.note).toContain('uncommitted changes');
+    if (stale) expect(done.decisions.some(decision => decision.targetId === `${done.id}.publication-owner`)).toBe(true);
     expect(done.commit?.hash).toBeUndefined();
-    expect(done.statusLine).toContain(stale ? '; not applied:' : '; applied');
+    expect(done.statusLine).toContain('; applied');
     expect(h.manager.getStatus(done.ownerAgentId)?.progress).toBe(done.statusLine);
-    expect(h.events.find((event) => event.type === 'CONTRACT_COMMITTED')).toMatchObject({ status: stale ? 'failed' : 'applied', note: done.commit!.note });
+    expect(h.events.find((event) => event.type === 'CONTRACT_COMMITTED')).toMatchObject({ status: 'applied', note: done.commit!.note });
     expect(readFileSync(join(h.root, 'README.md'), 'utf8')).toBe(ownerAtApply);
     expect(readFileSync(join(h.root, '.git/index'))).toEqual(indexAtApply!); expect(git(h.root, 'rev-parse', 'HEAD')).toBe(headAtApply);
-    expect(existsSync(join(h.root, 'src/csv.ts'))).toBe(!stale);
-    expect(readFileSync(join(stale ? done.worktreePath! : h.root, 'src/csv.ts'), 'utf8')).toBe('export const parse = 10;\n');
+    expect(existsSync(join(h.root, 'src/csv.ts'))).toBe(true);
+    expect(readFileSync(join(h.root, 'src/csv.ts'), 'utf8')).toBe('export const parse = 10;\n');
     expect(existsSync(contractInputPath(done.inputSnapshot!))).toBe(true);
   }, 20_000);
 }
@@ -96,7 +96,8 @@ test('restart during planning reuses the recorded generation despite later owner
   await waitFor(() => terminal(second, contract.id), 'resumed result', 15_000);
   const done = second.store.get(contract.id)!;
   expect(seen).toEqual(['# demo\n']); expect(done.inputSnapshot).toEqual(receipt);
-  expect(done.commit?.note).toStartWith('not applied:'); expect(readFileSync(join(root, 'README.md'), 'utf8')).toBe('owner changed during restart\n');
+  expect(done.status).toBe('passed'); expect(done.commit?.status).toBe('applied');
+  expect(readFileSync(join(root, 'README.md'), 'utf8')).toBe('owner changed during restart\n');
 }, 20_000);
 
 test('legacy worktree records do not invent a receipt or silently capture current source', async () => {
@@ -139,13 +140,19 @@ test('a real pending empty owner merge after capture is held without aborting th
   } });
   const head = git(h.root, 'rev-parse', 'HEAD');
   const { contract } = startContract(h);
-  await waitFor(() => terminal(h, contract.id), 'held apply', 15_000);
+  await waitFor(() => h.store.get(contract.id)?.commit?.status === 'failed', 'held apply', 15_000);
   const done = h.store.get(contract.id)!;
   expect(readFileSync(join(h.root, '.git/MERGE_HEAD'), 'utf8').trim()).toBe(mergeHead);
   expect(done.commit?.status).toBe('failed'); expect(done.commit?.note).toBe(`not applied: active owner Git operation MERGE_HEAD; inspect owner Git state before retrying; the work stays on branch ${done.branch}`);
   expect(done.commit?.hash).toBeUndefined();
   expect(readFileSync(join(h.root, '.git/index'))).toEqual(index!); expect(git(h.root, 'rev-parse', 'HEAD')).toBe(head);
   expect(existsSync(done.worktreePath!)).toBe(true); expect(existsSync(join(h.root, 'src/csv.ts'))).toBe(false);
+  expect(done.status).not.toBe('passed');
+  // Only the test's owner resolves its own operation; the runner must not.
+  git(h.root, 'merge', '--abort');
+  await waitFor(() => terminal(h, contract.id), 'publication after the owner finished its merge', 5_000);
+  expect(h.store.get(contract.id)?.status).toBe('passed');
+  expect(readFileSync(join(h.root, 'src/csv.ts'), 'utf8')).toBe('export const parse = 10;\n');
 }, 20_000);
 
 
@@ -158,9 +165,9 @@ test('a failed merge after the final check retains concurrent owner writes and i
   chmodSync(hook, 0o755);
   const head = git(h.root, 'rev-parse', 'HEAD');
   const { contract } = startContract(h);
-  await waitFor(() => terminal(h, contract.id), 'failed merge without owner rollback', 15_000);
+  await waitFor(() => h.store.get(contract.id)?.commit?.status === 'failed', 'failed merge without owner rollback', 15_000);
   const done = h.store.get(contract.id)!;
-  expect(done.status).toBe('passed'); expect(done.commit?.status).toBe('failed');
+  expect(done.status).not.toBe('passed'); expect(done.commit?.status).toBe('failed');
   expect(existsSync(join(h.root, '.git/MERGE_HEAD'))).toBe(true);
   expect(readFileSync(join(h.root, 'README.md'), 'utf8')).toBe('owner write during final merge\n');
   expect(git(h.root, 'rev-parse', 'HEAD')).toBe(head);
@@ -177,7 +184,7 @@ test('an owner index lock created after capture holds apply without deleting the
   } });
   const head = git(h.root, 'rev-parse', 'HEAD');
   const { contract } = startContract(h);
-  await waitFor(() => terminal(h, contract.id), 'held apply', 15_000);
+  await waitFor(() => h.store.get(contract.id)?.commit?.status === 'failed', 'held apply', 15_000);
   const done = h.store.get(contract.id)!;
   expect(done.commit?.status).toBe('failed');
   expect(done.commit?.note).toBe(`not applied: active owner Git operation index.lock; inspect owner Git state before retrying; the work stays on branch ${done.branch}`);
@@ -186,4 +193,9 @@ test('an owner index lock created after capture holds apply without deleting the
   expect(readFileSync(join(h.root, '.git/index'))).toEqual(index!);
   expect(git(h.root, 'rev-parse', 'HEAD')).toBe(head);
   expect(existsSync(join(h.root, 'src/csv.ts'))).toBe(false); expect(existsSync(done.worktreePath!)).toBe(true);
+  expect(done.status).not.toBe('passed');
+  rmSync(join(h.root, '.git/index.lock'));
+  await waitFor(() => terminal(h, contract.id), 'publication after the owner released its index lock', 5_000);
+  expect(h.store.get(contract.id)?.status).toBe('passed');
+  expect(readFileSync(join(h.root, 'src/csv.ts'), 'utf8')).toBe('export const parse = 10;\n');
 }, 20_000);

@@ -19,6 +19,7 @@ import { unitQuality } from './batteries/unit-quality.js';
 import { sourceCitationPurpose } from './batteries/source-citation-purpose.js';
 import { unmetSeverity } from './batteries/unmet-severity.js';
 import { nativeIntakeCoverage } from '../workflow/work-ledger/native-intake-decisions.js';
+import { publicationOwner } from './batteries/publication-owner.js';
 
 /** Every named decision the contract runner makes, for calibration (`bun run calibrate --registry`). */
 export const registry = new BatteryRegistry();
@@ -53,6 +54,7 @@ registry.register(FINAL_ANSWER_REVIEWS.high);
 registry.register(FINAL_ANSWER_REVIEWS.critical);
 registry.register(GOAL_OBLIGATIONS.high);
 registry.register(GOAL_OBLIGATIONS.critical);
+registry.register(publicationOwner);
 registry.register(ownerReply);
 registry.register(ownerPick);
 

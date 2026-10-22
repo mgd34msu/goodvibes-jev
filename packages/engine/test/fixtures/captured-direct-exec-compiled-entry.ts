@@ -115,6 +115,9 @@ test('direct compiled-parent build uses captured config and authorized bytes', a
   let generated: string | undefined;
   let generatedSource: string | undefined;
   let ownerGeneratedDuringExec: boolean | undefined;
+  let originalInputReceipt: string | undefined;
+  let ownerIndex: Buffer | undefined;
+  let ownerHead: string | undefined;
   const steps = [
     { name: 'exec', arguments: { commands: [{
       cmd: 'bun build ./seed.ts --target bun --outfile ./src/csv.ts && bun test ./direct-exec.test.ts && echo DIRECT_EXEC_BUILD_TEST_OK',
@@ -137,6 +140,9 @@ test('direct compiled-parent build uses captured config and authorized bytes', a
           throw new Error('actual member must receive the registered exec and read tools');
         memberRoot = runtime.agentManager.list().find((record) => record.contractRole === 'unit')?.workingDirectory;
         if (!memberRoot || memberRoot === root) throw new Error('actual member is missing its isolated working directory');
+        originalInputReceipt = JSON.stringify(runner.get(id!)!.inputSnapshot);
+        ownerIndex = readFileSync(join(root, '.git/index'));
+        ownerHead = spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim();
         writeFileSync(join(root, 'allowed.ts'), 'export const value = "LATE_OWNER_DIRECT_EXEC_VALUE";\n');
         onMemberReady?.();
       }
@@ -196,7 +202,11 @@ test('direct compiled-parent build uses captured config and authorized bytes', a
     try {
       await waitFor(() => ['passed', 'failed', 'cancelled', 'awaiting-owner'].includes(runner.get(id!)!.status), 'actual direct exec contract settlement', 60_000);
     } catch (error) {
-      throw new Error(JSON.stringify({ error: String(error), status: runner.get(id)?.status, memberCalls, executed,
+      const current = runner.get(id);
+      throw new Error(JSON.stringify({ error: String(error), status: current?.status, publication: current?.commit,
+        ownerGeneratedExists: existsSync(join(root, 'generated.json')), ownerParserExists: existsSync(join(root, 'src/csv.ts')),
+        worktreeExists: current?.worktreePath ? existsSync(current.worktreePath) : null,
+        decisions: current?.decisions.slice(-6), memberCalls, executed,
         agents: runtime.agentManager.list().map((agent) => ({ role: agent.contractRole, status: agent.status, error: agent.error })),
         toolMessages: requests.at(-1)?.messages.filter((message) => message.role === 'tool') }));
     }
@@ -206,6 +216,10 @@ test('direct compiled-parent build uses captured config and authorized bytes', a
       status: result.status, error: result.error, storedDenial, originalReadAccess, approvalCalls,
       plannerCalls, memberCalls, ownerRoot: root, memberRoot, executed, requests,
       generated, generatedSource, ownerGeneratedDuringExec, ownerValue: readFileSync(join(root, 'allowed.ts'), 'utf8'),
+      originalInputUnchanged: originalInputReceipt === JSON.stringify(result.inputSnapshot),
+      ownerIndexUnchanged: ownerIndex?.equals(readFileSync(join(root, '.git/index'))),
+      ownerHeadUnchanged: ownerHead === spawnSync('git', ['-C', root, 'rev-parse', 'HEAD'], { encoding: 'utf8' }).stdout.trim(),
+      publicationOwnerChecks: result.decisions.filter(decision => decision.targetId === `${id}.publication-owner`).map(decision => JSON.parse(decision.reason)),
     };
   } finally {
     if (id) runner.cancel(id, 'fixture cleanup');

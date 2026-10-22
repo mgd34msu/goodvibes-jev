@@ -7,8 +7,14 @@ import { summarizeError } from '../utils/error-display.js';
 /** Actual file identity observations shared by native checks and repair context. */
 export function currentFileObservations(cwd: string, paths: readonly string[], options: { readonly includeText?: boolean } = {}): JsonValue[] {
   return [...new Set(paths)].flatMap<JsonValue>(path => {
-    if (isAbsolute(path) || path.split('/').includes('..') || path.startsWith('.goodvibes/')) return [];
+    const parts = path.split('/');
+    if (isAbsolute(path) || parts.some(part => ['..', '.git', '.goodvibes'].includes(part))) return [];
     try {
+      if (!lstatSync(cwd).isDirectory()) return [];
+      // lstat on the leaf alone still follows symlinked parent directories.
+      // Current host observations must stay inside the checked physical tree.
+      for (let index = 1; index < parts.length; index++)
+        if (!lstatSync(join(cwd, ...parts.slice(0, index))).isDirectory()) return [];
       const absolute = join(cwd, path);
       if (!lstatSync(absolute).isFile()) return [];
       const bytes = readFileSync(absolute);

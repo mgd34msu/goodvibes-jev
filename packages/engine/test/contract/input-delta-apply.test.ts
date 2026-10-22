@@ -70,10 +70,11 @@ test('conflicting later owner edit retains both owner and contract result withou
   const index = readFileSync(join(h.root, '.git/index'));
   const head = git(h.root, 'rev-parse', 'HEAD');
   const { contract } = startContract(h);
-  await waitFor(() => terminal(h, contract.id), 'conflicting dirty input hold', 15_000);
+  await waitFor(() => h.store.get(contract.id)?.commit?.status === 'failed', 'conflicting dirty input hold', 15_000);
   const done = h.store.get(contract.id)!;
   expect(done.commit?.status).toBe('failed');
-  expect(done.commit?.note).toBe(`not applied: contract input owner changed: src/csv.ts; the work stays on branch ${done.branch}`);
+  expect(done.commit?.note).toBe(`not applied: captured result patch does not fit the current owner; preserve both versions for focused integration; the work stays on branch ${done.branch}`);
+  expect(done.status).not.toBe('passed');
   expect(done.commit?.hash).toBeUndefined();
   expect(readFileSync(join(h.root, 'src/csv.ts'), 'utf8')).toBe('owner later replacement\n');
   expect(readFileSync(join(done.worktreePath!, 'src/csv.ts'), 'utf8')).toBe('contract replacement\n');
@@ -110,8 +111,8 @@ for (const boundary of ['restricted', 'cancelled'] as const) {
     const index = readFileSync(join(h.root, '.git/index'));
     const head = git(h.root, 'rev-parse', 'HEAD');
     contractId = startContract(h).contract.id;
-    await waitFor(() => terminal(h, contractId), 'authority hold', 15_000);
-    await h.runner.join(contractId);
+    await waitFor(() => boundary === 'cancelled' ? terminal(h, contractId) : h.store.get(contractId)?.commit?.status === 'failed', 'authority hold', 15_000);
+    if (boundary === 'cancelled') await h.runner.join(contractId);
     expect(originalTargetChecks).toBeGreaterThan(0);
     expect(existsSync(join(h.root, 'src/csv.ts'))).toBe(false);
     expect(readFileSync(join(h.root, 'README.md'), 'utf8')).toBe('owner dirty context\n');
@@ -120,6 +121,7 @@ for (const boundary of ['restricted', 'cancelled'] as const) {
     const done = h.store.get(contractId)!;
     if (boundary === 'restricted') {
       expect(done.commit?.status).toBe('failed');
+      expect(done.status).not.toBe('passed');
       expect(done.commit?.note).toBe(`not applied: captured input path is access-restricted; the work stays on branch ${done.branch}`);
       expect(done.commit?.hash).toBeUndefined();
       expect(readFileSync(join(done.worktreePath!, 'src/csv.ts'), 'utf8')).toBe('contract output\n');

@@ -59,6 +59,12 @@ test.skipIf(!availability.available)('restored compiled contract executes Bun bu
     expect(proof.memberRoot).not.toBe(proof.ownerRoot);
     expect(proof.ownerGeneratedDuringExec).toBe(false);
     expect(proof.ownerValue).toContain('LATE_OWNER_DIRECT_EXEC_VALUE');
+    expect(proof.originalInputUnchanged).toBe(true);
+    expect(proof.ownerIndexUnchanged).toBe(true);
+    expect(proof.ownerHeadUnchanged).toBe(true);
+    expect(proof.publicationOwnerChecks).toHaveLength(1);
+    expect(proof.publicationOwnerChecks[0]).toMatchObject({ passed: true,
+      readings: { incompatible: { verdict: 'no', outcome: 'act' }, missing_evidence: { verdict: 'no', outcome: 'act' } } });
     expect(JSON.parse(proof.generated!)).toEqual({
       value: 'DIRTY_CAPTURED_DIRECT_EXEC_VALUE', configuredType: 'PROJECT_LOADER_OK', configValue: 'PROJECT_CONFIG_OK',
       startupOrder: ['first', 'second'], denied: ['DENIED_READ', 'DENIED_READ', 'DENIED_IMPORT'],
