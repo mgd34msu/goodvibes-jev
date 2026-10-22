@@ -117,15 +117,11 @@ function persisted(): string {
   activity.flushSync();
   const path = join(root, 'activity.md');
   const written = existsSync(path) ? readFileSync(path, 'utf8') : '';
-  // A synchronous logger cannot publish field values without a settled role
-  // reading. This fixture has no port: code-owned event names still land,
-  // while every structured value must stay withheld.
+  // Declared public metadata remains useful without a semantic field-name
+  // reading. Each case checks its private values against this complete log.
   const blocks = [...written.matchAll(/```json\n([\s\S]*?)\n```/g)];
   expect(blocks.length).toBeGreaterThanOrEqual(projected.length);
-  for (const match of blocks) {
-    const record = JSON.parse(match[1]!) as Record<string, unknown>;
-    for (const value of Object.values(record)) expect(value).toBe('[REDACTED]');
-  }
+  for (const match of blocks) expect(JSON.parse(match[1]!)).toBeObject();
   return written;
 }
 
@@ -136,8 +132,8 @@ function diagnostics(): Array<Record<string, unknown>> {
 function excludesPrivate(value: unknown, ...privateValues: string[]): void {
   const serialized = typeof value === 'string' ? value : JSON.stringify(value);
   for (const privateValue of privateValues) expect(serialized).not.toContain(privateValue);
-  // Preserve the caller-owned structural boundary even though the canonical
-  // logger independently withholds its values when semantic proof is absent.
+  // Both the caller's projection and the canonical persisted log must keep
+  // private transport material out, regardless of semantic availability.
   for (const privateValue of privateValues) expect(JSON.stringify(projected)).not.toContain(privateValue);
 }
 
