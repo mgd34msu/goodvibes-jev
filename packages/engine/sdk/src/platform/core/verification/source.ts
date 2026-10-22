@@ -76,8 +76,16 @@ export function verificationSources(state: Record<string, unknown>): Verificatio
     add('observation', `delegated assignment/result ${agent.id}`, { ...agent, evidence: undefined });
     transcript(agent.evidence, `delegated ${agent.id}.evidence`, new Map(), `delegated:${agent.id}`);
   }
-  for (const work of (state.completedWork ?? []) as Record<string, unknown>[])
+  for (const work of (state.completedWork ?? []) as Record<string, unknown>[]) {
     add('observation', `host completed contract ${work.id ?? 'unavailable'}; scoped checks and publication, not final response approval`, work);
+    if (work.kind === 'host-completed-contract') {
+      // Keep the full record above. Also expose its exact acceptance fields as
+      // an independently retrievable primary, so a long answer/unit history
+      // cannot bury the scope, actual final check or publication outcome.
+      const { units: _units, answer: _answer, ...acceptance } = work;
+      add('observation', `host completed contract ${work.id}; acceptance and publication`, acceptance);
+    }
+  }
   if (typeof state.response === 'string' && JSON.stringify(state.response).length > 12_000) add('answer', 'exact proposed answer, not an execution observation', state.response);
   return result;
 }

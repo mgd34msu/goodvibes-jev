@@ -25,6 +25,20 @@ const access = (port: VerificationAccess['port'], identity = {}, signal?: AbortS
 const state = (content = 'Observed source.') => ({ request: 'Review all source and write review.md.', response: 'The report is saved in review.md.', transcript: [{ role: 'tool', callId: 'read-1', content }], tools: ['read', 'write'], requirements: null, delegated: [], initial: null });
 const directory = () => { const value = mkdtempSync(join(tmpdir(), 'completion-verification-')); directories.push(value); return value; };
 
+test('large-history retrieval starts with actual scoped host acceptance and still audits old counterevidence', async () => {
+  const input = { ...state('Retained earlier source. '.repeat(15_000)), completedWork: [{ kind: 'host-completed-contract', id: 'finished-review',
+    ask: 'Review all source and write review.md.', status: 'passed', finalCheck: { id: 'final-check', result: 'pass', decisionIds: ['actual-check'] },
+    publication: { status: 'applied', note: 'Applied review.md.' }, answer: 'The report is saved in review.md.', units: [] }] };
+  const fake = good();
+  expect((await new CompletionVerification(verificationWriter).prepare(input, access(fake.port))).findings).toHaveLength(0);
+  const checks = fake.requests.filter(request => request.context?.battery === 'engine.verification.requirement');
+  const first = checks[0]!.state as unknown as { opened: { sources: { text: string; reference: string }[] } };
+  expect(first.opened.sources.some(source => source.reference.includes('; acceptance and publication;') && source.text.includes('actual-check'))).toBe(true);
+  const audits = fake.requests.filter(request => request.context?.battery === 'engine.verification.audit');
+  expect(audits.length).toBeGreaterThan(0);
+  expect(JSON.stringify(audits)).toContain('Retained earlier source.');
+});
+
 test('lossless source boundaries cannot turn a long numeric identity into refused card material', () => {
   for (const text of ['x'.repeat(11_968) + '7'.repeat(32) + '4111111111111111' + ' end', '7'.repeat(24_000) + '4111111111111111']) {
     snapshotJudgmentEvidence({ text });

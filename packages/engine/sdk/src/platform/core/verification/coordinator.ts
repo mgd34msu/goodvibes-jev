@@ -568,7 +568,14 @@ export class CompletionVerification {
     }
     const requestKey = verificationHash(full.request), previous = this.previousSources;
     const added = indexed && previous?.identity === access.identity && previous.request === requestKey ? observations.filter(source => !previous.ids.has(source.id) && source.kind === 'observation') : [];
-    const recent = verificationFrames(added, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length).at(-1) ?? [];
+    const acceptance = observations.filter(source => source.reference.startsWith('host completed contract ')
+      && source.reference.includes('; acceptance and publication;'));
+    // Begin with bounded actual host acceptance evidence instead of an empty
+    // packet or an obsolete partial-progress page. This changes retrieval
+    // order only: every original remains available and the complete-history
+    // counterevidence audit and final-response checks are still mandatory.
+    const recent = verificationFrames([...new Map([...added, ...acceptance].map(source => [source.id, source])).values()],
+      VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length).at(-1) ?? [];
     const rememberSources = () => { this.previousSources = { identity: access.identity, request: requestKey, ids: new Set(sources.map(source => source.id)) }; };
     const key = verificationHash([sources.map(source => source.id), ledger, full.response, overview.map(node => this.compactNode(node))]);
     if (this.finalEvidence?.key !== key || this.finalEvidence.identity !== access.identity)

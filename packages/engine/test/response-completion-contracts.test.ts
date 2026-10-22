@@ -41,9 +41,16 @@ test('completed records stay observations through projection and retrieval, neve
     transcript: [], tools: [], delegated: [], requirements: null, initial: null, completedWork });
   const sources = verificationSources(projected);
   expect(sources.filter(source => source.kind === 'instruction').map(source => source.text)).toEqual(['Deliver the saved review.']);
-  const observations = sources.filter(source => source.kind === 'observation');
+  const observations = sources.filter(source => source.kind === 'observation' && source.reference.includes('scoped checks and publication'));
   expect(observations.map(source => source.text).join('')).toBe(JSON.stringify(completedWork[0]));
   expect(observations[0]!.reference).toContain('host completed contract work');
+  const acceptance = sources.filter(source => source.reference.includes('; acceptance and publication;'));
+  expect(acceptance).toHaveLength(1);
+  const receipt = JSON.parse(acceptance[0]!.text);
+  expect(receipt.finalCheck).toEqual(check);
+  expect(receipt.publication.status).toBe('applied');
+  expect(receipt).not.toHaveProperty('answer');
+  expect(receipt).not.toHaveProperty('units');
   const privateWork = new CompletionEvidenceProjection().prepareFull({ request: 'Deliver the saved review.', response: 'See review.md.',
     transcript: [], tools: [], delegated: [], requirements: null, initial: null,
     completedWork: [{ id: 'secret', answer: 'password=synthetic-private-value' }] });
