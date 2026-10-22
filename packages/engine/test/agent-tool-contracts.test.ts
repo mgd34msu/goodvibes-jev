@@ -197,6 +197,7 @@ describe('agent tool spawn', () => {
   });
 
   test('a spawn not outside a contract starts one, with the user\'s words as the ask and the task as the proposed unit', async () => {
+    installJudgmentPort(fakePort(() => noulAnswer(.01)).port);
     const { manager, runner, tool, ran } = harness();
 
     const result = await tool.execute({
@@ -304,6 +305,7 @@ describe('agent tool batch-spawn', () => {
   });
 
   test('the user\'s words are the batch contract\'s ask when the host attached them', async () => {
+    installJudgmentPort(fakePort(() => noulAnswer(.01)).port);
     const { runner, tool } = harness();
 
     await tool.execute({
@@ -634,6 +636,7 @@ describe('workflow tool contract definition', () => {
 
 
 test('a completion repair contract retains the original ask and receives its private remaining-work context', async () => {
+  installJudgmentPort(fakePort(() => noulAnswer(.01)).port);
   const { tool, runner } = harness();
   const repair = JSON.stringify({ kind: 'completion-repair', review: { findings: [{ preserve: ['parser.ts reviewed'], remaining: ['server.ts'] }] } });
   const result = await withCompletionRepairContext(repair, () => tool.execute({ mode: 'batch-spawn', authoritativeTask: 'Review the repository and deliver review.md.', tasks: [{ task: 'Review server.ts only; retain the parser review.' }] }));
@@ -714,5 +717,44 @@ test('a held standalone plan cannot escape through another agent tool or workflo
     await h.manager.join(h.manager.list()[0]!.id);
     expect(h.manager.list()).toHaveLength(1);
     expect(h.runner.starts).toHaveLength(0);
+  } finally { h.manager.clear(); }
+});
+
+test.each(['spawn', 'batch-spawn'] as const)('initial contract-backed %s checks delegation permission before starting a contract', async mode => {
+  const h = harness();
+  const fake = fakePort(name => noulAnswer(name === 'delegation_forbidden' ? .99 : .01));
+  installJudgmentPort(fake.port);
+  const input = { mode, authoritativeTask: 'Review the parser personally without delegating.',
+    ...(mode === 'spawn' ? { task: 'Review the parser.' } : { tasks: [{ task: 'Review the parser.' }] }) };
+  try {
+    const rejected = await h.tool.execute(input);
+    expect(rejected.success).toBe(false);
+    expect(JSON.parse(rejected.output!).recovery.fixes[0].check).toBe('delegation_forbidden');
+    expect(h.runner.starts).toHaveLength(0);
+    expect(h.manager.list()).toHaveLength(0);
+    expect(fake.requests.some(request => request.context?.battery === 'engine.agents.delegation-authorization')).toBe(true);
+  } finally { h.manager.clear(); }
+});
+
+test.each(['spawn', 'batch-spawn'] as const)('contract-backed %s revalidates a repaired assignment in its original route', async mode => {
+  const h = harness();
+  const fake = fakePort((name, _question, raw) => {
+    const input = raw as { specialistAssignments?: { task: string }[] };
+    return noulAnswer(name === 'constraint_conflict' && input.specialistAssignments?.some(assignment => assignment.task.startsWith('Edit ')) ? .99 : .01);
+  });
+  installJudgmentPort(fake.port);
+  const input = (task: string) => ({ mode, authoritativeTask: 'Review the parser without changing any files.',
+    ...(mode === 'spawn' ? { task } : { tasks: [{ task }] }) });
+  try {
+    const rejected = await h.tool.execute(input('Edit parser.ts to fix its defects.'));
+    expect(rejected.success).toBe(false);
+    expect(h.runner.starts).toHaveLength(0);
+    expect(h.manager.list()).toHaveLength(0);
+    if (mode === 'spawn') expect(JSON.parse(rejected.output!).recovery.instruction).toContain('outsideContract=false');
+    const repaired = await h.tool.execute(input('Read parser.ts and return review findings without changes.'));
+    expect(repaired.success, repaired.error).toBe(true);
+    expect(h.runner.starts).toHaveLength(1);
+    expect(h.runner.starts[0]!.proposedUnits?.[0]?.task).toContain('without changes');
+    expect(fake.requests.filter(request => request.context?.battery === 'engine.agents.delegation-authorization')).toHaveLength(2);
   } finally { h.manager.clear(); }
 });

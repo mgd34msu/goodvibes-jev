@@ -6,6 +6,7 @@ export interface HeldDelegationPlan {
   readonly assignments: readonly { readonly task: string }[];
   readonly reason: string;
   readonly mode: 'spawn' | 'batch-spawn';
+  readonly outsideContract?: boolean;
   readonly fixes?: DelegationPlanHeldError['fixes'];
 }
 

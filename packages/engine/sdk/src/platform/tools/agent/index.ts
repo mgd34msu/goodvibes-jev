@@ -363,13 +363,15 @@ export function createAgentTool(config: AgentToolConfig): Tool {
     const holdPlan = (assignments: readonly { readonly task: string }[], error: unknown, mode: 'spawn' | 'batch-spawn' = 'batch-spawn') => {
       const reason = summarizeError(error);
       const proposal = { sessionId: delegationSession, request: input.authoritativeTask!, assignments, reason, mode,
+        ...(mode === 'spawn' ? { outsideContract: input.outsideContract === true } : {}),
         ...(error instanceof DelegationPlanHeldError ? { fixes: error.fixes } : {}) };
       heldPlans.set(delegationKey, proposal);
       return publish({ success: false, error: reason,
         output: JSON.stringify({ recovery: { kind: 'revise-delegation', ...proposal,
-          instruction: `Revise these assignments and resubmit mode=${mode}${mode === 'spawn' ? ' with outsideContract=true' : ''} for Jev revalidation. Do not abandon the held plan by starting another agent or contract. Continue the original request after validation.` } }) });
+          instruction: `Revise these assignments and resubmit mode=${mode}${mode === 'spawn' ? ` with outsideContract=${input.outsideContract === true}` : ''} for Jev revalidation. Do not abandon the held plan by starting another agent or contract. Continue the original request after validation.` } }) });
     };
-    if (input.mode === 'spawn' && heldPlan && (heldPlan.mode === 'batch-spawn' || !input.outsideContract)) return publish({ success: false,
+    if (input.mode === 'spawn' && heldPlan && (heldPlan.mode === 'batch-spawn'
+      || (input.outsideContract === true) !== (heldPlan.outsideContract ?? true))) return publish({ success: false,
       error: 'Delegation remains held. Repair and revalidate the pending plan before switching execution modes.',
       output: JSON.stringify({ recovery: { kind: 'revise-delegation', ...heldPlan, requiredMode: heldPlan.mode } }) });
 
@@ -381,6 +383,12 @@ export function createAgentTool(config: AgentToolConfig): Tool {
 
         const templateError = validateTemplate(input.template, archetypeLoader);
         if (templateError) return { success: false, error: templateError };
+
+        try {
+          if (input.authoritativeTask) await assertAgentBriefFidelity({ request: input.authoritativeTask, assignments: [briefAssignment(input)], ...(input.context ? { context: input.context } : {}), ...(completionRepair ? { repairContext: completionRepair } : {}) }, { signal, assertCurrent });
+          assertCurrent();
+        } catch (error) { return holdPlan([briefAssignment(input)], error, 'spawn'); }
+        heldPlans.delete(delegationKey);
 
         if (!input.outsideContract) {
           let started: StartedContract;
@@ -408,11 +416,6 @@ export function createAgentTool(config: AgentToolConfig): Tool {
           });
         }
 
-        try {
-          if (input.authoritativeTask) await assertAgentBriefFidelity({ request: input.authoritativeTask, assignments: [briefAssignment(input)], ...(input.context ? { context: input.context } : {}), ...(completionRepair ? { repairContext: completionRepair } : {}) }, { signal, assertCurrent });
-          assertCurrent();
-        } catch (error) { return holdPlan([briefAssignment(input)], error, 'spawn'); }
-        heldPlans.delete(delegationKey);
         let record;
         try {
           record = spawnOwned(input);
@@ -780,7 +783,7 @@ export function createAgentTool(config: AgentToolConfig): Tool {
         }
         const outsideInputs = spawnInputs.filter((spawnInput) => spawnInput.outsideContract === true);
         const contractTasks = input.tasks.filter((_, index) => spawnInputs[index]!.outsideContract !== true);
-        if ((outsideInputs.length > 0 || heldPlan) && input.authoritativeTask) {
+        if (input.authoritativeTask) {
           try {
             await assertAgentBriefFidelity({ request: input.authoritativeTask, assignments: spawnInputs.map(briefAssignment), ...(input.context ? { context: input.context } : {}), ...(completionRepair ? { repairContext: completionRepair } : {}) }, { signal, assertCurrent });
             assertCurrent();
