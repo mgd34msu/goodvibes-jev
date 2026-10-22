@@ -299,7 +299,6 @@ export async function handleToolResponseOutcome(args: ToolResponseOutcomeArgs): 
 
 async function handleOwnedToolResponseOutcome(args: ToolResponseOutcomeArgs): Promise<{ continueLoop: boolean; results: ToolResult[] }> {
   const toolCalls = args.response.toolCalls;
-  args.setPendingToolCalls(toolCalls);
   let content = args.response.content;
   try { args.assertProgressPublicationCurrent?.(); }
   catch {
@@ -316,6 +315,7 @@ async function handleOwnedToolResponseOutcome(args: ToolResponseOutcomeArgs): Pr
     model: args.providerRegistry.getCurrentModel().displayName,
     provider: args.providerRegistry.getCurrentModel().provider,
   });
+  args.setPendingToolCalls(toolCalls);
 
   const results = await args.executeToolCalls(args.turnId, toolCalls);
   args.conversation.addToolResults(results);

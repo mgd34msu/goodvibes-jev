@@ -123,6 +123,26 @@ describe('Orchestrator async prompt lifecycle wiring', () => {
     expect(f.requests).toHaveLength(0);
   });
 
+  test('cancelling an admitted unfinished call retains its declaration with the reconciled result', async () => {
+    const entered = deferred<void>(), prompt = deferred<string>();
+    const f = fixture(() => { entered.resolve(); return prompt.promise; });
+    const turn = f.orchestrator.handleUserInput('Inspect the existing report.');
+    await entered.promise;
+    const calls = [{ id: 'interrupted-read', name: 'read', arguments: { path: 'REVIEW.md' } }];
+    f.conversation.addAssistantMessage('', { toolCalls: calls });
+    (f.orchestrator as unknown as { _pendingToolCalls: typeof calls })._pendingToolCalls = calls;
+    f.orchestrator.abort(); await turn; prompt.resolve('Late prompt');
+    const resumed = new ConversationManager();
+    resumed.fromJSON(JSON.parse(JSON.stringify(f.conversation.toJSON())));
+    const messages = resumed.getMessagesForLLM();
+    expect(messages.filter(message => message.role === 'assistant').flatMap(message => message.toolCalls ?? []))
+      .toEqual(calls);
+    expect(messages.filter(message => message.role === 'tool')).toEqual([
+      expect.objectContaining({ callId: 'interrupted-read', content: expect.stringContaining('[RECONCILED]') }),
+    ]);
+    expect(f.requests).toHaveLength(0);
+  });
+
   test('dispose cancels pending reads and does not start queued or later user turns', async () => {
     const pending = deferred<string>();
     const entered = deferred<void>();

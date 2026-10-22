@@ -1099,6 +1099,8 @@ export class Orchestrator {
       }
       // Cancel the unpublished answer, retaining completed tool observations
       // so resuming the session cannot mistake executed work for missing work.
+      // Settle admitted calls before rollback removes an unfinished call block.
+      this.reconcileUnresolvedToolCalls([], 'exception-before-results');
       this.conversation.removeMessagesAfter(this.turnStartMessageCount, { preserveCompletedTools: true });
       this.conversation.markLastUserMessageCancelled(this.turnStartMessageCount);
       this.conversation.addSystemMessage('[Response cancelled]');

@@ -1,3 +1,4 @@
+import { providerConversation } from './conversation-provider-projection.js';
 import type { ContentPart, ProviderMessage } from '../providers/interface.js';
 import type { ConversationMessageSnapshot } from './conversation.js';
 
@@ -66,19 +67,8 @@ export function restoreKeptMessages(
   stored: readonly Message[],
 ): Message[] {
   const nonSystem = stored.filter((message) => message.role !== 'system');
-  if (nonSystem.length !== llm.length || llm.some((message, index) => message.role !== nonSystem[index]!.role)) {
-    return kept.map(toInternalMessage);
-  }
-  const sourceKeys = nonSystem.map((message) => {
-    if (message.role === 'tool') {
-      return providerKey({ role: 'tool', callId: message.callId, content: message.content, name: message.toolName });
-    }
-    if (message.role === 'assistant') {
-      return providerKey({ role: 'assistant', content: message.content,
-        ...(message.toolCalls ? { toolCalls: message.toolCalls } : {}) });
-    }
-    return providerKey(message);
-  });
+  const sourceKeys = providerConversation(stored).map(providerKey);
+  if (nonSystem.length !== llm.length) return kept.map(toInternalMessage);
   if (llm.some((message, index) => providerKey(message) !== sourceKeys[index])) {
     return kept.map(toInternalMessage);
   }

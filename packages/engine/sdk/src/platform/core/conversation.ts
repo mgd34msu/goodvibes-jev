@@ -1,3 +1,4 @@
+import { providerConversation } from './conversation-provider-projection.js';
 import { declaredNoticePresentation } from '../runtime/runtime-event-notices.js';
 import { prepareSystemMessagePresentation, type SystemMessagePresentation } from '../runtime/system-message-presentation.js';
 import type { RuntimeEventProvenance } from '../../events/occurrence.js';
@@ -192,28 +193,7 @@ export class ConversationManager {
     if (this._cachedLLMMessages !== null && this._cachedLLMRevision === this._messagesRevision) {
       return this._cachedLLMMessages;
     }
-    const result: ProviderMessage[] = [];
-    for (const message of this.messages) {
-      if (message.role === 'system') continue;
-      if (message.role === 'user') {
-        result.push({ role: 'user', content: message.content });
-        continue;
-      }
-      if (message.role === 'assistant') {
-        result.push({
-          role: 'assistant',
-          content: message.content,
-          ...(message.toolCalls ? { toolCalls: message.toolCalls } : {}),
-        });
-        continue;
-      }
-      result.push({
-        role: 'tool',
-        callId: message.callId,
-        content: message.content,
-        ...(message.toolName ? { name: message.toolName } : {}),
-      });
-    }
+    const result = providerConversation(this.messages);
     this._cachedLLMMessages = result;
     this._cachedLLMRevision = this._messagesRevision;
     return result;
