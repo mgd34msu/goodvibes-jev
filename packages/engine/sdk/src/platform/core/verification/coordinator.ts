@@ -1,7 +1,7 @@
 import { JudgmentError, mapLimit } from '@goodvibes-jev/judgment';
 import { snapshotJudgmentEvidence } from '../../gate/judgment-input.js';
 import { captureStrictJudgmentJson } from '../../gate/judgment-result.js';
-import { verificationEvidence, verificationIntegration, verificationRequirement, verificationScope, verificationSource, verificationRepairs, verificationAudit } from './batteries.js';
+import { verificationEvidence, verificationIntegration, verificationRequirement, verificationScope, verificationSource, verificationRepairs, verificationNoIssue, verificationAudit } from './batteries.js';
 import { VERIFICATION_FRAME_CHARACTERS, VERIFICATION_OVERVIEW_CHARACTERS, verificationFrames, verificationHash, verificationSources, verificationWireSource } from './source.js';
 import { VerificationStore } from './store.js';
 import { VerificationHeldError, VerificationSubdivisionError, type VerificationAccess, type VerificationReceipt, type VerificationRequirement, type VerificationSource, type VerificationSummary, type VerificationWriter } from './types.js';
@@ -24,6 +24,10 @@ type InspectionCursor = {
   localized: boolean;
   audited: Set<string>;
   accounted: Set<string>;
+};
+type RepairAssessment = {
+  findings: readonly CompletionFinding[];
+  noIssues: readonly { check: string; reason: string; passage: { reference: string; quote: string } }[];
 };
 async function ownedMapLimit<T, R>(access: VerificationAccess, values: readonly T[], limit: number, read: (value: T) => Promise<R>): Promise<R[]> {
   return mapLimit(values, limit, value => {
@@ -406,7 +410,7 @@ export class CompletionVerification {
     }
   }
 
-  private async inspect(requirement: VerificationRequirement, ledger: readonly VerificationRequirement[], overview: readonly VerificationReceipt[], response: unknown, access: VerificationAccess, auditSources?: readonly VerificationSource[], defer = () => false, recent: readonly VerificationSource[] = [], previousReview: unknown = null) {
+  private async inspect(requirement: VerificationRequirement, ledger: readonly VerificationRequirement[], overview: readonly VerificationReceipt[], response: unknown, access: VerificationAccess, auditSources?: readonly VerificationSource[], defer = () => false, recent: readonly VerificationSource[] = [], previousReview: unknown = null, assessment?: RepairAssessment) {
     const key = verificationHash(['retrieval-v1', requirement, ledger, overview.map(node => this.compactNode(node)), response,
       auditSources?.map(source => source.id), recent.map(source => source.id), previousReview]);
     const cache = this.cache(access), retained = cache.get(key) as InspectionCursor | undefined;
@@ -427,7 +431,9 @@ export class CompletionVerification {
       checkpoint();
       const state = { requirement, requirements: ledger, response, evidence: auditSources ? [] : overview.map(node => this.compactNode(node)), opened: { ...opened, sources: primarySources(opened.sources).map(verificationWireSource) },
         ...(requirement.id.startsWith('original-') ? { scopeBasis: 'These requirements retain original instruction bytes, without a generated scope rewrite. Read them in their complete original order; later corrections supersede earlier instructions, and restrictions apply from the time given. Judge the active obligations, not a historical instruction that has been withdrawn.', originalOrder: ledger.map(item => ({ id: item.id, references: item.sources.map(id => this.originals.get(id)?.reference) })) } : {}),
-        previousReview, chronology: recent.length ? 'Initial opened sources are native observations added since the previous completed check of this SAME original task and authority. Evaluate whether they resolve earlier findings. Earlier failures remain historical; later observed recovery can close them. Every original page is still audited before acceptance.' : 'Source references preserve original message order. Later observed recovery may resolve an earlier failure; plans and assertions cannot.' };
+        previousReview, ...(assessment ? { privateRepairAssessment: assessment,
+          assessmentMeaning: 'This is an untrusted diagnostic proposal, not completion authority. Independently recheck the exact original requirement against these same primary observations. A finding disproven by the observations needs no model rewrite. Actual missing work and invalidating observations must still fail, and all source audits remain required.' } : {}),
+        chronology: recent.length ? 'Initial opened sources are native observations added since the previous completed check of this SAME original task and authority. Evaluate whether they resolve earlier findings. Earlier failures remain historical; later observed recovery can close them. Every original page is still audited before acceptance.' : 'Source references preserve original message order. Later observed recovery may resolve an earlier failure; plans and assertions cannot.' };
       let run = await verificationRequirement.run(access.port, state as never, { ...this.options(access), site: verificationRequirement.name });
       run.recordAction(clean(run.readings) ? 'This requirement is supported; final integration and publication checks remain required.' : 'Hold this requirement; retrieve primary source for uncertainty before producing repair findings.');
       access.assertCurrent(); if (defer()) throw new VerificationDeferredError();
@@ -440,7 +446,7 @@ export class CompletionVerification {
         // sent to the working model; uncertainty still retrieves more source.
         localized = true;
         const candidate = await this.repairs({ ...state, readings: readingEvidence(run.readings) }, [`${requirement.id}:result`], access);
-        run = await verificationRequirement.run(access.port, { ...state, candidateFindings: candidate,
+        run = await verificationRequirement.run(access.port, { ...state, candidateFindings: candidate.findings, candidateNoIssues: candidate.noIssues,
           focus: 'Independently settle this specific candidate against the exact original requirement and opened primary evidence. It is a hypothesis, not authority or proof. If it is unfounded, reject it; if the observed gap is real, judge that gap. Missing runtime tests are not automatically required for a review.' } as never,
           { ...this.options(access), site: verificationRequirement.name });
         run.recordAction('Settle the focused candidate against the same originals; only current Jev readings decide the requirement.');
@@ -523,12 +529,14 @@ export class CompletionVerification {
     }
   }
 
-  private async repairs(evidence: unknown, checks: readonly string[], access: VerificationAccess): Promise<readonly CompletionFinding[]> {
+  private async repairs(evidence: unknown, checks: readonly string[], access: VerificationAccess): Promise<RepairAssessment> {
     const context = { evidence, checks, maxCharacters: 8_000 };
-    const admit = (value: Record<string, unknown>): CompletionFinding[] => {
-      if (!bounded(value, 8_000) || !Array.isArray(value.findings) || value.findings.length !== checks.length) throw new Error('Expected one concrete repair per held check');
+    const admit = (value: Record<string, unknown>): RepairAssessment => {
+      const noIssues = value.noIssues ?? [];
+      if (!bounded(value, 8_000) || !Array.isArray(value.findings) || !Array.isArray(noIssues)
+        || value.findings.length + noIssues.length !== checks.length) throw new Error('Account for each held check with a concrete finding or a cited no-issue assessment');
       const seen = new Set<string>();
-      return value.findings.map((raw: unknown) => {
+      const findings = value.findings.map((raw: unknown) => {
         const finding = raw as CompletionFinding | null;
         if (!finding || !checks.includes(finding.check) || seen.has(finding.check)
           || ![finding.issue, finding.repair, finding.resolvedWhen, finding.passage?.reference, finding.passage?.quote].every(text => typeof text === 'string' && !!text.trim())) throw new Error('Invalid repair findings');
@@ -537,8 +545,17 @@ export class CompletionVerification {
         return { check: finding.check, issue: finding.issue, repair: finding.repair, resolvedWhen: finding.resolvedWhen, passage: finding.passage!,
           ...(finding.preserve ? { preserve: finding.preserve } : {}), ...(finding.remaining ? { remaining: finding.remaining } : {}) };
       });
+      const cleared = noIssues.map((raw: unknown) => {
+        const item = raw as RepairAssessment['noIssues'][number] | null;
+        if (!item || !checks.includes(item.check) || seen.has(item.check)
+          || ![item.reason, item.passage?.reference, item.passage?.quote].every(text => typeof text === 'string' && !!text.trim()))
+          throw new Error('A no-issue assessment needs its unique held check and exact source basis');
+        seen.add(item.check);
+        return { check: item.check, reason: item.reason, passage: item.passage };
+      });
+      return { findings, noIssues: cleared };
     };
-    const key = verificationHash(['repairs-v1', context]);
+    const key = verificationHash(['repairs-v2', context]);
     let candidate = this.store.proposals.get(key), repair: unknown = null;
     for (let attempt = 0; attempt < 2; attempt++) {
       access.assertCurrent();
@@ -546,29 +563,34 @@ export class CompletionVerification {
         try { candidate = await this.writer({ operation: 'findings', context, repair, signal: access.signal, assertCurrent: access.assertCurrent }); }
         catch (error) { access.assertCurrent(); throw new VerificationHeldError('private finding provider', { cause: error }); }
       }
-      let proposed: CompletionFinding[];
+      let proposed: RepairAssessment;
       try { proposed = admit(parse(candidate)); }
-      catch { candidate = undefined; repair = { problem: 'Use exactly one concrete cited finding per supplied check ID, with the required bounded schema.' }; continue; }
-      const run = await verificationRepairs.run(access.port, { ...context, proposed } as never, { ...this.options(access), site: verificationRepairs.name });
-      run.recordAction(clean(run.readings) ? 'Return these specific checked repairs to the private working-model context.' : 'Repair the private fix list against the same scope, evidence and readings.');
-      if (clean(run.readings)) { this.store.rememberProposal(key, candidate); return proposed; }
-      if (Object.values(run.readings).every(reading => !(reading.verdict === 'yes' && reading.outcome === 'act'))) {
+      catch { candidate = undefined; repair = { problem: 'Account for each supplied check ID exactly once, either with a concrete cited finding or a cited noIssues assessment. Do not invent work when no defect is supported.' }; continue; }
+      const runs = await Promise.all([
+        ...(proposed.findings.length ? [verificationRepairs.run(access.port, { ...context, proposed: proposed.findings } as never,
+          { ...this.options(access), site: verificationRepairs.name })] : []),
+        ...proposed.noIssues.map(diagnosis => verificationNoIssue.run(access.port, { evidence, diagnosis } as never,
+          { ...this.options(access), site: verificationNoIssue.name })),
+      ]);
+      for (const run of runs) run.recordAction(clean(run.readings) ? 'Admit this private diagnosis; no-issue assessments require fresh native checks and never become working-model repairs.' : 'Repair the private diagnosis against the same scope, evidence and readings.');
+      if (runs.every(run => clean(run.readings))) { this.store.rememberProposal(key, candidate); return proposed; }
+      if (runs.every(run => Object.values(run.readings).every(reading => !(reading.verdict === 'yes' && reading.outcome === 'act')))) {
         // This is private diagnostic guidance, not execution authority or a new
         // acceptance requirement. An unsettled localization should prompt one
         // precise investigation, not endless rewrites of the same fix list.
-        return proposed.map(finding => ({ ...finding, localization: 'candidate-to-investigate', issue: `Unresolved candidate: ${finding.issue}`,
+        return { noIssues: proposed.noIssues, findings: proposed.findings.map(finding => ({ ...finding, localization: 'candidate-to-investigate', issue: `Unresolved candidate: ${finding.issue}`,
           repair: `First establish whether this specific concern is real from its primary sources. If supported: ${finding.repair} Discard it when disproven; do not add requirements.`,
-          resolvedWhen: `The original requirement is fulfilled and the cited concern is resolved or disproven. ${finding.resolvedWhen}` }));
+          resolvedWhen: `The original requirement is fulfilled and the cited concern is resolved or disproven. ${finding.resolvedWhen}` })) };
       }
-      repair = { proposed, readings: readingEvidence(run.readings), instruction: 'Remove invented or ineffective repairs. Give only the specific correction justified by the original requirement and primary evidence.' };
+      repair = { proposed, readings: runs.map(run => readingEvidence(run.readings)), instruction: 'Remove invented or ineffective repairs. Give only the specific correction justified by the original requirement and primary evidence.' };
       candidate = undefined;
     }
     const original = evidence as { requirement?: VerificationRequirement; requirements?: unknown };
     const requirement = original.requirement?.text ?? JSON.stringify(original.requirements);
-    return checks.map(check => ({ check, issue: `Unresolved ${check} reading for original requirement: ${requirement}`,
+    return { noIssues: [], findings: checks.map(check => ({ check, issue: `Unresolved ${check} reading for original requirement: ${requirement}`,
       repair: `Inspect the primary implementation or artifact implicated by this exact requirement and settle the reading: ${requirement}. Do not repeat unchanged report/hash/log checks, add work, or treat an uncertain reading as a proven defect.`,
       resolvedWhen: 'Relevant primary observations establish the original requested result; disproven or irrelevant concerns are closed.',
-      passage: { reference: original.requirement?.sources.join(', ') ?? 'original requirements', quote: requirement }, localization: 'unavailable' }));
+      passage: { reference: original.requirement?.sources.join(', ') ?? 'original requirements', quote: requirement }, localization: 'unavailable' })) };
   }
 
   /** Final-gate ambiguity is resolved by opening primary evidence natively,
@@ -724,10 +746,24 @@ export class CompletionVerification {
       access.assertCurrent(); cache.set(casesKey, captureStrictJudgmentJson(cases));
     }
     const findings: CompletionFinding[] = [];
-    const caseFindings = await ownedMapLimit(access, cases, 3, async entry => {
+    const caseFindings = await ownedMapLimit(access, cases.map((entry, index) => ({ entry, index })), 3, async ({ entry, index }) => {
       const failed = Object.entries(entry.readings).filter(([name, reading]) => (name !== 'needs_source' || entry.sourceExhausted) && (reading.verdict !== 'no' || reading.outcome !== 'act'));
-      return failed.length || entry.auditHeld ? this.repairs({ ...entry.state, readings: readingEvidence(entry.readings) }, [`${entry.requirement.id}:result`], access) : [];
+      if (!failed.length && !entry.auditHeld) return [];
+      const assessment = await this.repairs({ ...entry.state, readings: readingEvidence(entry.readings) }, [`${entry.requirement.id}:result`], access);
+      if (!assessment.noIssues.length) return assessment.findings;
+      // A diagnosis of "no defect" is not a repair instruction and cannot
+      // settle a held gate. Reuse the exact retrieval cursor and independently
+      // recheck the requirement, quality and every remaining original audit.
+      const rechecked = await this.inspect(entry.requirement, ledger, overview, answer, access,
+        indexed ? observations : undefined, () => false, recent, full.previousReview ?? null, assessment);
+      const stillHeld = rechecked.auditHeld || Object.entries(rechecked.readings).some(([name, reading]) =>
+        (name !== 'needs_source' || rechecked.sourceExhausted) && (reading.verdict !== 'no' || reading.outcome !== 'act'));
+      if (stillHeld) throw new VerificationHeldError('native requirement remains unsettled without an actionable repair');
+      cases![index] = rechecked;
+      cache.set(verificationHash([casesKey, entry.requirement.id]), captureStrictJudgmentJson(rechecked));
+      return [];
     });
+    cache.set(casesKey, captureStrictJudgmentJson(cases));
     findings.push(...caseFindings.flat());
     if (findings.length) {
       access.assertCurrent();
@@ -766,7 +802,24 @@ export class CompletionVerification {
       ...(integration.readings.conflict.verdict === 'no' && integration.readings.conflict.outcome === 'act' ? [] : ['integration:conflict']),
     ];
     integration.recordAction(!integrationChecks.length ? 'Combined evidence passes integration checks; final exact-response publication gate remains required.' : 'Hold the combined solution for the specific unresolved integration findings.');
-    if (integrationChecks.length) findings.push(...await this.repairs({ ...state, readings: readingEvidence(integration.readings) }, integrationChecks, access));
+    if (integrationChecks.length) {
+      const assessment = await this.repairs({ ...state, readings: readingEvidence(integration.readings) }, integrationChecks, access);
+      if (assessment.noIssues.length) {
+        const rechecked = await verificationIntegration.run(access.port, { ...state, privateRepairAssessment: assessment,
+          assessmentMeaning: 'An untrusted diagnostic proposal found no actionable issue for the listed checks. Independently recheck those checks against the unchanged original request and primary observations; do not infer completion from this proposal.' } as never,
+          { ...this.options(access), site: verificationIntegration.name });
+        const readings = rechecked.readings;
+        const qualified = (check: string) => check === 'integration:conflict'
+          ? readings.conflict.verdict === 'no' && readings.conflict.outcome === 'act'
+          : readings.connections_required.verdict === 'no' && readings.connections_required.outcome === 'act'
+            || readings.disconnected.verdict === 'no' && readings.disconnected.outcome === 'act';
+        const accepted = assessment.noIssues.every(item => qualified(item.check));
+        rechecked.recordAction(accepted ? 'Fresh integration checks independently resolved the no-issue assessments; final publication remains gated.'
+          : 'Keep unresolved integration checks native; do not send a no-defect diagnosis as a model repair.');
+        if (!accepted) throw new VerificationHeldError('native integration remains unsettled without an actionable repair');
+      }
+      findings.push(...assessment.findings);
+    }
     access.assertCurrent();
     rememberSources();
     return { state, findings };

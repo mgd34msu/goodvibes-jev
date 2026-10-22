@@ -25,6 +25,48 @@ const access = (port: VerificationAccess['port'], identity = {}, signal?: AbortS
 const state = (content = 'Observed source.') => ({ request: 'Review all source and write review.md.', response: 'The report is saved in review.md.', transcript: [{ role: 'tool', callId: 'read-1', content }], tools: ['read', 'write'], requirements: null, delegated: [], initial: null });
 const directory = () => { const value = mkdtempSync(join(tmpdir(), 'completion-verification-')); directories.push(value); return value; };
 
+const noIssueWriter: VerificationWriter = async request => request.operation !== 'findings' ? verificationWriter(request)
+  : JSON.stringify({ findings: [], noIssues: (request.context as { checks: string[] }).checks.map(check => ({ check,
+    reason: 'The existing primary observation resolves the earlier concern.',
+    passage: { reference: 'original observation', quote: 'Completed review and delivery observed.' } })) });
+
+test('a no-issue diagnosis rechecks the original requirement instead of manufacturing a repair', async () => {
+  const fake = fakePort((name, _question, raw) => {
+    const current = raw as unknown as { requirement?: unknown; privateRepairAssessment?: unknown };
+    return noulAnswer(name === 'unfinished' && current.requirement && !current.privateRepairAssessment ? .4 : .01);
+  });
+  const result = await new CompletionVerification(noIssueWriter).prepare(state('Completed review and delivery observed.'), access(fake.port));
+  expect(result.findings).toHaveLength(0);
+  const checks = fake.requests.filter(request => request.context?.battery === 'engine.verification.requirement');
+  expect(checks.length).toBeGreaterThan(1);
+  expect(JSON.stringify(checks.at(-1)!.state)).toContain('privateRepairAssessment');
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(true);
+});
+
+test.each([.4, .99])('a no-issue diagnosis cannot clear an original requirement still held at %s', async probability => {
+  const fake = fakePort((name, _question, raw) => noulAnswer(name === 'unfinished'
+    && (raw as unknown as { requirement?: unknown }).requirement ? probability : .01));
+  await expect(new CompletionVerification(noIssueWriter).prepare(state('Completed review and delivery observed.'), access(fake.port)))
+    .rejects.toThrow('native requirement remains unsettled without an actionable repair');
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(false);
+});
+
+test('a no-issue integration diagnosis needs a fresh passing integration check', async () => {
+  const fake = fakePort((name, _question, raw) => noulAnswer(name === 'conflict'
+    && !(raw as unknown as { privateRepairAssessment?: unknown }).privateRepairAssessment ? .4 : .01));
+  const result = await new CompletionVerification(noIssueWriter).prepare(state('Completed review and delivery observed.'), access(fake.port));
+  expect(result.findings).toHaveLength(0);
+  const checks = fake.requests.filter(request => request.context?.battery === 'engine.verification.integration');
+  expect(checks).toHaveLength(2);
+  expect(JSON.stringify(checks[1]!.state)).toContain('privateRepairAssessment');
+});
+
+test('a no-issue diagnosis cannot clear a conflicting integration check', async () => {
+  const fake = fakePort(name => noulAnswer(name === 'conflict' ? .99 : .01));
+  await expect(new CompletionVerification(noIssueWriter).prepare(state('Completed review and delivery observed.'), access(fake.port)))
+    .rejects.toThrow('native integration remains unsettled without an actionable repair');
+});
+
 test('large-history retrieval starts with actual scoped host acceptance and still audits old counterevidence', async () => {
   const input = { ...state('Retained earlier source. '.repeat(15_000)), completedWork: [
     { kind: 'host-completed-contract', id: 'previous-failed-review', status: 'failed', error: 'Previous provider interruption. '.repeat(320) },

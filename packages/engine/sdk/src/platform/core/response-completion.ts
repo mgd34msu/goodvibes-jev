@@ -15,7 +15,9 @@ import { CompletionVerification } from './verification/coordinator.js';
 import { VerificationHeldError, VerificationSubdivisionError, type VerificationWriter } from './verification/types.js';
 import { VerificationStore } from './verification/store.js';
 import { registerVerificationArchive, verificationHistory, verificationMessages } from './verification/archive.js';
-import { verificationHash } from './verification/source.js';
+import { verificationHash, verificationSources, verificationFrames, verificationWireSource } from './verification/source.js';
+import { verificationCheckpointHistory } from './verification/batteries.js';
+import type { VerificationAccess } from './verification/types.js';
 import { bindVerificationTargets } from './verification/targets.js';
 import { nativeWorkCheckpoint } from './response-completion-checkpoint.js';
 
@@ -109,6 +111,7 @@ export class ResponseCompletionGuard {
   private restoredCorrection: string | undefined;
   private describeHeld: (() => Promise<string>) | undefined;
   private readonly verification: CompletionVerification | undefined;
+  private readonly checkpointAudits = new WeakMap<object, Set<string>>();
   private sourceAdmitted = false;
   private publication: { source: string; identity: object; completion: Set<string>; consolidation: Set<string>; execution: Set<string> } | undefined;
 
@@ -334,8 +337,10 @@ export class ResponseCompletionGuard {
     const port = bindVerificationTargets(owner.port);
     const readingOptions = { signal: owner.signal, beforeAttempt: owner.assertCurrent, onRetry: () => onWaiting?.() };
     let state: unknown = fullState;
-    const checkpoint = !withoutCheckpoint && JSON.stringify(fullState).length > 100_000
+    let checkpoint = !withoutCheckpoint && JSON.stringify(fullState).length > 100_000
       ? nativeWorkCheckpoint(input.completedWork ?? [], source.snapshot.completedWork, fullState) : undefined;
+    if (checkpoint && !await this.checkCheckpointHistory(fullState, checkpoint, { ...readingOptions, port,
+      identity: owner.identity, assertCurrent: owner.assertCurrent })) checkpoint = undefined;
     let verificationFindings: readonly import('./response-completion-findings.js').CompletionFinding[] = [];
     if (checkpoint) state = checkpoint;
     else if (JSON.stringify(fullState).length > 100_000) {
@@ -517,6 +522,34 @@ export class ResponseCompletionGuard {
       + 'Creating a report, narrowing the scope, apologizing, promising to continue, or admitting the work is unfinished does not complete it. '
       + 'Do not ask for permission already granted. If a real external blocker prevents further progress, explain it accurately with evidence. '
       + 'End only after the work is done, the user explicitly stops it, or a necessary user decision or genuine blocker prevents further authorized progress. Do not invent work, results, or test requirements.';
+  }
+
+  private async checkCheckpointHistory(full: Record<string, unknown>, checkpoint: Record<string, unknown>, access: VerificationAccess): Promise<boolean> {
+    let cache = this.checkpointAudits.get(access.identity);
+    if (!cache) { cache = new Set(); this.checkpointAudits.set(access.identity, cache); }
+    // The current proposed answer is deliberately absent: unchanged history
+    // and scoped native work do not need another audit for every wording edit.
+    // Any changed instruction, receipt or current observation starts new checks.
+    const basis = { completedWork: checkpoint.completedWork, originalInstructions: checkpoint.originalInstructions,
+      currentObservations: checkpoint.transcript };
+    const pages = verificationFrames(verificationSources(full).filter(source => source.kind === 'observation' && source.messageRole),
+      undefined, source => JSON.stringify(verificationWireSource(source)).length);
+    let accepted = true;
+    await mapLimit(pages, 3, async page => {
+      access.assertCurrent();
+      if (!accepted) return;
+      const state = { ...basis, sources: page.map(verificationWireSource) }, key = verificationHash(state);
+      if (cache!.has(key)) return;
+      const run = await verificationCheckpointHistory.run(access.port, state as never,
+        { ...(access.signal ? { signal: access.signal } : {}), beforeAttempt: access.assertCurrent,
+          ...(access.onRetry ? { onRetry: access.onRetry } : {}), site: verificationCheckpointHistory.name });
+      access.assertCurrent();
+      const qualified = run.readings.missed.verdict === 'no' && run.readings.missed.outcome === 'act';
+      run.recordAction(qualified ? 'This complete original history page does not invalidate the scoped work receipts; fresh final-response checks remain required.'
+        : 'Retrieve retained originals before using a work checkpoint; this history page contains unresolved possible counterevidence.');
+      if (qualified) cache!.add(key); else accepted = false;
+    });
+    return accepted;
   }
 }
 

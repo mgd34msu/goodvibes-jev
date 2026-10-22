@@ -39,10 +39,12 @@ function approvedWork(projectRoot = '/project') {
   return completedContractEvidence({ list: () => [accepted] }, 'session', projectRoot);
 }
 
-function handoff() {
+function handoff(previousObservation?: string, compactHistory = false) {
   const conversation = new ConversationManager();
   conversation.addUserMessage('Review all source and deliver review.md.');
   conversation.addToolResults([{ callId: 'old-progress', success: true, output: 'Earlier partial-review observation. '.repeat(10_000) }]);
+  if (previousObservation) conversation.addToolResults([{ callId: 'previous-change', success: true, output: previousObservation }]);
+  if (compactHistory) conversation.replaceMessagesForLLM([{ role: 'assistant', content: 'Earlier observations remain in the native archive.' }]);
   conversation.addUserMessage('Review all source and deliver review.md.');
   conversation.addUserMessage('Deliver the accepted review. Preserve files.');
   const request = 'Deliver the accepted review. Preserve files.';
@@ -63,6 +65,30 @@ test('a native scoped work checkpoint still requires fresh final gates, preserve
   expect(JSON.stringify(current.transcript)).not.toContain('Earlier partial-review observation');
   expect(JSON.stringify(current.completedWork)).toContain('actual-scope-implication');
   expect(fake.requests.some(request => request.context?.battery === 'engine.core.execution-assurance')).toBe(true);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.checkpoint-history')).toBe(true);
+});
+
+test.each([false, true])('an invalidating observation from a previous turn blocks the checkpoint, including compacted history (%s)', async compactHistory => {
+  const { guard, input } = handoff('POST-ACCEPTANCE-DELETION: a successful write emptied review.md after native acceptance; no restoration exists.', compactHistory);
+  const fake = fakePort((name, _question, raw) => noulAnswer(name === 'missed'
+    && JSON.stringify((raw as unknown as { sources?: unknown }).sources).includes('POST-ACCEPTANCE-DELETION') ? .99 : .01));
+  installJudgmentPort(fake.port);
+  await expect(guard.check(input)).rejects.toThrow();
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.checkpoint-history'
+    && JSON.stringify(request.state).includes('POST-ACCEPTANCE-DELETION'))).toBe(true);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.core.response-completion')).toBe(false);
+  expect(() => guard.beginFinalization({ content: input.response })).toThrow();
+});
+
+test('unchanged history is audited once across final wording edits while both proposed answers get fresh final checks', async () => {
+  const { guard, input } = handoff(), fake = fakePort(() => noulAnswer(.01)); installJudgmentPort(fake.port);
+  expect(await guard.check(input)).toBeNull();
+  const audited = fake.requests.filter(request => request.context?.battery === 'engine.verification.checkpoint-history').length;
+  expect(audited).toBeGreaterThan(0);
+  input.response = 'Read the completed findings in review.md.';
+  expect(await guard.check(input)).toBeNull();
+  expect(fake.requests.filter(request => request.context?.battery === 'engine.verification.checkpoint-history')).toHaveLength(audited);
+  expect(fake.requests.filter(request => request.context?.battery === 'engine.core.response-completion')).toHaveLength(2);
 });
 
 test.each(['copied', 'mutated'] as const)('a %s completed-work record cannot substitute for a native checkpoint', async mode => {
