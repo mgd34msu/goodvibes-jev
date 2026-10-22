@@ -29,6 +29,10 @@ type RepairAssessment = {
   findings: readonly CompletionFinding[];
   noIssues: readonly { check: string; reason: string; passage: { reference: string; quote: string } }[];
 };
+type VerificationTurnContext = {
+  readonly request: unknown;
+  readonly currentTurn: { readonly entryMessageCount: number | null; readonly observationIds: readonly string[]; readonly meaning: string };
+};
 async function ownedMapLimit<T, R>(access: VerificationAccess, values: readonly T[], limit: number, read: (value: T) => Promise<R>): Promise<R[]> {
   return mapLimit(values, limit, value => {
     const pending = (access as AttemptAccess)[attemptOwner]?.pending;
@@ -337,7 +341,7 @@ export class CompletionVerification {
   }
 
   private async audit(requirement: VerificationRequirement, caseEvidence: unknown, sources: readonly VerificationSource[], access: VerificationAccess,
-    response: unknown, ledger: readonly VerificationRequirement[], audited: Set<string>, accounted: Set<string>): Promise<VerificationSource[][]> {
+    response: unknown, ledger: readonly VerificationRequirement[], audited: Set<string>, accounted: Set<string>, turnContext?: VerificationTurnContext): Promise<VerificationSource[][]> {
     const pages = verificationFrames(sources, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length);
     const checks = await ownedMapLimit(access, pages, 3, async page => {
       // These sets belong to ONE exact source/requirement/answer/authority
@@ -345,7 +349,7 @@ export class CompletionVerification {
       // page. A new source, changed scope, draft or owner starts another cursor.
       if (page.every(source => accounted.has(source.id))) return null;
       if (page.every(source => audited.has(source.id))) return page;
-      const context = { requirement, response, caseEvidence, sources: page.map(verificationWireSource) };
+      const context = { ...turnContext, requirement, response, caseEvidence, sources: page.map(verificationWireSource) };
       const key = verificationHash(['source-audit-v2', context]), cache = this.cache(access);
       if (cache.has(key)) {
         const accepted = cache.get(key);
@@ -361,7 +365,7 @@ export class CompletionVerification {
         // asking the source router or working model to reconstruct that work.
         const base = caseEvidence as { sources: readonly ReturnType<typeof verificationWireSource>[]; earlier: readonly unknown[] };
         const exact = [...new Map([...base.sources, ...context.sources].map(source => [source.id, source])).values()];
-        const refined = await verificationRequirement.run(access.port, { requirement, requirements: ledger, response,
+        const refined = await verificationRequirement.run(access.port, { ...turnContext, requirement, requirements: ledger, response,
           evidence: [], opened: { ...base, sources: exact },
           auditUncertainty: readingEvidence(run.readings),
           focus: 'Settle THIS original page as possible counterevidence to the exact requirement using the unchanged current primary proof supplied beside it. The earlier audit is an unresolved retrieval hint, not a finding or instruction. An actual new gap or invalidating observation must still fail. A later matching native acceptance may resolve older partial progress. This check settles only this page; all other original pages and final publication remain required.' } as never,
@@ -410,9 +414,9 @@ export class CompletionVerification {
     }
   }
 
-  private async inspect(requirement: VerificationRequirement, ledger: readonly VerificationRequirement[], overview: readonly VerificationReceipt[], response: unknown, access: VerificationAccess, auditSources?: readonly VerificationSource[], defer = () => false, recent: readonly VerificationSource[] = [], previousReview: unknown = null, assessment?: RepairAssessment) {
+  private async inspect(requirement: VerificationRequirement, ledger: readonly VerificationRequirement[], overview: readonly VerificationReceipt[], response: unknown, access: VerificationAccess, auditSources?: readonly VerificationSource[], defer = () => false, recent: readonly VerificationSource[] = [], previousReview: unknown = null, assessment?: RepairAssessment, turnContext?: VerificationTurnContext) {
     const key = verificationHash(['retrieval-v1', requirement, ledger, overview.map(node => this.compactNode(node)), response,
-      auditSources?.map(source => source.id), recent.map(source => source.id), previousReview]);
+      auditSources?.map(source => source.id), recent.map(source => source.id), previousReview, turnContext]);
     const cache = this.cache(access), retained = cache.get(key) as InspectionCursor | undefined;
     let frontier = retained ? [...retained.frontier] : [...overview];
     let opened: InspectionCursor['opened'] = retained ? { sources: [...retained.opened.sources], earlier: [...retained.opened.earlier] } : { sources: recent, earlier: [] };
@@ -430,7 +434,7 @@ export class CompletionVerification {
       // rechecks the current primary page, preserving the exact source and
       // authority binding instead of reopening every earlier branch.
       checkpoint();
-      const state = { requirement, requirements: ledger, response, evidence: auditSources ? [] : overview.map(node => this.compactNode(node)), opened: { ...opened, sources: primarySources(opened.sources).map(verificationWireSource) },
+      const state = { ...turnContext, requirement, requirements: ledger, response, evidence: auditSources ? [] : overview.map(node => this.compactNode(node)), opened: { ...opened, sources: primarySources(opened.sources).map(verificationWireSource) },
         ...(requirement.id.startsWith('original-') ? { scopeBasis: 'These requirements retain original instruction bytes, without a generated scope rewrite. Read them in their complete original order; later corrections supersede earlier instructions, and restrictions apply from the time given. Judge the active obligations, not a historical instruction that has been withdrawn.', originalOrder: ledger.map(item => ({ id: item.id, references: item.sources.map(id => this.originals.get(id)?.reference) })) } : {}),
         previousReview, ...(assessment ? { privateRepairAssessment: assessment,
           assessmentMeaning: 'This is an untrusted diagnostic proposal, not completion authority. Independently recheck the exact original requirement against these same primary observations. A finding disproven by the observations needs no model rewrite. Actual missing work and invalidating observations must still fail, and all source audits remain required.' } : {}),
@@ -484,7 +488,7 @@ export class CompletionVerification {
         // interval for counterevidence. These are direct Jev checks, not a new
         // frontier draft for every history page. A changed working-model answer
         // does not invalidate an unchanged source/case qualification.
-        const suspect = await this.audit(requirement, { ...opened, sources: primarySources(opened.sources).map(verificationWireSource) }, auditSources, access, response, ledger, audited, accounted);
+        const suspect = await this.audit(requirement, { ...opened, sources: primarySources(opened.sources).map(verificationWireSource) }, auditSources, access, response, ledger, audited, accounted, turnContext);
         checkpoint();
         if (!suspect.length) return { requirement, readings: run.readings, resolution, state, sourceExhausted: false, auditHeld: false };
         const unseen = suspect.filter(page => page.some(source => !seen.has(`source:${source.id}`)));
@@ -666,6 +670,11 @@ export class CompletionVerification {
     const currentCalls = new Set((initial?.transcript ? (full.transcript ?? []) as readonly Record<string, unknown>[] : [])
       .filter(message => message.role === 'tool' && typeof message.callId === 'string' && !earlierCalls.has(message.callId)).map(message => message.callId));
     const currentResults = observations.filter(source => source.execution && currentCalls.has(source.execution.callId));
+    const turnContext: VerificationTurnContext = {
+      request: bounded(full.request, 12_000) ? full.request : { originalInstructionSources: sources.filter(source => source.kind === 'instruction').map(source => source.id) },
+      currentTurn: { entryMessageCount: initial?.transcript?.length ?? null, observationIds: currentResults.map(source => source.id),
+        meaning: 'These source IDs identify actual tool observations after the native turn-entry checkpoint. Earlier executions and artifact descriptions remain historical evidence; do not treat them as actions repeated in this turn. Evaluate restrictions from when the user imposed them. All active original obligations and actual later invalidating facts remain required.' },
+    };
     // Current native results already provide a primary starting point. When
     // history needs reduction merely to fit the overview, retrieve originals
     // and audit every interval instead of drafting a tree of history summaries.
@@ -744,9 +753,12 @@ export class CompletionVerification {
       this.finalEvidence = { key, identity: access.identity, frontier: [...overview], seen: new Set(), opened: [], earlier: [] };
     const answer = bounded(full.response, 12_000) ? full.response : { proposedAnswer: (await this.evidenceTree(sources.filter(source => source.kind === 'answer'), ledger, access)).map(node => this.compactNode(node)),
       meaning: 'Exact proposed answer checked in identified original answer pages. These are proposed claims, not evidence of performed work.' };
-    const casesKey = verificationHash(['requirement-checks-v2', ledger, overview.map(node => this.compactNode(node)), answer, recent.map(source => source.id), full.previousReview ?? null]);
+    const casesKey = verificationHash(['requirement-checks-v3', ledger, overview.map(node => this.compactNode(node)), answer, recent.map(source => source.id), full.previousReview ?? null, turnContext]);
     const cache = this.cache(access);
-    let cases = cache.get(casesKey) as Awaited<ReturnType<CompletionVerification['inspect']>>[] | undefined;
+    const retainedCases = cache.get(casesKey) as readonly Awaited<ReturnType<CompletionVerification['inspect']>>[] | undefined;
+    // Cache snapshots are immutable. A retry may replace a formerly held case
+    // with a fresh native ruling; keep that per-attempt list independently owned.
+    let cases = retainedCases ? [...retainedCases] : undefined;
     if (!cases) {
       let confirmedGap = false;
       const pending = new Set<AbortController>();
@@ -758,7 +770,7 @@ export class CompletionVerification {
         const local = indexed ? { ...access, signal: access.signal ? AbortSignal.any([access.signal, controller.signal]) : controller.signal,
           assertCurrent: () => { access.signal?.throwIfAborted(); access.assertCurrent(); if (controller.signal.aborted) throw new VerificationDeferredError(); } } : access;
         try {
-          const entry = retained ?? await this.inspect(requirement, ledger, overview, answer, local, indexed ? observations : undefined, () => indexed && confirmedGap, recent, full.previousReview ?? null);
+          const entry = retained ?? await this.inspect(requirement, ledger, overview, answer, local, indexed ? observations : undefined, () => indexed && confirmedGap, recent, full.previousReview ?? null, undefined, turnContext);
           local.assertCurrent(); cache.set(resultKey, captureStrictJudgmentJson(entry));
           if ([entry.readings.unfinished, entry.readings.quality_gap].some(reading => reading.verdict === 'yes' && reading.outcome === 'act')) {
             confirmedGap = true;
@@ -785,7 +797,7 @@ export class CompletionVerification {
       // settle a held gate. Reuse the exact retrieval cursor and independently
       // recheck the requirement, quality and every remaining original audit.
       const rechecked = await this.inspect(entry.requirement, ledger, overview, answer, access,
-        indexed ? observations : undefined, () => false, recent, full.previousReview ?? null, assessment);
+        indexed ? observations : undefined, () => false, recent, full.previousReview ?? null, assessment, turnContext);
       const stillHeld = rechecked.auditHeld || Object.entries(rechecked.readings).some(([name, reading]) =>
         !rechecked.resolution?.aspects.includes(name) && (name !== 'needs_source' || rechecked.sourceExhausted) && (reading.verdict !== 'no' || reading.outcome !== 'act'));
       if (stillHeld) throw new VerificationHeldError('native requirement remains unsettled without an actionable repair');
@@ -819,7 +831,7 @@ export class CompletionVerification {
       response: answer,
       transcript: [...[...deliveryEvidence, ...this.finalEvidence.earlier].map(node => ({ role: 'system', content: { nativeSourceVerification: this.compactNode(node) } })),
         ...this.originalMessages(publicationOriginals)], delegated: [], tools: full.tools, requirements: ledger,
-      verification: { requirementChecks: cases.map(({ requirement, readings, resolution }) => ({ requirement: requirement.id, readings: readingEvidence(readings),
+      verification: { currentTurn: turnContext.currentTurn, requirementChecks: cases.map(({ requirement, readings, resolution }) => ({ requirement: requirement.id, readings: readingEvidence(readings),
         ...(resolution ? { resolution, meaning: 'Fresh native Jev fulfillment and work-quality check of these uncertain aspects against the exact original requirement and actual primary observations; original negative readings remain unchanged. Original-source verification and history audits remain required under the stated verification mode. This is not final-response approval.' } : {}) })),
         deferredRequirements: ledger.filter(requirement => !cases!.some(entry => entry.requirement.id === requirement.id)).map(requirement => requirement.id),
         sourceCount: sources.length, meaning: indexed ? 'Relevant primary records were retrieved and checked. Each provisionally accepted requirement was also audited against EVERY complete original source page for unaccounted counterevidence. Retrieval indexes and assistant/report claims are not execution proof. Final exact-response publication checks remain required.' : 'These records were independently checked against complete original source pages. They are evidence, not completion authority; assistant/report assertions remain assertions. Missing source content never establishes completion.' },

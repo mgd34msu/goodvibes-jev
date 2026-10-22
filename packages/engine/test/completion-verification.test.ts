@@ -43,6 +43,18 @@ test('a no-issue diagnosis rechecks the original requirement instead of manufact
   expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(true);
 });
 
+test('a held cached case can pass on retry without mutating its frozen checkpoint', async () => {
+  let resolved = false;
+  const fake = fakePort((name, _question, raw) => noulAnswer(name === 'quality_gap'
+    && (raw as unknown as { requirement?: unknown }).requirement && !resolved ? .4 : .01));
+  const verifier = new CompletionVerification(noIssueWriter), owner = access(fake.port), input = state('Completed review and delivery observed.');
+  await expect(verifier.prepare(input, owner)).rejects.toThrow('native requirement remains unsettled without an actionable repair');
+  resolved = true;
+  const result = await verifier.prepare(input, owner);
+  expect(result.findings).toHaveLength(0);
+  expect(fake.requests.filter(request => request.context?.battery === 'engine.verification.integration')).toHaveLength(1);
+});
+
 test.each([.4, .99])('a no-issue diagnosis cannot clear an original requirement still held at %s', async probability => {
   const fake = fakePort((name, _question, raw) => noulAnswer(name === 'unfinished'
     && (raw as unknown as { requirement?: unknown }).requirement ? probability : .01));
@@ -201,6 +213,11 @@ test('a bounded native follow-up checks all current results without redrafting e
   const first = fake.requests.find(request => request.context?.battery === 'engine.verification.requirement')!;
   const opened = (first.state as unknown as { opened: { sources: { execution?: { callId?: string } }[] } }).opened.sources;
   expect(opened.map(source => source.execution?.callId)).toEqual(['native-tests', 'report-update', 'final-diff']);
+  const boundary = first.state as unknown as { request: string; currentTurn: { entryMessageCount: number; observationIds: string[] } };
+  expect(boundary.request).toBe(input.request);
+  expect(boundary.currentTurn.entryMessageCount).toBe(before.transcript.length);
+  expect(new Set(boundary.currentTurn.observationIds)).toEqual(new Set(verificationSources(input)
+    .filter(source => source.execution && ['native-tests', 'report-update', 'final-diff'].includes(String(source.execution.callId))).map(source => source.id)));
   const audited = fake.requests.filter(request => request.context?.battery === 'engine.verification.audit')
     .flatMap(request => (request.state as unknown as { sources: { id: string }[] }).sources.map(source => source.id));
   expect(new Set(audited)).toEqual(new Set(verificationSources(input).map(source => source.id)));
