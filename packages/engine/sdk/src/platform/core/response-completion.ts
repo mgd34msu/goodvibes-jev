@@ -3,7 +3,7 @@ import { JudgmentError, mapLimit } from '@goodvibes-jev/judgment';
 import { JudgmentInputError } from '../gate/judgment-input.js';
 import { CompletionEvidenceProjection } from './response-completion-evidence.js';
 import { CompletionEvidenceBudgetError } from './response-completion-budget.js';
-import { captureStrictJudgmentJson, prepareJudgmentResult, retainStrictJudgmentJson } from '../gate/judgment-result.js';
+import { captureStrictJudgmentJson, JudgmentResultAdmissionError, prepareJudgmentResult, retainStrictJudgmentJson } from '../gate/judgment-result.js';
 import { captureConversationEvidence, type ConversationManager, type ConversationMessageSnapshot } from './conversation.js';
 import { responseCompletion } from './batteries/response-completion.js';
 import { delegationConsolidation } from './batteries/delegation-consolidation.js';
@@ -160,6 +160,26 @@ export class ResponseCompletionGuard {
     }
   }
 
+  private rememberFailure(error: unknown): void {
+    if (!this.reviewStore || !this.reviewKey) return;
+    const causes: Record<string, unknown>[] = [], seen = new Set<unknown>();
+    for (let current = error; current instanceof Error && !seen.has(current) && causes.length < 8; current = current.cause) {
+      seen.add(current);
+      const frames = (current.stack ?? '').split('\n').slice(1).flatMap(line => {
+        const frame = line.match(/(?:\/\$bunfs\/[^\s)]+|\/[^\s)]+\/packages\/(?:engine|judgment)\/[^\s)]+):\d+:\d+/)?.[0];
+        return frame ? [frame] : [];
+      }).slice(0, 3);
+      causes.push({ type: current.constructor.name, ...(current instanceof JudgmentError ? { kind: current.kind } : {}),
+        ...(current instanceof JudgmentInputError ? { problem: current.problem } : {}),
+        ...(current instanceof JudgmentResultAdmissionError ? { problem: current.problem } : {}),
+        ...(current instanceof VerificationHeldError ? { stage: current.stage } : {}), frames });
+    }
+    // Record only local type/stage/stack locations, never upstream error
+    // messages, request bodies, credentials or evaluator approval.
+    this.reviewStore.rememberProposal(verificationHash(['completion-verification-failure-v1', this.reviewKey]),
+      JSON.stringify({ kind: 'completion-verification-failure', at: new Date().toISOString(), causes }));
+  }
+
   resumedRepair(): string { return this.restoredCorrection ?? ''; }
 
   noteToolResults(results: readonly { readonly success: boolean }[]): void {
@@ -226,6 +246,7 @@ export class ResponseCompletionGuard {
     this.sourceAdmitted = false;
     try { return await this.read(input, options, onWaiting); }
     catch (error) {
+      if (!options.signal?.aborted) try { this.rememberFailure(error); } catch { /* Diagnostics cannot replace the original failure. */ }
       options.signal?.throwIfAborted(); options.assertCurrent?.();
       if (error instanceof ResponseCompletionError) throw error;
       const transient = error instanceof JudgmentPortMissingError || error instanceof JudgmentAuthorityRetiredError
