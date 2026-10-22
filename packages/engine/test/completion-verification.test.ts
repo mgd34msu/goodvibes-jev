@@ -51,6 +51,69 @@ test.each([.4, .99])('a no-issue diagnosis cannot clear an original requirement 
   expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(false);
 });
 
+test('a source-backed native resolution settles uncertain quality once and still audits every original page', async () => {
+  const before = state('Retained earlier work observations. '.repeat(800));
+  const input = { ...before, initial: { request: before.request, transcript: before.transcript },
+    transcript: [...before.transcript, { role: 'tool', callId: 'current-check', content: 'Completed review and delivery observed.' }] };
+  let diagnoses = 0;
+  const writer: VerificationWriter = async request => { if (request.operation === 'findings') diagnoses++; return noIssueWriter(request); };
+  const fake = fakePort((name, _question, raw) => {
+    const current = raw as unknown as { requirement?: unknown };
+    return noulAnswer(name === 'satisfied' ? .99 : name === 'quality_gap' && current.requirement ? .4 : .01);
+  });
+  const result = await new CompletionVerification(writer).prepare(input, access(fake.port));
+  expect(result.findings).toHaveLength(0);
+  expect(diagnoses).toBe(1);
+  const resolutions = fake.requests.filter(request => request.context?.battery === 'engine.verification.resolution');
+  expect(resolutions).toHaveLength(1);
+  const targets = (resolutions[0]!.questions.satisfied!.instructions as { nativeTargets: { originalRequirement: { text: string } } }).nativeTargets;
+  expect(targets.originalRequirement.text).toBe('Complete the original requested review and deliver its report.');
+  const audited = fake.requests.filter(request => request.context?.battery === 'engine.verification.audit')
+    .flatMap(request => (request.state as unknown as { sources: { id: string }[] }).sources.map(source => source.id));
+  expect(new Set(audited)).toEqual(new Set(verificationSources(input).map(source => source.id)));
+  const checks = (result.state.verification as { requirementChecks: { readings: { quality_gap: { outcome: string } }; resolution?: { aspects: string[] } }[] }).requirementChecks;
+  expect(checks[0]!.readings.quality_gap.outcome).not.toBe('act');
+  expect(checks[0]!.resolution?.aspects).toContain('quality_gap');
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(true);
+});
+
+test.each([.01, .4])('a resolution at %s cannot clear uncertain work quality', async probability => {
+  const fake = fakePort((name, _question, raw) => noulAnswer(name === 'satisfied' ? probability : name === 'quality_gap'
+    && (raw as unknown as { requirement?: unknown }).requirement ? .4 : .01));
+  await expect(new CompletionVerification(noIssueWriter).prepare(state('Completed review and delivery observed.'), access(fake.port)))
+    .rejects.toThrow('native requirement remains unsettled without an actionable repair');
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(false);
+});
+
+test('retiring primary-source ownership during resolution prevents acceptance', async () => {
+  let current = true;
+  const fake = fakePort((name, _question, raw) => {
+    if (name === 'satisfied') { current = false; return noulAnswer(.99); }
+    return noulAnswer(name === 'quality_gap' && (raw as unknown as { requirement?: unknown }).requirement ? .4 : .01);
+  });
+  await expect(new CompletionVerification(noIssueWriter).prepare(state('Completed review and delivery observed.'), {
+    ...access(fake.port), assertCurrent() { if (!current) throw new Error('Primary source was retired'); },
+  })).rejects.toThrow('Primary source was retired');
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(false);
+});
+
+test('an affirmative resolution cannot erase contrary original evidence or a confident work defect', async () => {
+  const before = state('Earlier source. '.repeat(1000) + 'HIDDEN-MIDDLE-DEFECT' + ' Later source. '.repeat(1000));
+  const input = { ...before, initial: { request: before.request, transcript: before.transcript },
+    transcript: [...before.transcript, { role: 'tool', callId: 'current-check', content: 'A report was written.' }] };
+  const fake = fakePort((name, question, raw) => {
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    const current = raw as unknown as { requirement?: unknown; sources?: unknown; opened?: { sources: unknown } };
+    const opened = JSON.stringify(current.opened?.sources ?? []).includes('HIDDEN-MIDDLE-DEFECT');
+    return noulAnswer(name === 'satisfied' || name === 'missed' && JSON.stringify(current.sources).includes('HIDDEN-MIDDLE-DEFECT') ? .99
+      : name === 'quality_gap' && current.requirement ? opened ? .99 : .4 : .01);
+  });
+  await expect(new CompletionVerification(noIssueWriter).prepare(input, access(fake.port)))
+    .rejects.toThrow('native requirement remains unsettled without an actionable repair');
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.audit')).toBe(true);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(false);
+});
+
 test('a no-issue integration diagnosis needs a fresh passing integration check', async () => {
   const fake = fakePort((name, _question, raw) => noulAnswer(name === 'conflict'
     && !(raw as unknown as { privateRepairAssessment?: unknown }).privateRepairAssessment ? .4 : .01));
