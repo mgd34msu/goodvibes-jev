@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { KnowledgeStore, ProjectPlanningService } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { ConfigModal } from '../../../input/config-modal.ts';
 import { createPlanningModalSurface, type PlanningModalService } from '../../../views/modals/planning-modal.ts';
 import { actionCtx, viewText } from './modal-surface-test-helpers.ts';
@@ -15,12 +15,12 @@ let previous: ReturnType<typeof installJudgmentPort>;
 let judgment: ReturnType<typeof fakePort>;
 beforeEach(() => {
   judgment = fakePort((name, question, state) => {
-    if (name !== 'kind' || question.type !== 'choice' || state === null || typeof state !== 'object'
-      || !('field' in state) || state.field !== 'path') throw new Error('Unexpected planning-history privacy fixture');
-    return choiceAnswer(question, 'other', 0.99);
+    if (name !== 'specified' || question.type !== 'noul' || !state || typeof state !== 'object' || Array.isArray(state)
+      || state.goal !== 'Inspect historical retries' || state.scope !== 'Only retry helpers') throw new Error('Unexpected saved goal validation');
+    return noulAnswer(0.99);
   });
   previous = installJudgmentPort({ ...judgment.port, ask: request => {
-    if (request.context?.battery !== 'engine.redaction.field-kind') throw new Error('Unexpected planning-history reading');
+    if (request.context?.battery !== 'engine.knowledge.planning-goal-specified') throw new Error('Unexpected saved planning reading');
     return judgment.port.ask(request);
   } });
 });
@@ -56,12 +56,9 @@ async function savedRecord(openQuestions: boolean, approved: boolean) {
   } });
   await store.close();
   const reopened = openStore(path); await reopened.store.init();
-  // Native store opening logs one ordinary path-field role. No path value is
-  // sent, and the modal itself must still perform no semantic reading.
+  // Creating the fixture validates its goal; subsequent history views only read it.
   expect(judgment.requests).toHaveLength(1);
-  expect(judgment.requests[0]?.context?.battery).toBe('engine.redaction.field-kind');
-  expect(judgment.requests[0]?.state).toEqual({ field: 'path' });
-  expect(Object.keys(judgment.requests[0]?.questions ?? {})).toEqual(['kind']);
+  expect(judgment.requests[0]?.context?.battery).toBe('engine.knowledge.planning-goal-specified');
   judgment.requests.length = 0;
   return { path, ...reopened };
 }

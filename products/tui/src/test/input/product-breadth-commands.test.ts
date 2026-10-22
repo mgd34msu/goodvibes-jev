@@ -2,7 +2,6 @@ import { makeTestSurface } from '../helpers/session-surface.ts';
 import { seedBenchmarkCacheFixture } from '../helpers/benchmark-cache-fixture.ts';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fieldKind } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { isDeepStrictEqual } from 'node:util';
 import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { recordedBuiltinArchetypes, recordedFamilyPort } from '../helpers/teamwork-family-reading.ts';
@@ -2225,22 +2224,7 @@ describe('product breadth commands', () => {
     ctx.teamworkReading = lifetime;
     const doc = { name: 'doc-specialist', description: 'Documentation specialist for operator handoff notes', tools: ['read', 'write', 'analyze'], family: 'implement' as const };
     const builtin = recordedFamilyPort(recordedBuiltinArchetypes);
-    // The native loader logs the absent custom directory before its listing.
-    // The logger reads only this field name, separately from archetype purpose.
-    const missingDirectory = fakePort((name, question, state) => {
-      if (name !== 'kind' || !isDeepStrictEqual(question, fieldKind.items.kind.question)
-        || !isDeepStrictEqual(state, { field: 'dir' })) throw new Error('Unexpected missing-directory field reading.');
-      return choiceAnswer(question, 'other', 0.99);
-    });
-    const previous = installJudgmentPort({ ...builtin.port, ask: request => {
-      if (request.context?.battery !== fieldKind.name) return builtin.port.ask(request);
-      if (!isDeepStrictEqual(request.context, { battery: fieldKind.name, batteryVersion: fieldKind.version,
-        pattern: 'battery', site: 'engine.redaction.field-kind' })
-        || !isDeepStrictEqual(request.questions, { kind: fieldKind.items.kind.question })) {
-        throw new Error('Unexpected missing-directory request contract.');
-      }
-      return missingDirectory.port.ask(request);
-    } });
+    const previous = installJudgmentPort(builtin.port);
     try {
     await teamwork!.handler(['review'], ctx);
     expect(out.join('\n')).toContain('Teamwork Review');
@@ -2296,11 +2280,6 @@ describe('product breadth commands', () => {
     expect(out.join('\n')).toContain('Created teamwork task');
     expect(created[1]?.kind).toBe('agent');
     expect(created[1]?.owner).toBe('custom:doc-specialist');
-    expect(missingDirectory.requests).toHaveLength(1);
-    expect(missingDirectory.requests[0]?.context).toEqual({ battery: fieldKind.name, batteryVersion: fieldKind.version,
-      pattern: 'battery', site: 'engine.redaction.field-kind' });
-    expect(missingDirectory.requests[0]?.state).toEqual({ field: 'dir' });
-    expect(missingDirectory.requests[0]?.questions).toEqual({ kind: fieldKind.items.kind.question });
     expect(builtin.requests).toHaveLength(1);
     expect(builtin.requests[0]?.context).toEqual({ battery: 'engine.agents.archetype-family', pattern: 'fan-out', site: 'agents.archetype-family' });
     expect(builtin.requests[0]?.state).toEqual({ archetypes: recordedBuiltinArchetypes.map(({ name, description, tools }) => ({ name, description, tools: [...tools], isCustom: false, origin: 'builtin' })) });
