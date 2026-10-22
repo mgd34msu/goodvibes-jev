@@ -18,6 +18,7 @@ import { ReadTool } from '../../sdk/src/platform/tools/read/index.js';
 import { ProjectIndex } from '../../sdk/src/platform/state/project-index.js';
 import { contractWorkReceipts } from '../../sdk/src/platform/contract/work-receipts.js';
 import { answerClaimScopes, completeAnswerClaimCoverage } from '../../sdk/src/platform/contract/final-answer-claims.js';
+import { judgmentExecutionEvidence } from '../../sdk/src/platform/contract/judgment-execution-evidence.js';
 
 let harness: Harness | undefined;
 afterEach(() => {
@@ -29,6 +30,34 @@ function use(h: Harness): Harness {
   harness = h;
   return h;
 }
+
+test.each(['covered', 'omitted', 'failed-criterion', 'confident-goal'])('an uncertain overall goal needs actual original-criterion fulfillment and a separate obligation proof (%s)', async scenario => {
+  using log = new SqliteDecisionLog(':memory:');
+  let proofs = 0, workers = 0;
+  const h = use(makeHarness({ plan: oneUnitPlan(1), decisionLog: log, scripts: { u1: (record, context) => { workers++; return finishes('The parser result.')(record, context); } },
+    port: context => {
+      if (judgeOf(context) === 'deliverable' && context.name === 'goal') return noulAnswer(scenario === 'confident-goal' ? 0.98 : 0.61);
+      if (judgeOf(context) === 'deliverable' && context.name === 'criterion_0' && scenario === 'failed-criterion') return noulAnswer(0.98);
+      if (context.name === 'omitted') { proofs++; expect(context.state['originalRequest']).toBeDefined(); return noulAnswer(scenario === 'omitted' ? 0.98 : 0.03); }
+      return undefined;
+    } }));
+  const { contract } = startContract(h);
+  await waitFor(() => (h.runner.get(contract.id)?.checks.length ?? 0) > 0, 'the original goal decision');
+  if (scenario === 'covered') await waitFor(() => terminal(h, contract.id), 'qualified goal publication');
+  const current = contractOf(h, contract.id), check = current.checks.at(-1)!;
+  expect(workers).toBe(1);
+  expect(proofs).toBe(scenario === 'covered' || scenario === 'omitted' ? 1 : 0);
+  if (scenario === 'covered') {
+    expect(current.status).toBe('passed'); expect(check.goal.probabilityUnmet).toBe(0.03);
+    const proof = JSON.parse(current.decisions.findLast(decision => decision.targetId === `${contract.id}.goal-obligations`)!.reason);
+    expect(proof.sourceGoal.probability).toBe(0.61); expect(proof.passed).toBe(true);
+    expect(log.get(proof.decisionIds[0])?.stateHash).toBe(proof.stateHash);
+    const original = log.get(proof.sourceJudgmentDecisionIds[0]);
+    expect(original?.status).toBe('answered');
+    if (original?.status === 'answered') expect(original.answers).toMatchObject({ goal: noulAnswer(0.61) });
+    expect(check.decisionIds).toContain(proof.decisionIds[0]);
+  } else { expect(current.status).not.toBe('passed'); expect(current.commit).toBeUndefined(); expect(check.goal.verdict).toBe('unmet'); }
+});
 
 test('an uncertain overall factual objection is resolved by exact complete answer coverage without another draft', async () => {
   using log = new SqliteDecisionLog(':memory:');
@@ -483,6 +512,11 @@ test('a final-content receipt resolves its own pending requirement through a gen
           if (typeof output !== 'string') throw new Error('Expected the exact final answer');
           expect(evidence.finalAnswerReview.outputDigest).toBe(hashState(output));
           expect(log.get(evidence.finalAnswerReview.decisionIds[0]!)?.context.site).toBe('contract.check.final-answer-review');
+          expect(evidence).toMatchObject({ orchestration: { currentValidation: { stage: 'original-requirements-after-content-review',
+            completedContentReview: { passed: true, outputDigest: hashState(output) }, pendingStages: ['this original-requirements decision', 'owner-publication'] } },
+            nativeJudgmentExecutions: { source: 'native-host', operation: 'read-runtime-native-judgment-log' } });
+          const phases = (evidence as unknown as { nativeJudgmentExecutions: { phases: { phase: string; answered: number; missingOrUnanswered: string[] }[] } }).nativeJudgmentExecutions.phases;
+          expect(phases.find(phase => phase.phase === 'finalAnswer')).toMatchObject({ answered: 1, missingOrUnanswered: [] });
           return noulAnswer(0.01);
         }
       }
@@ -506,6 +540,10 @@ test('a final-content receipt resolves its own pending requirement through a gen
   const records = check.decisionIds.map(id => log.get(id)!);
   expect(records.map(record => record.context.site)).toEqual(['contract.check.deliverable-judge', 'contract.check.final-answer-review', 'contract.check.deliverable-judge']);
   expect(done.criteria[0]!.readings.at(-1)!.decisionId).toBe(check.decisionIds[2]);
+  const unavailable = done.units[0]!.checks.at(-1)!.decisionIds[0]!;
+  const proof = judgmentExecutionEvidence(done, { get: id => id === unavailable ? undefined : log.get(id) }, [check.decisionIds[1]!]);
+  expect(proof).toMatchObject({ phases: expect.arrayContaining([expect.objectContaining({ phase: 'units', missingOrUnanswered: [unavailable] })]) });
+  expect(proof).not.toHaveProperty('passed');
 });
 
 test('current primary evidence never bypasses an unmet original root after answer content passes', async () => {

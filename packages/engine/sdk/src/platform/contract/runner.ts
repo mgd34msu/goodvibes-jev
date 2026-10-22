@@ -85,6 +85,7 @@ import { nativeContractActionSource, nativeContractPort } from './native-decisio
 import type { DurableContractExecution } from './durable-admission.js';
 
 export interface ContractRunnerDeps {
+  readonly judgmentLog?: Pick<import('@goodvibes-jev/judgment').DecisionLog, 'get'> | undefined;
   readonly readOwnerEvidence?: OwnerEvidenceReader | undefined;
   readonly getSelectedModel?: (() => Pick<import('../providers/registry-types.js').ModelDefinition, 'id' | 'provider' | 'registryKey' | 'displayName'>) | undefined;
   readonly nativeDecisions?: NativeContractDecisionHost | undefined;
@@ -410,6 +411,7 @@ export function createContractRunner(deps: ContractRunnerDeps): ContractRunner &
   });
 
   const ownSteps = createContractSteps({
+    judgmentLog: deps.judgmentLog,
     readOwnerEvidence: deps.readOwnerEvidence,
     native,
     agentManager: deps.agentManager,

@@ -58,6 +58,7 @@ export interface NativeContractCompositionOwner {
 }
 
 export interface ContractRunnerCompositionOptions {
+  readonly judgmentLog?: Pick<import('@goodvibes-jev/judgment').DecisionLog, 'get'> | undefined;
   /** Registered conversation surface; absent hosts contribute no owner history. */
   readonly surfaceRoot?: string | undefined;
   readonly runtimeBus: RuntimeEventBus;
@@ -224,6 +225,7 @@ export function composeContractRunner(options: ContractRunnerCompositionOptions)
     providerHealth: routeProviderHealth(options.providerRegistry, options.runtimeStore),
   }, options.providerRegistry.benchmarks);
   const runner = createContractRunner({
+    judgmentLog: options.judgmentLog,
     readOwnerEvidence: options.surfaceRoot ? createOwnerReadEvidenceReader(resolveSurfaceDirectory(options.projectRoot, options.surfaceRoot)) : undefined,
     getSelectedModel: () => options.providerRegistry.getCurrentModel(),
     ...(options.nativeOwner === undefined ? {} : { nativeDecisions: options.nativeOwner.decisions, durableAdmission: options.nativeOwner.admission }),

@@ -63,6 +63,9 @@ import { addJudgmentUsage } from './usage.js';
 import { preserveDeclaredReadReceipts, readPrivateReceiptArchives, verifyPrivateReceiptPreservation } from './private-read-receipts.js';
 import { finalAnswerEvidence, finalContentEvidence } from './final-answer-evidence.js';
 import { answerClaimScopes, completeAnswerClaimCoverage, scopedClaimQuestion, type AnswerClaimReview, type AnswerClaimScope } from './final-answer-claims.js';
+import { judgmentExecutionEvidence } from './judgment-execution-evidence.js';
+import { GOAL_OBLIGATIONS } from './batteries/goal-obligations.js';
+import { goalObligationSource, goalObligationQuestion, type GoalObligationProof } from './goal-obligation-proof.js';
 
 /** Decision sites, as the decision log records them. */
 export const COMPLETION_SITES = {
@@ -323,10 +326,21 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     const readFulfillment = async (review?: FinalAnswerReviewReceipt, previous?: Awaited<ReturnType<typeof fulfillmentJudge.judge>>) => {
       const usage = emptyJudgmentUsage();
       try {
+        const recheckEvidence = review === undefined ? undefined : finalContentEvidence(fulfillmentEvidence);
+        const recheckHost = recheckEvidence?.['orchestration'];
+        const execution = review === undefined ? undefined : judgmentExecutionEvidence(contract, context.judgmentLog, review.decisionIds);
         return await fulfillmentJudge.judge(
           meteredPort(nativeContractPort(contract, context.native, judgmentPort(site), run.abort.signal), usage),
           { goal: input.goal, criteria: judgedCriteria.map(criterion => criterion.text), output: evidence.output,
-            evidence: review === undefined ? fulfillmentEvidence : { ...fulfillmentEvidence, finalAnswerReview: JSON.parse(JSON.stringify(review)) as JsonValue,
+            evidence: review === undefined ? fulfillmentEvidence : { ...recheckEvidence,
+              ...(execution === undefined ? {} : { nativeJudgmentExecutions: execution }),
+              ...(recheckHost && typeof recheckHost === 'object' && !Array.isArray(recheckHost) ? { orchestration: { ...recheckHost,
+                currentValidation: { scope: input.scope, targetId: input.targetId, outputDigest: hashState(evidence.output), status: 'in-progress',
+                  stage: 'original-requirements-after-content-review', completedContentReview: { passed: review.passed, decisionIds: [...review.decisionIds], outputDigest: review.outputDigest },
+                  pendingStages: ['this original-requirements decision', 'owner-publication'],
+                  acceptanceRule: 'The unchanged configured contract check rule maps probabilityUnmet > 0.5 to unmet. Historical confidence/outcome labels remain recorded metadata, not evidence that an executed host check did not run or did not pass its configured rule. This current requirements assessment is itself the actual native evaluation now; its own prior approval cannot be a precondition. Missing substantive work and independent project validations still fail.',
+                } } } : {}),
+              finalAnswerReview: JSON.parse(JSON.stringify(review)) as JsonValue,
               previousFulfillmentAssessment: {
                 goal: { probabilityUnmet: previous!.goal.probability, verdict: criterionVerdict(previous!.goal) },
                 criteria: judgedCriteria.map((criterion, index) => ({ id: criterion.id, probabilityUnmet: previous!.criteria[index]!.probability,
@@ -522,6 +536,54 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       judgment.recordAction('requirements require reassessment with the completed independent content review');
       judgment = await readFulfillment(answerReview, judgment);
     }
+    let goalProof: GoalObligationProof | undefined;
+    let goalFinding: CompletionFinding | undefined;
+    let effectiveGoal = judgment.goal;
+    if (answerReview?.passed && judgedCriteria.length > 0 && judgment.criteria.every(reading => criterionVerdict(reading) === 'met')
+      && input.criteria.filter(criterion => criterion.disposition === 'met-by-structure').every(criterion => criterion.status === 'met')
+      && criterionVerdict(judgment.goal) === 'unmet' && judgment.goal.outcome !== 'act') {
+      // A hypothetical implication is a separate mandatory premise, never an
+      // assumption that the work happened or a reason to repeat the whole task.
+      const battery = GOAL_OBLIGATIONS[config().acceptanceStakes];
+      const state = goalObligationSource(contract), literalSourceDigest = hashState(state);
+      const usage = emptyJudgmentUsage(), site = 'contract.check.goal-obligations';
+      let stateHash: string | undefined;
+      try {
+        const raw = judgmentPort(site);
+        const bound: typeof raw = { ...raw, ask(request) {
+          stateHash = hashState(request.state);
+          return raw.ask({ ...request, questions: { ...request.questions, omitted: goalObligationQuestion(battery.items.omitted.question, literalSourceDigest) } });
+        } };
+        const result = await battery.run(meteredPort(nativeContractPort(contract, context.native, bound, run.abort.signal), usage), state, { site, signal: run.abort.signal });
+        assertOwnedContractSource(contract);
+        if (run.terminal) { result.recordAction('discarded: contract already ended'); return null; }
+        const { probability, verdict, outcome } = result.readings.omitted;
+        const passed = criterionVerdict(result.readings.omitted) === 'met';
+        if (!stateHash) throw new Error('Goal-obligation reading has no original-source binding');
+        goalProof = { schemaVersion: 1, policy: { name: battery.name, version: battery.version }, literalSourceDigest, outputDigest: hashState(evidence.output), stateHash,
+          sourceJudgmentDecisionIds: [...judgment.decisionIds], sourceGoal: { probability: judgment.goal.probability, verdict: judgment.goal.verdict, outcome: judgment.goal.outcome },
+          reading: { probability, verdict, outcome }, decisionIds: result.result.decisionId ? [result.result.decisionId] : [], passed };
+        run.decide('checked', `${contract.id}.goal-obligations`, JSON.stringify(goalProof), [...goalProof.decisionIds]);
+        result.recordAction(passed ? 'The literal criteria cover the complete original goal; completion also requires their actual current checks, content approval, gates and successful publication.' : 'The literal criteria do not establish the whole original goal; retain the original goal hold.');
+        if (passed) effectiveGoal = [result.readings.omitted, ...judgment.criteria]
+          .reduce((worst, reading) => reading.probability > worst.probability ? reading : worst);
+        else {
+          const segments = new Intl.Segmenter(undefined, { granularity: 'sentence' });
+          const candidates = [...segments.segment(contract.ask)].map((sentence, index) => ({ id: `obligation-${index}`,
+            content: { reference: `original request at character ${sentence.index}`, quote: sentence.segment.trim() } }));
+          const selected = await responseFinding.select(meteredPort(nativeContractPort(contract, context.native, judgmentPort('contract.check.goal-obligation-finding'), run.abort.signal), usage),
+            { issue: 'The original goal contains an obligation not established by the literal checked criteria. Locate that exact original obligation; this does not prove its actual work is absent.', evidence: { originalSource: state, reading: goalProof.reading } },
+            candidates, { site: 'contract.check.goal-obligation-finding', signal: run.abort.signal });
+          const passage = candidates.find(candidate => candidate.id === selected.pick.choice)?.content;
+          selected.recordAction('Identify the original obligation to investigate against retained work, not another complete draft or a new whole-task assignment.');
+          goalFinding = { ...completionFinding('unfinished'), assessment: 'unresolved',
+            issue: 'The checked criteria do not yet establish every original goal obligation; this does not establish that accepted work is missing.',
+            repair: 'Compare the quoted original obligation with retained primary observations and completed work first. Add only demonstrated missing work or the specific missing evidence; do not repeat accepted inspections or redraft the whole result.',
+            preserve: ['All genuinely passed criteria, accepted results, supported answer passages and unchanged artifacts.'],
+            localization: passage ? 'candidate-to-investigate' : 'unavailable', ...(passage ? { passage } : {}) };
+        }
+      } finally { addJudgmentUsage(contract.judgmentUsage, usage); }
+    }
     assertOwnedContractSource(contract);
     if (run.terminal) {
       judgment.recordAction('discarded: the contract already ended');
@@ -530,7 +592,7 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     const checkId = `${input.targetId}.k${input.checks.length + 1}`;
     const now = run.env.now();
     const verdicts = new Map(judgedCriteria.map((criterion, index) => [criterion.id, criterionVerdict(judgment.criteria[index]!)]));
-    const goalVerdict = criterionVerdict(judgment.goal);
+    const goalVerdict = criterionVerdict(effectiveGoal);
     const failing = failedGates(evidence.gates);
     judgedCriteria.forEach((criterion, index) => {
       const reading = judgment.criteria[index]!;
@@ -550,13 +612,13 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       at: now,
       trigger: input.trigger,
       ...(evidence.gates === undefined ? {} : { gates: evidence.gates }),
-      goal: { probabilityUnmet: judgment.goal.probability, verdict: goalVerdict, outcome: judgment.goal.outcome },
+      goal: { probabilityUnmet: effectiveGoal.probability, verdict: goalVerdict, outcome: effectiveGoal.outcome },
       quality: {},
       // A check that does not pass is handed to correction: a planned fix or the owner.
       result: passed ? 'pass' : 'stall',
       problems,
       qualityProblems: [],
-      decisionIds: [...new Set([...(answerReview?.fulfillmentDecisionIds ?? []), ...(answerReview?.decisionIds ?? []), ...judgment.decisionIds])],
+      decisionIds: [...new Set([...(answerReview?.fulfillmentDecisionIds ?? []), ...(answerReview?.decisionIds ?? []), ...judgment.decisionIds, ...(goalProof?.decisionIds ?? [])])],
       evidenceDigest: digest,
     };
     input.checks.push(check);
@@ -571,14 +633,14 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
       trigger: input.trigger,
       result: check.result,
       criteria: judgedCriteria.map((criterion, index) => ({ criterionId: criterion.id, verdict: verdicts.get(criterion.id)!, probabilityUnmet: judgment.criteria[index]!.probability, outcome: judgment.criteria[index]!.outcome })),
-      goal: { verdict: goalVerdict, outcome: judgment.goal.outcome },
+      goal: { verdict: goalVerdict, outcome: effectiveGoal.outcome },
       quality: [],
       gates: (evidence.gates ?? []).map((gate) => ({ gate: gate.gate, passed: gate.passed, skipped: gate.skipped === true })),
       decisionIds: check.decisionIds,
     });
-    return { check, verdicts, passed, output: answerReview?.passed === false
-      ? evidence.output + '\n\nNative final-answer content findings (unfinished substantive work or unsupported claims):\n' + JSON.stringify(answerReview)
-      : evidence.output };
+    return { check, verdicts, passed, output: evidence.output
+      + (answerReview?.passed === false ? '\n\nNative final-answer content findings (unfinished substantive work or unsupported claims):\n' + JSON.stringify(answerReview) : '')
+      + (goalFinding ? '\n\nNative original-goal obligation to investigate against retained work:\n' + JSON.stringify(goalFinding) : '') };
   }
 
   function finding(reading: TargetReading): Parameters<Correction['groupFailed']>[2] {

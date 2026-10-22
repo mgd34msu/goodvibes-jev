@@ -52,7 +52,16 @@ function observationTable(value: JsonValue | undefined, check?: JsonValue): Json
       return [record['path']!, record['returnedRanges']!, record['returnedLines']!, ...(Object.keys(rest).length ? [rest] : [])];
     }),
     meaning: 'Lossless rows of actual returned-read observations for this unit. Expand each row using columns; additionalFields retains the other original fields directly or through the exact nativeCheckRef described by readValidationReferenceMeaning. An absent fourth column means no additional fields. Ranges and attribution are unchanged. A returned read is not semantic approval or test execution.' };
-  return JSON.stringify(table).length < JSON.stringify(linked).length ? table : linked;
+  const directories: string[] = [], directoryIds = new Map<string, number>();
+  const directoryTable = { ...table, pathDirectories: directories, rows: table.rows.map(row => {
+    const path = row[0] as string, boundary = path.lastIndexOf('/') + 1;
+    const directory = path.slice(0, boundary);
+    let id = directoryIds.get(directory);
+    if (id === undefined) { id = directories.length; directories.push(directory); directoryIds.set(directory, id); }
+    return [[id, path.slice(boundary)], ...row.slice(1)];
+  }), meaning: table.meaning + ' A path cell [directoryIndex, basename] expands exactly to pathDirectories[directoryIndex] + basename; separators are retained in the directory string. No path characters are omitted.' };
+  const compact = JSON.stringify(directoryTable).length < JSON.stringify(table).length ? directoryTable : table;
+  return JSON.stringify(compact).length < JSON.stringify(linked).length ? compact : linked;
 }
 
 /** Root-to-unit links can reuse the identical criterion already supplied below. */

@@ -31,6 +31,7 @@ export interface ContractSteps extends UnitCheckEscalations, GroupSteps {}
 
 /** The runner parts the steps act through. */
 export interface StepContext {
+  readonly judgmentLog?: Pick<import('@goodvibes-jev/judgment').DecisionLog, 'get'> | undefined;
   readonly readOwnerEvidence?: OwnerEvidenceReader | undefined;
   readonly native?: NativeContractServices | undefined;
   readonly agentManager: Pick<AgentManager, 'getStatus' | 'cancel'>;

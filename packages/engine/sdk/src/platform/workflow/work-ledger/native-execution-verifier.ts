@@ -8,6 +8,8 @@ import { assertNativeContractSource, nativeContractSourceForAdmission } from '..
 import { UNIT_JUDGE_BANDS } from '../../contract/batteries/unit-judge.js';
 import { FINAL_ANSWER_REVIEWS } from '../../contract/batteries/final-answer-review.js';
 import { completeAnswerClaimCoverage, scopedClaimQuestion, type AnswerClaimReview } from '../../contract/final-answer-claims.js';
+import { GOAL_OBLIGATIONS } from '../../contract/batteries/goal-obligations.js';
+import { goalObligationSource, goalObligationQuestion } from '../../contract/goal-obligation-proof.js';
 import { UNIT_QUALITY_BAND } from '../../contract/batteries/unit-quality.js';
 import { CHECK_SITES, runUnitCheck, type CheckSettings } from '../../contract/check.js';
 import { judgeState, qualityState, trimEvidence, type FileChange } from '../../contract/evidence.js';
@@ -119,14 +121,47 @@ export async function verifyNativeWorkExecution(options: {
   function priorJudge(check: ContractView['checks'][number], criteria: ContractView['criteria'], site: string, ids = check.decisionIds.slice(0, 1)): boolean {
     const readings = nativeJudgeBatches(ids, criteria, site, options.decisionLog);
     if (!readings) return false;
-    const goal = rawNo(readings.get('goal')!.answer, UNIT_JUDGE_BANDS.high);
-    if (goal === null || goal !== check.goal.probabilityUnmet) return false;
+    const originalGoal = readings.get('goal')!.answer;
+    const goal = rawNo(originalGoal, UNIT_JUDGE_BANDS.high);
+    if (goal === null || goal !== check.goal.probabilityUnmet) {
+      if (site !== 'contract.check.deliverable-judge' || !genuineGoalProof(check, ids, originalGoal.noul)) return false;
+    }
     return criteria.filter(criterion => criterion.disposition === 'judged').every((criterion, index) => {
       const source = readings.get(`criterion_${index}`)!;
       const raw = rawNo(source.answer, UNIT_JUDGE_BANDS.high);
       const reading = criterion.readings.find(value => value.checkId === check.id && value.decisionId === source.decisionId);
       return raw !== null && reading?.probabilityUnmet === raw && reading.verdict === 'met' && reading.outcome === 'act';
     });
+  }
+  function genuineGoalProof(check: ContractView['checks'][number], sourceIds: readonly string[], sourceProbability: number): boolean {
+    const decision = [...contract.decisions].reverse().find(value => value.action === 'checked' && value.targetId === `${contract.id}.goal-obligations`
+      && value.decisionIds.every(id => check.decisionIds.includes(id)));
+    let proof: Record<string, unknown> | null = null;
+    try { proof = decision ? object(JSON.parse(decision.reason)) : null; } catch { return false; }
+    const ids = proof?.['decisionIds'];
+    if (!decision || proof?.['schemaVersion'] !== 1 || proof['passed'] !== true || !Array.isArray(ids) || ids.length !== 1 || typeof ids[0] !== 'string'
+      || !contract.criteria.some(criterion => criterion.disposition === 'judged')
+      || !contract.criteria.filter(criterion => criterion.disposition === 'met-by-structure').every(criterion => criterion.status === 'met')) return false;
+    const entry = options.decisionLog.get(ids[0]);
+    const battery = entry?.context.battery === GOAL_OBLIGATIONS.critical.name ? GOAL_OBLIGATIONS.critical : GOAL_OBLIGATIONS.high;
+    const source = nativeQuestionBatches(ids, ['omitted'], 'contract.check.goal-obligations', options.decisionLog)?.get('omitted');
+    const literalSourceDigest = hashState(goalObligationSource(contract));
+    const initial = readYesNo({ type: 'noul', noul: sourceProbability }, UNIT_JUDGE_BANDS.high);
+    const recordedInitial = object(proof['sourceGoal']), recorded = object(proof['reading']), policy = object(proof['policy']);
+    if (!source || !entry || entry.context.battery !== battery.name || entry.context.batteryVersion !== battery.version
+      || entry.stateHash !== proof['stateHash'] || proof['literalSourceDigest'] !== literalSourceDigest || proof['outputDigest'] !== hashState(contract.answer ?? '')
+      || nativeSettlementDigest(proof['sourceJudgmentDecisionIds']) !== nativeSettlementDigest(sourceIds)
+      || nativeSettlementDigest(decision.decisionIds) !== nativeSettlementDigest(ids)
+      || nativeSettlementDigest(source.question) !== nativeSettlementDigest(goalObligationQuestion(battery.items.omitted.question, literalSourceDigest))
+      || sourceProbability <= 0.5 || initial.outcome === 'act' || recordedInitial?.['probability'] !== sourceProbability
+      || recordedInitial['verdict'] !== initial.verdict || recordedInitial['outcome'] !== initial.outcome
+      || policy?.['name'] !== battery.name || policy['version'] !== battery.version) return false;
+    const probability = rawNo(source.answer, battery.items.omitted.band);
+    const actualPremises = nativeJudgeBatches(sourceIds, contract.criteria, 'contract.check.deliverable-judge', options.decisionLog);
+    const worstPremise = actualPremises ? Math.max(...contract.criteria.filter(criterion => criterion.disposition === 'judged')
+      .map((_, index) => actualPremises.get(`criterion_${index}`)!.answer.noul)) : Infinity;
+    return probability !== null && recorded?.['probability'] === probability && recorded['verdict'] === 'no' && recorded['outcome'] === 'act'
+      && check.goal.probabilityUnmet === Math.max(probability, worstPremise) && check.goal.verdict === 'met' && check.goal.outcome === 'act';
   }
   function genuine(unit: ContractView['units'][number]): boolean {
     const check = unit.checks.at(-1);
@@ -175,8 +210,10 @@ export async function verifyNativeWorkExecution(options: {
       || !Array.isArray(contentIds) || !claimIds.every(id => typeof id === 'string' && contentIds.includes(id))
       || !completeAnswerClaimCoverage(contract.answer ?? '', claims as AnswerClaimReview[])) return false;
     const overview = object(content?.['overviewUnsupported']);
-    const rawOverview = contentQuestions?.get('unsupported')?.answer.noul;
+    const overviewQuestion = contentQuestions?.get('unsupported');
+    const rawOverview = overviewQuestion?.answer.noul;
     if (typeof rawOverview !== 'number' || rawOverview <= 0.5 || overview?.['probability'] !== rawOverview
+      || nativeSettlementDigest(overviewQuestion?.question) !== nativeSettlementDigest(battery.items.unsupported.question)
       || readYesNo({ type: 'noul', noul: rawOverview }, battery.items.unsupported.band).outcome === 'act') return false;
     let worst = -1;
     for (const rawClaim of claims) {
@@ -195,7 +232,11 @@ export async function verifyNativeWorkExecution(options: {
     const effective = object(contentReadings?.['unsupported']);
     return effective?.['probability'] === worst && effective['verdict'] === 'no' && effective['outcome'] === 'act';
   }
-  const expectedIds = Array.isArray(fulfillmentIds) ? [...new Set([...fulfillmentIds, ...(Array.isArray(contentIds) ? contentIds : []), ...deliverableJudgeIds])] : [];
+  const goalDecision = [...contract.decisions].reverse().find(decision => decision.action === 'checked' && decision.targetId === `${contract.id}.goal-obligations`
+    && decision.decisionIds.every(id => deliverable.decisionIds.includes(id)));
+  const directGoal = nativeJudgeBatches(deliverableJudgeIds, contract.criteria, deliverableSite, options.decisionLog)?.get('goal');
+  const qualifiedGoalIds = directGoal && rawNo(directGoal.answer, UNIT_JUDGE_BANDS.high) === deliverable.goal.probabilityUnmet ? [] : goalDecision?.decisionIds ?? [];
+  const expectedIds = Array.isArray(fulfillmentIds) ? [...new Set([...fulfillmentIds, ...(Array.isArray(contentIds) ? contentIds : []), ...deliverableJudgeIds, ...qualifiedGoalIds])] : [];
   if (content?.['schemaVersion'] !== 2 || content['passed'] !== true || content['outputDigest'] !== hashState(contract.answer ?? '')
     || !contentQuestions || !contentReadings || !contentEntries.length
     || (claims !== undefined && !genuineClaims())
