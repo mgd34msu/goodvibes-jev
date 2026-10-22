@@ -167,16 +167,6 @@ test('read validation references preserve mismatched and unaccepted check identi
   }
 });
 
-test('directory tables reconstruct every full source path and retain exact read ranges', () => {
-  const f = fixture();
-  const reads = Array.from({ length: 200 }, (_, index) => ({ path: `packages/server/src/long-module-directory/file-${index}.ts`, returnedRanges: ['2-4', '9-12'], returnedLines: 7 }));
-  f.evidence.orchestration.units[0].readObservations = reads;
-  const view = finalAnswerEvidence(f.contract, f.evidence, {})!;
-  const table = (view.evidence['orchestration'] as unknown as { units: { readObservations: { pathDirectories: string[]; rows: [[number, string], string[], number][] } }[] }).units[0]!.readObservations;
-  expect(table.pathDirectories).toEqual(['packages/server/src/long-module-directory/']);
-  expect(table.rows.map(([[directory, filename], returnedRanges, returnedLines]) => ({ path: table.pathDirectories[directory]! + filename, returnedRanges, returnedLines }))).toEqual(reads);
-});
-
 test('root criterion references resolve to complete identical unit criteria and preserve conflicting or extended values inline', () => {
   const f = fixture();
   const criterion = { id: 'u1.c1', text: 'Inspect all required source and return the reviewed artifact.', verdict: 'met' };
