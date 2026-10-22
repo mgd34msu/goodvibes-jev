@@ -124,7 +124,7 @@ test('bounded worker read receipts and returned results stay primary while every
   };
   const result = await new CompletionVerification(writer).prepare(full, access(fake.port));
   expect(result.findings).toHaveLength(0); expect(checked).toBeGreaterThan(0);
-  expect(result.state.delegated).toEqual(full.delegated);
+  expect(result.state.delegated).toMatchObject(full.delegated.map(({ evidence: _evidence, ...assignment }) => assignment));
   const originals = verificationSources(full).filter(source => source.kind !== 'answer');
   expect(originals.every(source => audited.has(source.id))).toBe(true);
   expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(true);
@@ -192,6 +192,7 @@ test('resuming retains the actual worker read behind its native parent receipt w
   });
   const checked = await new CompletionVerification(verificationWriter, restartedStore).prepare(full, access(fake.port));
   expect(checked.findings).toEqual([]);
+  expect(checked.state.delegated).toMatchObject([{ id: 'worker', task: 'Read review.md only.', status: 'completed', output: 'Report consistency verified.' }]);
   const publication = checked.state.transcript as { role: string; content: unknown }[];
   expect(publication.some(message => message.role === 'user' && JSON.stringify(message.content).includes('Do not spawn agents'))).toBe(false);
   expect(publication.some(message => message.role === 'system' && JSON.stringify(message.content).includes('Do not spawn agents'))).toBe(true);
@@ -412,6 +413,7 @@ test('a small held draft retains worker evidence for its resumed fix list and fr
   expect(guard.resumedRepair()).toContain('FULL-WORKER-READ');
   expect(await guard.check({ request: 'Verify the report with one worker.', response: 'The worker verified review.md.', conversation: resumed, tools: ['agent'], delegated: [] })).toBeNull();
   expect(check.requests.some(request => request.context?.battery === 'engine.core.response-completion')).toBe(true);
+  expect(check.requests.some(request => request.context?.battery === 'engine.core.delegation-consolidation')).toBe(true);
   resumed.addUserMessage('Verify the report with one worker.');
   const next = new ResponseCompletionGuard({ request: 'Verify the report with one worker.', conversation: resumed,
     verificationStore: new VerificationStore(root, sessionId), verificationWriter });

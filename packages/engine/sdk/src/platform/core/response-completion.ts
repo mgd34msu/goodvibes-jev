@@ -338,6 +338,7 @@ export class ResponseCompletionGuard {
     const retainedWorkers = this.reviewStore ? retainedDelegationSources(preparedState, this.reviewStore.sources) : [];
     const fullState = retainedWorkers.length
       ? { ...preparedState, retainedWorkerObservations: retainedWorkers.map(verificationWireSource) } : preparedState;
+    const hasDelegatedEvidence = preparedState.delegated.length > 0 || retainedWorkers.length > 0;
     this.sourceAdmitted = true;
     const conversationSource = messages.native ? null : JSON.stringify(transcript);
     const archiveIdentity = verificationHistory(conversation), archiveSource = retainStrictJudgmentJson(archiveIdentity);
@@ -396,7 +397,7 @@ export class ResponseCompletionGuard {
     let failure: { readonly error: unknown } | undefined;
     const checks = await Promise.allSettled([
       responseCompletion.run(port, state as never, { ...readingOptions, site: responseCompletion.name }),
-      source.snapshot.delegated.length ? delegationConsolidation.run(port, state as never,
+      hasDelegatedEvidence ? delegationConsolidation.run(port, state as never,
         { ...readingOptions, site: delegationConsolidation.name }) : Promise.resolve(null),
       this.hasToolEvidence || source.snapshot.transcript.some(message => message.role === 'tool') || source.snapshot.delegated.length || source.snapshot.completedWork.length
         ? executionAssurance.run(port, state as never,

@@ -830,6 +830,15 @@ export class CompletionVerification {
     // These remain observations; every work/quality and final gate still runs.
     const delegatedSources = observations.filter(source => source.reference.startsWith('delegated assignment/result ')
       || source.reference.startsWith('delegated '));
+    const delegatedAssignments = delegatedSources.flatMap(source => {
+      if (!source.reference.startsWith('delegated assignment/result ') || source.completeMessage === false) return [];
+      try {
+        const original = JSON.parse(source.text);
+        return original && typeof original === 'object' && !Array.isArray(original)
+          ? [{ ...original, nativeOriginalSource: { id: source.id, reference: source.reference,
+            meaning: 'Actual assignment/result observation. Its recorded status does not restore a live worker, execution permission or completion approval.' } }] : [];
+      } catch { return []; } // Fragmented records stay in original-source retrieval.
+    });
     const delegatedPrimary = bounded(delegatedSources.map(verificationWireSource), VERIFICATION_FRAME_CHARACTERS * 2)
       ? delegatedSources : [];
     const recent = [...new Map([...hostPrimary, ...checkedAnswer, ...currentPrimary, ...delegatedPrimary].map(source => [source.id, source])).values()];
@@ -934,7 +943,7 @@ export class CompletionVerification {
       // Keep its assignment/result association for the synthesis gate instead
       // of making an empty delegated array stand in for completed workers.
       // Larger results remain in the original-source retrieval path.
-      delegated: bounded(full.delegated ?? [], VERIFICATION_FRAME_CHARACTERS * 2) ? full.delegated ?? [] : [],
+      delegated: bounded(delegatedAssignments, VERIFICATION_FRAME_CHARACTERS * 2) ? delegatedAssignments : [],
       delegatedOriginals: { sources: delegatedSources.map(source => source.id),
         meaning: 'These native original observations preserve worker assignments, returned results and execution evidence. An empty delegated array means their contents require original-source retrieval, not that no workers ran. Current assignments and historical workers remain distinct; these observations never approve the proposed answer.' },
       tools: full.tools, requirements: ledger,
