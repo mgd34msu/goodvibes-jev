@@ -1,4 +1,4 @@
-import { createSystemOnePort, DEFAULT_MODEL, SqliteDecisionLog, withDecisionLog, type EntryType, type Questions } from '@goodvibes-jev/judgment';
+import { createSystemOnePort, DEFAULT_MODEL, JudgmentError, SqliteDecisionLog, withDecisionLog, type EntryType, type Questions } from '@goodvibes-jev/judgment';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
@@ -89,6 +89,33 @@ describe('native semantic callers', () => {
     expect(result.status).toBe('passed'); expect(result.units.find(u => u.id === 'u1')!.fixRounds).toBe(1);
     expect(result.nativeDecisions!.history.some(item => item.stage === 'stall')).toBe(true); noOwner(h, contract.id);
   });
+
+  test.each(['stall', 'fix-plan'] as const)('a native %s transport failure retains its exact correction and planner output', async stage => {
+    let attempts = 0;
+    const scripted = stepPlanner(plan(), { fix: () => plannerOutput(fixPlan([{ serves: ['u1.c1'] }])) });
+    const h = use({ planner: scripted.runner, contract: { stallLimit: 1, maxNudgesPerUnit: 1, maxFixRounds: 1 },
+      scripts: { u1: () => [1, 2].map(() => ({ files: { 'src/csv.ts': 'incomplete' }, text: '[p=0.9] incomplete parser' })),
+        'u1.f1.u1': finishes('real repair evidence') },
+      port: context => {
+        if (context.name === 'disposition' && isStage(context, stage) && attempts++ === 0)
+          throw new JudgmentError('unavailable', 'temporary native correction transport failure');
+        const output = context.state['output'];
+        if (judgeOf(context) !== null && typeof output === 'string' && output.includes('Planned fix')) return noulAnswer(0.03);
+        return undefined;
+      } });
+    const { contract } = startContract(h, { nativeSource: source });
+    const result = await done(h, contract.id);
+    expect(result.status).toBe('passed');
+    expect(attempts).toBe(2);
+    expect(result.nativeSource).toEqual(source);
+    expect(result.units[0]!.fixRounds).toBe(1);
+    expect(result.nativeDecisions!.spent['fix:u1:1']).toBe(1);
+    expect(scripted.of('fix')).toHaveLength(1);
+    expect(h.agentsOf('u1')).toHaveLength(1);
+    expect(h.agentsOf('u1.f1.u1')).toHaveLength(1);
+    expect(result.nativeDecisions!.history.filter(record => record.stage === stage)).toHaveLength(1);
+    noOwner(h, contract.id);
+  }, 20_000);
 
   test('spent correction budget cannot be reset by semantic act or human text', async () => {
     let h: Harness;

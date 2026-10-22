@@ -25,7 +25,7 @@ import { nativeContractActionSource } from './native-decisions.js';
  */
 import { waitForTaskRecovery } from '../core/response-completion.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
-import { hashState } from '@goodvibes-jev/judgment';
+import { hashState, JudgmentError } from '@goodvibes-jev/judgment';
 import type { StallRoute } from '../../events/contract.js';
 import type { WorkItem } from '../orchestration/types.js';
 import { stallRoute } from './batteries/stall-route.js';
@@ -112,10 +112,32 @@ type Integration = { readonly kind: 'merged' } | { readonly kind: 'conflict'; re
 export function createCorrection(context: StepContext, escalations: Pick<Escalations, 'raise'> & Rejudge): Correction {
   const config = () => readContractConfig(context.configManager);
 
+  /** Retry only the interrupted reading. Replaying a correction step would
+   * spend another fix round or run its planner and workers a second time. */
+  async function recoverReading<T>(run: ContractRun, targetId: string, what: string, read: () => Promise<T>): Promise<T> {
+    for (let failures = 0; ; failures++) {
+      run.abort.signal.throwIfAborted();
+      try { return await read(); }
+      catch (error) {
+        if (run.terminal || isAbortError(error, run.abort.signal) || !(error instanceof JudgmentError)
+          || (error.kind !== 'unavailable' && error.kind !== 'unrecorded')) throw error;
+        const delay = Math.min(30_000, 1_000 * 2 ** Math.min(failures, 5));
+        run.decide('resumed', targetId, `${what} pending: ${failureFromError(error).reason}; retained work and correction budget unchanged, retry in ${delay / 1_000} seconds; no verdict`);
+        context.checkpoint?.(run);
+        await waitForTaskRecovery(delay, run.abort.signal);
+      }
+    }
+  }
+
+  function readDecision(run: ContractRun, input: Parameters<typeof decideNativeContract>[2]) {
+    return recoverReading(run, input.targetId, 'native correction verification',
+      () => decideNativeContract(run.contract, context.native, input));
+  }
+
   async function readRoute(run: ContractRun, state: Record<string, unknown>): Promise<{ readonly route: StallRoute; readonly act: boolean; readonly decisionId: string | undefined; recordAction(action: string): void }> {
     const usage = emptyJudgmentUsage();
     try {
-      const read = await stallRoute.run(meteredPort(nativeContractPort(run.contract, context.native, judgmentPort(STALL_ROUTE_SITE), run.abort.signal), usage), state as Parameters<typeof stallRoute.run>[1], { site: STALL_ROUTE_SITE, signal: run.abort.signal });
+      const read = await recoverReading(run, run.id, 'correction routing', () => stallRoute.run(meteredPort(nativeContractPort(run.contract, context.native, judgmentPort(STALL_ROUTE_SITE), run.abort.signal), usage), state as Parameters<typeof stallRoute.run>[1], { site: STALL_ROUTE_SITE, signal: run.abort.signal }));
       const reading = read.readings.route;
       return { route: reading.choice, act: reading.outcome === 'act', decisionId: read.result.decisionId, recordAction: (action) => read.recordAction(action) };
     } finally {
@@ -232,7 +254,8 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
     const { contract } = run;
     const input = await prepareFixPlannerInput(run);
     assertNativeContractSource(contract);
-    const route = await nativeContractRoute(context.routeSelector, contract, context.native, { purpose: 'planner', contract: run.view() }, run.abort.signal);
+    const route = await recoverReading(run, brief.targetId, 'fix planner routing',
+      () => nativeContractRoute(context.routeSelector, contract, context.native, { purpose: 'planner', contract: run.view() }, run.abort.signal));
     if (contract.nativeSource !== undefined) { await planNativeFix(run, brief, round, route, input); return; }
     let repair: { problems: readonly PlanProblem[]; previousPlan: string } | undefined;
     const candidateId = `${brief.targetId}.f${round}.candidate`;
@@ -315,7 +338,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
       await input.assertCurrent();
       if (needsPlan) {
         if (config().planRepairLimit > 0 && nativeSpent(contract, key) >= config().planRepairLimit + 1) {
-          await decideNativeContract(contract, context.native, { stage: 'fix-plan', targetId: brief.targetId, action: 'Start another fix-planning attempt', allowAct: false,
+          await readDecision(run, { stage: 'fix-plan', targetId: brief.targetId, action: 'Start another fix-planning attempt', allowAct: false,
             state: () => ({ attempts: nativeSpent(contract, key), limit: config().planRepairLimit === 0 ? null : config().planRepairLimit + 1 }), continuations: [], signal: run.abort.signal });
           run.control.fail('planning', 'Native fix planner exhausted its unchanged budget'); return;
         }
@@ -333,7 +356,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
       await input.assertCurrent();
       const valid = checked.problems.length === 0 && checked.group !== undefined;
       const canRepair = config().planRepairLimit === 0 || nativeSpent(contract, key) < config().planRepairLimit + 1;
-      const decision = await decideNativeContract(contract, context.native, { stage: 'fix-plan', targetId: brief.targetId,
+      const decision = await readDecision(run, { stage: 'fix-plan', targetId: brief.targetId,
         action: 'Run this exact checked fix group against the existing target criteria', allowAct: valid,
         state: () => ({ plan: checked.plan ?? null, problems: checked.problems, requiredIds: brief.requiredIds, round, attempts: nativeSpent(contract, key), limit: config().planRepairLimit === 0 ? null : config().planRepairLimit + 1 }) as unknown as import('@goodvibes-jev/judgment').EntryType,
         continuations: canRepair ? [{ id: 'repair-fix-plan', kind: 'revise-action', description: 'Use one remaining fix-planner attempt to repair only this derived group.' }] : [],
@@ -436,10 +459,11 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
   }
 
   async function freshUnit(run: ContractRun, unit: ContractUnit, reason: string, decisionIds: readonly string[]): Promise<void> {
-    const route = await nativeContractRoute(context.routeSelector, run.contract, context.native, { purpose: 'fresh-unit', contract: run.view(), unit: structuredClone(unit) }, run.abort.signal);
+    const route = await recoverReading(run, unit.id, 'fresh worker routing',
+      () => nativeContractRoute(context.routeSelector, run.contract, context.native, { purpose: 'fresh-unit', contract: run.view(), unit: structuredClone(unit) }, run.abort.signal));
     if (run.contract.nativeSource !== undefined) {
       const cost = itemClosed(run, unit) ? 2 : 1;
-      const decision = await decideNativeContract(run.contract, context.native, { stage: 'stall', targetId: unit.id, action: 'Start a fresh worker with this exact unit brief, criteria and selected route',
+      const decision = await readDecision(run, { stage: 'stall', targetId: unit.id, action: 'Start a fresh worker with this exact unit brief, criteria and selected route',
         allowAct: run.contract.sessionMode !== true && (config().maxFixRounds === 0 || unit.fixRounds + unit.freshAgents + cost <= config().maxFixRounds),
         state: () => ({ goal: unit.goal, brief: unit.brief, criteria: unit.criteria.map(c => ({ id: c.id, text: c.text, status: c.status })), route, spent: unit.fixRounds + unit.freshAgents, limit: config().maxFixRounds === 0 ? null : config().maxFixRounds, cost }) as unknown as import('@goodvibes-jev/judgment').EntryType,
         continuations: [], decisionIds, signal: run.abort.signal });
@@ -513,7 +537,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
   async function nativeUnitCorrection(run: ContractRun, unit: ContractUnit, check: DecidedCheck): Promise<void> {
     const canSplit = run.contract.sessionMode !== true && !exhausted(run, unit.fixRounds + unit.freshAgents);
     const canFresh = canSplit && (config().maxFixRounds === 0 || unit.fixRounds + unit.freshAgents + (itemClosed(run, unit) ? 2 : 1) <= config().maxFixRounds);
-    const decision = await decideNativeContract(run.contract, context.native, { stage: check.check.result === 'native-decision' || check.check.result === 'await-owner' ? 'evidence' : 'stall', targetId: unit.id,
+    const decision = await readDecision(run, { stage: check.check.result === 'native-decision' || check.check.result === 'await-owner' ? 'evidence' : 'stall', targetId: unit.id,
       action: 'Plan a bounded correction that must preserve all criteria and produce actual new evidence', allowAct: canSplit,
       state: () => ({ goal: unit.goal, criteria: unit.criteria.map(c => ({ id: c.id, text: c.text, status: c.status })), check: { id: check.check.id, result: check.check.result, goal: check.check.goal, quality: check.check.quality },
         fixRounds: unit.fixRounds, freshAgents: unit.freshAgents, limit: config().maxFixRounds === 0 ? null : config().maxFixRounds, sessionMode: run.contract.sessionMode === true }) as unknown as import('@goodvibes-jev/judgment').EntryType,
@@ -534,7 +558,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
     const unmet = judged(unit.criteria).filter((criterion) => criterion.status !== 'met').map((criterion) => criterion.id);
     const why = `its branch conflicts with the contract branch in ${files.join(', ') || 'unknown files'}`;
     if (run.contract.nativeSource !== undefined) {
-      const decision = await decideNativeContract(run.contract, context.native, { stage: 'stall', targetId: unit.id, action: 'Plan a bounded repair of this exact merge conflict without weakening criteria',
+      const decision = await readDecision(run, { stage: 'stall', targetId: unit.id, action: 'Plan a bounded repair of this exact merge conflict without weakening criteria',
         allowAct: run.contract.sessionMode !== true && !exhausted(run, unit.fixRounds + unit.freshAgents),
         state: () => ({ conflict: { ...conflict, files: [...conflict.files] }, goal: unit.goal, spent: unit.fixRounds + unit.freshAgents, limit: config().maxFixRounds === 0 ? null : config().maxFixRounds }), continuations: [], signal: run.abort.signal });
       if (decision.decision.outcome !== 'act') { run.control.fail('other', 'Jev refused the native merge repair'); return; }
@@ -559,7 +583,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
   async function targetFailed(run: ContractRun, scope: 'group' | 'deliverable', target: { readonly id: string; readonly goal: string; readonly criteria: readonly Criterion[]; readonly checks: readonly UnitCheck[]; fixRounds: number }, finding: TargetFinding): Promise<void> {
     const unmet = finding.unmet;
     if (run.contract.nativeSource !== undefined) {
-      const decision = await decideNativeContract(run.contract, context.native, { stage: 'stall', targetId: target.id, action: 'Plan a bounded correction of this failed target, preserving all original criteria',
+      const decision = await readDecision(run, { stage: 'stall', targetId: target.id, action: 'Plan a bounded correction of this failed target, preserving all original criteria',
         allowAct: run.contract.sessionMode !== true && !exhausted(run, target.fixRounds),
         state: () => ({ scope, goal: target.goal, criteria: target.criteria.map(c => ({ id: c.id, text: c.text, status: c.status })), unmet: [...finding.unmet], unshown: [...finding.unshown], spent: target.fixRounds, limit: config().maxFixRounds === 0 ? null : config().maxFixRounds, sessionMode: run.contract.sessionMode === true }),
         continuations: [], decisionIds: finding.decisionIds, signal: run.abort.signal });
@@ -702,7 +726,7 @@ export function createCorrection(context: StepContext, escalations: Pick<Escalat
   };
 }
 
-/** Runs a correction or completion step; an error (a Jev outage, a planner that cannot run) fails the contract with what it was doing. */
+/** Fails an invalid correction step; temporary reading failures recover at their exact call sites. */
 export async function guarded(run: ContractRun, what: string, step: () => Promise<void>): Promise<void> {
   try {
     await step();

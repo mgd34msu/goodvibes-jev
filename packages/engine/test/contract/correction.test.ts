@@ -7,7 +7,7 @@
  */
 import { afterEach, describe, expect, test } from 'bun:test';
 import { choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
-import { hashState, SqliteDecisionLog } from '@goodvibes-jev/judgment';
+import { hashState, JudgmentError, SqliteDecisionLog } from '@goodvibes-jev/judgment';
 import { hasContractPlanConsumer } from '../../sdk/src/platform/tools/agent/contract-binding.js';
 import { buildFixGroup, validateFixPlan, type ContractRouteSelector, type Criterion, type FixBrief } from '../../sdk/src/platform/contract/index.js';
 import { plannerOutput, type AnswerContext, type DraftPlan } from './plan-support.js';
@@ -44,6 +44,53 @@ function use(h: Harness): Harness {
 const unitFix = (): string => plannerOutput(fixPlan([{ serves: ['u1.c1'], files: ['src/csv.ts'] }]));
 
 describe('routing a stalled unit', () => {
+  test.each(['stall-route', 'planner-route'] as const)('a temporary %s outage retries its reading without repeating workers or spending a repair round', async site => {
+    let stallReadings = 0, plannerRoutes = 0;
+    const planner = stepPlanner(oneUnitPlan(1), { fix: unitFix });
+    const h = use(makeHarness({ plan: oneUnitPlan(1), contract: { stallLimit: 2, maxFixRounds: 1 },
+      planner: planner.runner, scripts: { u1: keepsFailing(3), 'u1.f1.u1': finishes('fixed the parser') },
+      routeSelector: async request => {
+        if (request.purpose === 'planner' && ++plannerRoutes === 2 && site === 'planner-route')
+          throw new JudgmentError('unavailable', 'temporary route transport outage');
+        return { model: 'provider-a:model-a', provider: 'provider-a', reason: request.purpose };
+      },
+      port: answers(fixedOutputsMeet, context => {
+        if (context.name !== 'route') return undefined;
+        if (++stallReadings === 1 && site === 'stall-route') throw new JudgmentError('unavailable', 'temporary stall transport outage');
+        return choiceAnswer(context.question, 'split', 0.95);
+      }),
+    }));
+    const { contract } = startContract(h);
+    await waitFor(() => terminal(h, contract.id), 'recovered correction to finish', 15_000);
+    const done = contractOf(h, contract.id);
+    expect(done.status).toBe('passed');
+    expect(done.units[0]!.fixRounds).toBe(1);
+    expect(h.agentsOf('u1')).toHaveLength(1);
+    expect(h.agentsOf('u1.f1.u1')).toHaveLength(1);
+    expect(planner.of('fix')).toHaveLength(1);
+    expect(done.decisions.filter(decision => decision.action === 'resumed' && decision.reason.includes('correction budget unchanged'))).toHaveLength(1);
+    expect(stallReadings).toBe(site === 'stall-route' ? 2 : 1);
+    expect(plannerRoutes).toBe(site === 'planner-route' ? 3 : 2);
+  }, 20_000);
+
+  test('cancelling during a correction reading outage stops retries without starting a repair', async () => {
+    let readings = 0;
+    const planner = stepPlanner(oneUnitPlan(1), { fix: unitFix });
+    const h = use(makeHarness({ plan: oneUnitPlan(1), contract: { stallLimit: 2 }, planner: planner.runner,
+      scripts: { u1: keepsFailing(3) }, port: context => {
+        if (context.name === 'route') { readings++; throw new JudgmentError('unavailable', 'temporary transport outage'); }
+        return undefined;
+      } }));
+    const { contract } = startContract(h);
+    await waitFor(() => contractOf(h, contract.id).decisions.some(decision => decision.reason.includes('correction budget unchanged')), 'pending correction reading');
+    h.runner.cancel(contract.id, 'operator cancelled the task');
+    await h.runner.join(contract.id);
+    expect(contractOf(h, contract.id).status).toBe('cancelled');
+    expect(readings).toBe(1);
+    expect(planner.of('fix')).toHaveLength(0);
+    expect(contractOf(h, contract.id).units[0]!.fixRounds).toBe(0);
+  });
+
   test('split: a planned-fix group runs, and the unit passes when its re-check reads the fix', async () => {
     const asked: Record<string, unknown>[] = [];
     const planner = stepPlanner(oneUnitPlan(1), { fix: unitFix });
