@@ -357,9 +357,10 @@ export function rollbackManagedApply(configManager: ConfigManager, token: string
   return restored;
 }
 
-function buildResolvedEntries(configManager: ConfigManager, store: SettingsControlPlaneStore): ResolvedSettingEntry[] {
+function buildResolvedEntries(configManager: ConfigManager, store: SettingsControlPlaneStore, key?: ConfigKey): ResolvedSettingEntry[] {
   const conflictKeys = new Set(store.conflicts.map((entry) => entry.key));
-  return configManager.getSchema().map((setting) => {
+  const schema = configManager.getSchema();
+  return (key === undefined ? schema : schema.filter(setting => setting.key === key)).map((setting) => {
     const localValue = structuredClone((postalConfigKey(setting.key) ? configManager.getStored(setting.key) : configManager.get(setting.key)));
     const syncedEntry = store.syncedSettings.find((entry) => entry.key === setting.key);
     const managedEntry = store.managedSettings.find((entry) => entry.key === setting.key);
@@ -441,7 +442,7 @@ export function getResolvedSettingLookup(
   key: ConfigKey,
 ): ResolvedSettingLookup | null {
   const store = readStore(getConfigControlPlaneDir(configManager));
-  const entry = buildResolvedEntries(configManager, store).find((candidate) => candidate.key === key);
+  const entry = buildResolvedEntries(configManager, store, key)[0];
   if (!entry) return null;
   return {
     entry,

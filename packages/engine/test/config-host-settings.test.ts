@@ -5,7 +5,7 @@ import { tmpdir } from 'node:os';
 import { ConfigManager, CONFIG_SCHEMA, DEFAULT_CONFIG, type ConfigKey, type HostBooleanSetting } from '../sdk/src/platform/config/index.ts';
 import {
   applySettingsSyncBundle, applyStagedManagedBundle, exportSettingsSyncBundle,
-  defaultStore, getSettingsControlPlaneSnapshot, stageManagedSettingsBundle,
+  defaultStore, getResolvedSettingLookup, getSettingsControlPlaneSnapshot, stageManagedSettingsBundle,
 } from '../sdk/src/platform/runtime/settings.ts';
 
 const KEY = 'behavior.hostPrivacyExample';
@@ -25,6 +25,26 @@ function write(path: string, value: unknown): void {
   writeFileSync(path, JSON.stringify(value));
 }
 function host(value: unknown): unknown { return { behavior: { hostPrivacyExample: value } }; }
+
+test('a named setting lookup reads only that value and observes a later managed lock', () => {
+  const { config, options } = fixture();
+  const key = 'behavior.autoApprove';
+  config.set(key, true);
+  const values: { get(key: ConfigKey): unknown } = config;
+  const originalGet = values.get.bind(config);
+  const get = spyOn(values, 'get').mockImplementation(requested => {
+    if (requested !== key) throw new Error('An unrelated setting is unavailable');
+    return Reflect.apply(originalGet, config, [requested]);
+  });
+  try {
+    expect(getResolvedSettingLookup(config, key)?.entry).toMatchObject({ key, effectiveValue: true, effectiveSource: 'local', locked: false });
+    write(join(options.configDir, 'settings-sync.json'), { ...defaultStore(), managedLocks: [
+      { key, source: 'fixture-policy', reason: 'Current managed restriction', updatedAt: 12 },
+    ] });
+    expect(getResolvedSettingLookup(config, key)).toMatchObject({ entry: { key, effectiveValue: true, locked: true },
+      lock: { source: 'fixture-policy', reason: 'Current managed restriction' } });
+  } finally { get.mockRestore(); }
+});
 async function waitFor(check: () => boolean): Promise<void> {
   const deadline = Date.now() + 2_000;
   while (!check() && Date.now() < deadline) await new Promise((resolve) => setTimeout(resolve, 5));
