@@ -124,6 +124,7 @@ test('bounded worker read receipts and returned results stay primary while every
   };
   const result = await new CompletionVerification(writer).prepare(full, access(fake.port));
   expect(result.findings).toHaveLength(0); expect(checked).toBeGreaterThan(0);
+  expect(result.state.delegated).toEqual(full.delegated);
   const originals = verificationSources(full).filter(source => source.kind !== 'answer');
   expect(originals.every(source => audited.has(source.id))).toBe(true);
   expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(true);
@@ -1151,6 +1152,41 @@ test('final-gate uncertainty retrieves original receipts and accepts the SAME dr
   expect(conversation.getMessageSnapshot()).toEqual(before);
   expect(fake.requests.filter(request => request.context?.battery === 'engine.core.response-completion')).toHaveLength(2);
   expect(guard.beginFinalization({ content: input.response })).not.toThrow();
+});
+
+test.each([
+  ['missing_results', false], ['unresolved_conflict', false],
+  ['missing_results', true], ['unresolved_conflict', true],
+] as const)('a held %s retrieves worker proof and retains actual defects (invalidating proof: %s)', async (heldAspect, invalidating) => {
+  const fake = fakePort((name, question, input) => {
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    const current = input as never as { verification?: unknown; transcript?: { role: string; callId?: string }[] };
+    if (name === heldAspect && current.verification) return noulAnswer(current.transcript?.some(message => message.role === 'tool' && message.callId === 'worker-proof') ? invalidating ? .99 : .01 : .4);
+    return noulAnswer(name.startsWith('fits_') ? .99 : .01);
+  });
+  installJudgmentPort(fake.port);
+  const conversation = new ConversationManager();
+  conversation.addUserMessage('Incorporate the worker result in the existing review.');
+  conversation.addToolResults([{ callId: 'worker-proof', success: true, output: invalidating
+    ? 'The worker found incompatible recorded counts. Its finding was omitted from the final result.'
+    : 'The actual worker read the report and confirmed its recorded counts. The final result incorporates that verdict.' },
+    { callId: 'trace', success: true, output: 'Unrelated historical diagnostic log.\n'.repeat(6000) }]);
+  const input = { request: 'Incorporate the worker result in the existing review.', response: 'The worker confirmed the recorded counts; see review.md.', conversation,
+    tools: ['agent'], delegated: [{ id: 'worker', task: 'Verify the recorded counts.', status: 'completed', output: 'Recorded counts verified.' }] };
+  const before = conversation.getMessageSnapshot();
+  const guard = new ResponseCompletionGuard({ ...input, verificationWriter });
+  const correction = await guard.checkUntilAvailable(() => input);
+  expect(conversation.getMessageSnapshot()).toEqual(before);
+  const checks = fake.requests.filter(request => request.context?.battery === 'engine.core.delegation-consolidation');
+  expect(checks.length).toBeGreaterThan(1);
+  if (invalidating) {
+    expect(correction).toContain(heldAspect);
+    expect(() => guard.beginFinalization({ content: input.response })).toThrow();
+  } else {
+    expect(correction).toBeNull();
+    expect(checks).toHaveLength(2);
+    expect(guard.beginFinalization({ content: input.response })).not.toThrow();
+  }
 });
 
 test('new confirmed counterevidence reopens a previously qualified publication check', async () => {

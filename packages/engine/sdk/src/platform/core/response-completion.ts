@@ -469,13 +469,14 @@ export class ResponseCompletionGuard {
     const executionAccepted = executionChecks.every(([aspect]) => qualifications.execution.has(aspect));
     const needsFinalSource = Object.entries(run.readings).some(([aspect, reading]) =>
       !qualifications.completion.has(aspect) && (!verificationFindings.length || !['unfinished', 'unanswered'].includes(aspect)));
+    const needsDelegatedSource = Object.keys(consolidation?.readings ?? {}).some(aspect => !qualifications.consolidation.has(aspect));
     if (checkpoint && (needsFinalSource || !executionAccepted
-      || Object.keys(consolidation?.readings ?? {}).some(aspect => !qualifications.consolidation.has(aspect)))) {
+      || needsDelegatedSource)) {
       run.recordAction('This native work checkpoint does not settle every current final check; retrieve retained originals before requesting any working-model repair.');
       batch.abort();
       return this.read(input, options, onWaiting, true);
     }
-    if (state !== fullState && this.verification && (needsFinalSource || (!executionAccepted && !verificationFindings.length))) {
+    if (state !== fullState && this.verification && (needsFinalSource || needsDelegatedSource || (!executionAccepted && !verificationFindings.length))) {
       const opened = await this.verification.openFinal(state, { completion: run.readings, consolidation: consolidation?.readings ?? null, execution: execution?.readings ?? null },
         { ...readingOptions, port, identity: owner.identity, assertCurrent: owner.assertCurrent });
       if (opened) {

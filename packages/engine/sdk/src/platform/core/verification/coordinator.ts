@@ -929,7 +929,15 @@ export class CompletionVerification {
       request: bounded(full.request, 12_000) ? full.request : { originalInstructions: ledger, meaning: 'Exact originals checked in identified source pages and available locally.' },
       response: answer,
       transcript: [...[...deliveryEvidence, ...this.finalEvidence.earlier].map(node => ({ role: 'system', content: { nativeSourceVerification: this.compactNode(node) } })),
-        ...this.originalMessages(publicationOriginals)], delegated: [], tools: full.tools, requirements: ledger,
+        ...this.originalMessages(publicationOriginals)],
+      // A bounded native worker result is already admitted primary evidence.
+      // Keep its assignment/result association for the synthesis gate instead
+      // of making an empty delegated array stand in for completed workers.
+      // Larger results remain in the original-source retrieval path.
+      delegated: bounded(full.delegated ?? [], VERIFICATION_FRAME_CHARACTERS * 2) ? full.delegated ?? [] : [],
+      delegatedOriginals: { sources: delegatedSources.map(source => source.id),
+        meaning: 'These native original observations preserve worker assignments, returned results and execution evidence. An empty delegated array means their contents require original-source retrieval, not that no workers ran. Current assignments and historical workers remain distinct; these observations never approve the proposed answer.' },
+      tools: full.tools, requirements: ledger,
       verification: { currentTurn: turnContext.currentTurn, requirementChecks: cases.map(({ requirement, readings, resolution }) => ({ requirement: requirement.id, readings: readingEvidence(readings),
         ...(resolution ? { resolution, meaning: 'Fresh native Jev fulfillment and work-quality check of these uncertain aspects against the exact original requirement and actual primary observations; original negative readings remain unchanged. Original-source verification and history audits remain required under the stated verification mode. This is not final-response approval.' } : {}) })),
         deferredRequirements: ledger.filter(requirement => !cases!.some(entry => entry.requirement.id === requirement.id)).map(requirement => requirement.id),
