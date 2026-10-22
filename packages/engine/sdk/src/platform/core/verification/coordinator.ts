@@ -468,7 +468,11 @@ export class CompletionVerification {
       // defects and demanded missing sources still require repair/retrieval.
       if (hasPrimary && focusedAssessment?.noIssues.length && heldAspects.length && !sourceDemanded
         && ![run.readings.unfinished, run.readings.quality_gap].some(reading => reading.verdict === 'yes' && reading.outcome === 'act')) {
-        const settled = await verificationResolution.run(access.port, { ...state, privateRepairAssessment: focusedAssessment, heldAspects } as never,
+        // Resolve this item from its originals. Repeating the entire ledger,
+        // historical review and other acceptance questions here obscures the
+        // single uncertainty; those retain their own unchanged checks below.
+        const settled = await verificationResolution.run(access.port, { ...turnContext, response, requirement,
+          opened: state.opened, heldAspects, privateRepairAssessment: focusedAssessment } as never,
           { ...this.options(access), site: verificationResolution.name });
         access.assertCurrent(); if (defer()) throw new VerificationDeferredError();
         const accepted = settled.readings.satisfied.verdict === 'yes' && settled.readings.satisfied.outcome === 'act';

@@ -367,6 +367,30 @@ describe('cache-vs-cold equivalence', () => {
     expect(text).not.toContain('original assistant content');
   });
 
+  test('cancellation retains completed tool history and the original prompt anchor through TUI persistence', () => {
+    const cm = new ConversationManager(() => 100);
+    cm.addUserMessage('Inspect the report');
+    const turnStart = cm.getMessageCount();
+    cm.addAssistantMessage('Reading the report', { toolCalls: [{ id: 'read-report', name: 'read', arguments: { files: [{ path: 'REVIEW.md' }] } }] });
+    cm.addToolResults([{ callId: 'read-report', success: true, output: 'Observed report content' }]);
+    cm.addAssistantMessage('Unpublished draft');
+    cm.addUserMessage('Preserve the completed inspection');
+    cm.getDisplayBlocks();
+
+    cm.removeMessagesAfter(turnStart, { preserveCompletedTools: true });
+    cm.markLastUserMessageCancelled(turnStart);
+    assertCacheMatchesCold(cm);
+    const restored = new ConversationManager(() => 100);
+    restored.fromJSON(cm.toJSON());
+    const messages = restored.getMessageSnapshot();
+    expect(messages.map(message => message.role)).toEqual(['user', 'assistant', 'tool', 'user']);
+    expect(messages[0]?.cancelled).toBe(true);
+    expect(messages[1]?.toolCalls?.[0]?.id).toBe('read-report');
+    expect(messages[2]?.callId).toBe('read-report');
+    expect(messages[3]?.cancelled).not.toBe(true);
+    expect(JSON.stringify(messages)).not.toContain('Unpublished draft');
+  });
+
   test('system notices draw no rows, cached or cold (they are toasts and history entries)', () => {
     const cm = new ConversationManager(() => 100);
     cm.addUserMessage('trigger a failure');

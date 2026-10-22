@@ -319,9 +319,9 @@ export class ConversationManager extends SdkConversationManager {
     return result;
   }
 
-  public override removeMessagesAfter(count: number): void {
+  public override removeMessagesAfter(count: number, options: Parameters<SdkConversationManager['removeMessagesAfter']>[1] = {}): void {
     if (count < this.getMessageCount()) this.retireNoticePublications();
-    super.removeMessagesAfter(count);
+    super.removeMessagesAfter(count, options);
     this.markDirty();
   }
 
@@ -332,8 +332,8 @@ export class ConversationManager extends SdkConversationManager {
   }
 
 
-  public override markLastUserMessageCancelled(): void {
-    super.markLastUserMessageCancelled();
+  public override markLastUserMessageCancelled(beforeCount?: number): void {
+    super.markLastUserMessageCancelled(beforeCount);
     this.markDirty();
   }
 
