@@ -87,7 +87,7 @@ describe('bead blocks count the rows they draw', () => {
     cm.startStreamingBlock();
     cm.updateStreamingBlock('Checks finished.');
     const streamed = cm.getDisplayBlocks();
-    const text = streamed.map((line) => line.map((cell) => cell.char).join('').replace(/^[│ ]*/, '').trimEnd());
+    const text = streamed.map((line) => line.map((cell) => cell.char).join('').replace(/^[│| ]*/, '').trimEnd());
     // Real response text keeps one gap on either side as it streams and settles.
     expect(text.slice(-3)).toEqual(['', 'Checks finished.', '']);
     cm.finalizeStreamingBlock();

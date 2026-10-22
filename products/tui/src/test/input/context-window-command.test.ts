@@ -200,7 +200,7 @@ describe('buildContextWindowStatusText provenance labels', () => {
     const model = makeModel({ contextWindow: 128_000, contextWindowProvenance: 'fallback', contextWindowOrigin: { kind: 'family_default' } });
     const text = buildContextWindowStatusText(model, null, null);
     expect(text).toContain('resolved: unknown (no catalog provider lists this model; the family default of 128,000 tokens is a guess)');
-    expect(text).toContain('source:   family default');
+    expect(text).toContain('source:   default budget (estimate)');
   });
 
   test('a disproven window keeps its own explanation and no source line', () => {

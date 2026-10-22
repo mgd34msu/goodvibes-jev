@@ -45,7 +45,7 @@ beforeEach(() => {
   root = makeProjectTempDir('gv-ctxwin-catalog-source');
   writeFileSync(join(root, 'model-catalog.json'), JSON.stringify({
     // Current cache envelope, with synthetic recorded paid access for these fixture providers.
-    version: 5,
+    version: 6,
     fetchedAt: Date.now(),
     ttlMs: 86_400_000,
     models: [
@@ -126,10 +126,10 @@ describe('the window source, end to end through the SDK registry', () => {
     const registry = await registryOn('abacusai:flux_pro');
     const window = contextWindowText(registry);
     expect(window).toContain('resolved: unknown (no catalog provider lists this model; the family default of 128,000 tokens is a guess)');
-    expect(window).toContain('source:   family default');
+    expect(window).toContain('source:   default budget (estimate)');
     const status = statusText(registry);
     expect(status).toMatch(/used +39\.0k \/ unknown/);
-    expect(status).toMatch(/window from +family default/);
+    expect(status).toMatch(/window from +default budget \(estimate\)/);
   });
 
   test('a user override wins and says so', async () => {

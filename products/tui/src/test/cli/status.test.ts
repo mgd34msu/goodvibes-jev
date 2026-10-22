@@ -59,7 +59,7 @@ describe('CLI status and doctor output', () => {
       'storage.secretPolicy': 'require_secure',
     }));
 
-    expect(text).toContain('permissions: Automatic below critical stakes (allow-all)');
+    expect(text).toContain('permissions: Allow all configured actions (allow-all)');
     expect(text).toContain('secretPolicy: Require secure storage (require_secure)');
   });
 
@@ -76,8 +76,8 @@ describe('CLI status and doctor output', () => {
 
     expect(text).toContain('[risk:security:allow-all-permissions]');
     expect(text).toContain('cause: permissions.mode is allow-all.');
-    expect(text).toContain('impact: Everything below critical stakes runs; critical calls still ask.');
-    expect(text).toContain('action: Use Ask before powerful actions or Custom rules unless this is an intentionally trusted environment.');
+    expect(text).toContain('impact: Permitted actions run automatically without an approval prompt. Configured denials and per-call authority checks still apply');
+    expect(text).toContain('action: Use Plan only for read-only work or Custom rules to restrict particular tools.');
     expect(text).toContain('[warning:network:network-http-listener-enabled]');
   });
 
