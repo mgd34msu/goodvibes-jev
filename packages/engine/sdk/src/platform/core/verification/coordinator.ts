@@ -598,11 +598,24 @@ export class CompletionVerification {
     const currentCalls = new Set((initial?.transcript ? (full.transcript ?? []) as readonly Record<string, unknown>[] : [])
       .filter(message => message.role === 'tool' && typeof message.callId === 'string' && !earlierCalls.has(message.callId)).map(message => message.callId));
     const currentResults = observations.filter(source => source.execution && currentCalls.has(source.execution.callId));
-    const latestResults = verificationFrames(currentResults.length ? currentResults : added, VERIFICATION_FRAME_CHARACTERS,
-      source => JSON.stringify(verificationWireSource(source)).length).at(-1) ?? [];
-    // At most two native frames: the coherent upstream acceptance and this
-    // turn's actual tool observations. A first draft must not lose its own
-    // successful tools merely because no prior verification attempt exists.
+    const executions = new Map<unknown, VerificationSource[]>();
+    for (const source of currentResults) {
+      const id = source.execution!.callId, pages = executions.get(id) ?? [];
+      pages.push(source); executions.set(id, pages);
+    }
+    const latestExecution = [...executions.values()].at(-1);
+    const resultFrames = verificationFrames(latestExecution ?? added, VERIFICATION_FRAME_CHARACTERS,
+      source => JSON.stringify(verificationWireSource(source)).length);
+    // Keep a bounded latest execution intact, including its result header and
+    // trailer. Taking only its last frame can hide counts/status at the start
+    // and make the verifier request the exact same successful inspection again.
+    // Larger executions retain explicitly partial first/last frames; every
+    // intervening original remains available to native retrieval.
+    const latestResults = latestExecution
+      ? resultFrames.length <= 2 ? resultFrames.flat() : [...resultFrames[0]!, ...resultFrames.at(-1)!]
+      : resultFrames.at(-1) ?? [];
+    // At most three native frames: one coherent upstream acceptance plus two
+    // frames of this turn's actual tool result. Neither is a completion permit.
     const recent = [...new Map([...hostPrimary, ...latestResults].map(source => [source.id, source])).values()];
     const rememberSources = () => { this.previousSources = { identity: access.identity, request: requestKey, ids: new Set(sources.map(source => source.id)) }; };
     const key = verificationHash([sources.map(source => source.id), ledger, full.response, overview.map(node => this.compactNode(node))]);

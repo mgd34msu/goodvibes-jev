@@ -77,6 +77,21 @@ test('a missing-proof reading which demands source retrieves existing recovery b
   expect(fake.requests.some(request => request.context?.battery === 'engine.verification.source')).toBe(true);
 });
 
+test('a multi-page delivery inspection retains both its first result facts and archive trailer beside host acceptance', async () => {
+  const before = state('Earlier retained source. '.repeat(15_000));
+  const input = { ...before, initial: { request: before.request, transcript: before.transcript },
+    transcript: [...before.transcript, { role: 'tool', callId: 'delivery-inspection',
+      content: 'INSPECTION-HEADER: 14 findings, 8 medium, 6 low.\n' + 'Report detail with bounded static-review evidence. '.repeat(650) + '\nARCHIVE-TRAILER: both canonical files exist; ZIP CRC passes.' }],
+    completedWork: [{ kind: 'host-completed-contract', id: 'review', status: 'passed',
+      criteria: 'Actual checked original scope. '.repeat(500), finalCheck: { result: 'pass' }, publication: { status: 'applied' } }] };
+  const fake = good();
+  expect((await new CompletionVerification(verificationWriter).prepare(input, access(fake.port))).findings).toHaveLength(0);
+  const first = fake.requests.find(request => request.context?.battery === 'engine.verification.requirement')!.state as unknown as { opened: { sources: unknown[] } };
+  expect(JSON.stringify(first.opened.sources)).toContain('INSPECTION-HEADER');
+  expect(JSON.stringify(first.opened.sources)).toContain('ARCHIVE-TRAILER');
+  expect(JSON.stringify(first.opened.sources)).toContain('host-completed-contract');
+});
+
 test('auditing an older failure never drops the current primary proof from requirement or final-publication evidence', async () => {
   const before = state('OLDER-FAILED-ATTEMPT: inspection was previously missing. '.repeat(8_000));
   const input = { ...before, initial: { request: before.request, transcript: before.transcript },
