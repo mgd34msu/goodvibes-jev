@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import {
   assertContractInputAuthority,
   assertContractInputReadAccess,
+  withContractInputReadBatch,
   contractInputAuthorityMutable,
   type ContractInputAuthority,
 } from '../../contract/input-authority.js';
@@ -96,9 +97,11 @@ export function createCapturedReplTool(
   const admitRuntime = binding.bunRuntimeAdmission ?? createCapturedExecBunRuntimeAdmission(binding);
   const check = async (callSignal?: AbortSignal): Promise<void> => {
     const signal = binding.signal && callSignal ? AbortSignal.any([binding.signal, callSignal]) : binding.signal ?? callSignal;
-    await assertContractInputAuthority(binding.authority, binding.root, signal);
-    await assertContractInputReadAccess(binding.authority, binding.readAccessFilter, signal);
-    historyOf(historyOwner, binding.authority);
+    await withContractInputReadBatch(binding.authority, async () => {
+      await assertContractInputAuthority(binding.authority, binding.root, signal);
+      await assertContractInputReadAccess(binding.authority, binding.readAccessFilter, signal);
+      historyOf(historyOwner, binding.authority);
+    });
   };
   const tool: Tool = {
     definition: {

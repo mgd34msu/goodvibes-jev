@@ -522,6 +522,14 @@ for (const mode of ['normal', 'revoke-map', 'resume', 'apply-dirty', 'until-dirt
           expect(getContractInputAuthority(rebound)).toBeDefined();
           expect(getContractInputAuthority(rebound)).not.toBe(oldAuthority);
         }
+        if (mode === 'revoke-map') {
+          await waitFor(() => runner.get(id!)!.decisions.some(decision => decision.action === 'stalled'),
+            'captured input permission wait', 20_000);
+          expect(runner.get(id)!.plannerAgentIds).toHaveLength(1);
+          expect(plannerCalls).toBe(0);
+          expect(memberCalls).toBe(0);
+          runner.cancel(id, 'fixture owner cancels while its captured source permission remains denied');
+        }
         await waitFor(
           () => ['passed', 'failed', 'cancelled', 'awaiting-owner'].includes(runner.get(id!)!.status),
           'actual contract settlement',
@@ -534,7 +542,7 @@ for (const mode of ['normal', 'revoke-map', 'resume', 'apply-dirty', 'until-dirt
         if (mode === 'revoke-map') {
           expect(admittedMap).toContain('ALLOWED_GRAPH_MARKER');
           expect(admittedMap).not.toContain('PRIVATE_GRAPH_MARKER');
-          expect(result.status).toBe('failed');
+          expect(result.status).toBe('cancelled');
           expect(plannerCalls).toBe(0);
           expect(memberCalls).toBe(0);
           return;
@@ -614,15 +622,15 @@ for (const mode of ['normal', 'revoke-map', 'resume', 'apply-dirty', 'until-dirt
               message.content?.includes('REGISTRY_OWNED_MARKER'),
           ),
         ).toBe(true);
-        if (mode === 'apply-dirty' || mode === 'until-dirty') {
-          expect(result.commit?.status, JSON.stringify(result.commit)).toBe('applied');
-          expect(result.commit?.hash).toBeUndefined();
-          expect(result.commit?.note).toContain('uncommitted');
-          expect(readFileSync(join(root, 'src/csv.ts'), 'utf8')).toContain('ts.transpileModule');
-          expect(readFileSync(join(root, 'schema.prisma'), 'utf8')).toContain('CapturedRecord');
-          expect(readFileSync(join(root, '.git/index'))).toEqual(ownerIndex);
-          expect(spawnSync('git', ['-C', root, 'rev-parse', 'HEAD']).stdout.toString()).toBe(ownerHead);
-        } else expect(result.commit?.note).toContain('not applied');
+        expect(result.commit?.status, JSON.stringify(result.commit)).toBe('applied');
+        expect(result.commit?.hash).toBeUndefined();
+        expect(result.commit?.note).toContain('uncommitted');
+        expect(readFileSync(join(root, 'src/csv.ts'), 'utf8')).toContain('ts.transpileModule');
+        expect(readFileSync(join(root, 'schema.prisma'), 'utf8')).toContain('CapturedRecord');
+        expect(readFileSync(join(root, '.git/index'))).toEqual(ownerIndex);
+        expect(spawnSync('git', ['-C', root, 'rev-parse', 'HEAD']).stdout.toString()).toBe(ownerHead);
+        if (mode === 'normal' || mode === 'resume')
+          expect(readFileSync(join(workspacePackage, 'index.ts'), 'utf8')).toContain('const value: number = 999;');
         if (mode === 'until-dirty') {
           expect(observedRetainedCompletion).toBe(true);
           expect(readFileSync(join(root, 'retained-proof.txt'), 'utf8')).toContain('CAPTURED_BUILD_TEST_OK');

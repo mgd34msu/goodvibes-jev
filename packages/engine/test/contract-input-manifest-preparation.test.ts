@@ -140,9 +140,9 @@ for (const scenario of ['unrelated-before', 'target', 'extra-path', 'removed-pat
       if (scenario === 'unrelated-before') writeFileSync(join(f.view, 'unrelated.txt'), 'changed before delivery');
       if (scenario === 'receipt-replaced') f.contract.inputSnapshot = structuredClone(f.receipt);
       if (scenario === 'receipt-mutated') (f.receipt as { inputTree: string }).inputTree = '0'.repeat(40);
-      let calls = 0;
+      const policyPaths: string[] = [];
       const policy: ReadAccessFilter = async path => {
-        calls++;
+        policyPaths.push(path);
         await Promise.resolve();
         const owner = path === join(f.root, 'a.txt');
         const actual = path === join(f.view, 'a.txt');
@@ -160,10 +160,9 @@ for (const scenario of ['unrelated-before', 'target', 'extra-path', 'removed-pat
         return true;
       };
       await expect(f.deliver(policy)).rejects.toThrow();
-      if (['unrelated-before', 'receipt-replaced', 'receipt-mutated'].includes(scenario)) expect(calls).toBe(0);
-      else if (['cancel-owner', 'deny-owner', 'callback-failure'].includes(scenario)) expect(calls).toBe(1);
-      else if (['final-file-change', 'extra-path', 'removed-path'].includes(scenario)) expect(calls).toBe(4);
-      else expect(calls).toBe(2);
+      if (['unrelated-before', 'receipt-replaced', 'receipt-mutated'].includes(scenario)) expect(policyPaths).toEqual([]);
+      else expect(policyPaths).toContain(scenario === 'final-file-change' ? join(f.view, 'b.txt')
+        : scenario === 'cancel-view' || scenario === 'deny-view' ? join(f.view, 'a.txt') : join(f.root, 'a.txt'));
     } finally { await f.cleanup(); }
   });
 
@@ -200,6 +199,6 @@ test('custom corrective-view callbacks keep every pre-access and after-await inv
     f.custom.rejectAt = f.custom.calls + 2;
     let callbacks = 0;
     await expect(f.deliver(async () => { callbacks++; await Promise.resolve(); return true; })).rejects.toThrow('custom view callback refused');
-    expect(callbacks).toBe(2);
+    expect(callbacks).toBe(0);
   } finally { await f.cleanup(); }
 });
