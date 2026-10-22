@@ -4,7 +4,7 @@ import { resolve } from 'node:path';
 import { StringDecoder } from 'node:string_decoder';
 import { pipeline } from 'node:stream/promises';
 import { createGunzip, gunzipSync, gzipSync } from 'node:zlib';
-import { canonicalJson, choice, hashState, matchesJudgmentModel, JudgmentError, LIMITS, noul, DEFAULT_MODEL, readChoice, readYesNo, STAKES_BANDS, toJson, validateContextBudget, type DecisionLog, type EntryType, type JudgmentPort, type Questions } from '@goodvibes-jev/judgment';
+import { buildSelectionInput, canonicalJson, choice, hashState, matchesJudgmentModel, JudgmentError, LIMITS, noul, DEFAULT_MODEL, readChoice, readYesNo, STAKES_BANDS, toJson, validateContextBudget, type DecisionLog, type EntryType, type JudgmentPort, type Questions } from '@goodvibes-jev/judgment';
 import { DEFERRED_WORK_INSTRUCTIONS, deferredWork, INTERNAL_IDENTIFIER_INSTRUCTIONS, internalIdentifier, STATIC_ANCHOR_FIT_INSTRUCTIONS, STATIC_ANCHOR_INSTRUCTIONS, staticOffendingAnchor } from './batteries/static-source.ts';
 import { deferredBatteryPolicyStatements, internalSourceAnchors, markdownSourceContext, structuredSourceContext } from './static-source-anchors.ts';
 import { STATIC_WEAK_ANCHOR_FIT_INSTRUCTIONS, STATIC_WEAK_ANCHOR_INSTRUCTIONS, staticWeakAnchor } from './batteries/static-weak-anchor.ts';
@@ -102,8 +102,12 @@ export function captureStaticInputs(kind: StaticRule, path: string, text: string
     const input = window(current);
     try {
       validateContextBudget(staticInputState(input), { violation: batteryFor(kind).items.violation.question });
-      validateContextBudget({ context: staticSelectionContext(input), candidates: staticSelectionCandidates(input) }, selectionQuestions(input));
-      if (current.length === 1) validateContextBudget({ context: staticSelectionContext(input), candidates: staticSelectionCandidates(input) }, selectionQuestions(input, true));
+      const selection = selectionInput(input);
+      validateContextBudget(selection.state, selection.questions);
+      if (current.length === 1) {
+        const weak = selectionInput(input, true);
+        validateContextBudget(weak.state, weak.questions);
+      }
       return [input];
     } catch (error) {
       if (!(error instanceof JudgmentError) || error.kind !== 'invalid-request') throw error;
@@ -461,8 +465,15 @@ const ruleFor = (kind: StaticRule): string => kind === 'internal-identifier' ? I
 export const staticSelectionContext = (input: StaticSourceInput) => ({ rule: ruleFor(input.kind), source: input.source, path: input.path });
 export const staticSelectionCandidates = (input: StaticSourceInput) => input.anchors.map(anchor => ({ id: anchor.id, content: { ...anchor } }));
 
-/** These are the canonical selector's public configuration applied to the exact offered identities. */
-function selectionQuestions(input: StaticSourceInput, weakSelection = false): Questions {
+function selectionInput(input: StaticSourceInput, weakSelection = false) {
+  return buildSelectionInput({ instructions: weakSelection ? STATIC_WEAK_ANCHOR_INSTRUCTIONS : STATIC_ANCHOR_INSTRUCTIONS,
+    fitInstructions: weakSelection ? STATIC_WEAK_ANCHOR_FIT_INSTRUCTIONS : STATIC_ANCHOR_FIT_INSTRUCTIONS },
+    staticSelectionContext(input), staticSelectionCandidates(input));
+}
+
+/** Historical selectors put complete fit instructions in each question. Keep
+ * their exact paired state/question identity when validating old raw receipts. */
+function legacySelectionQuestions(input: StaticSourceInput, weakSelection = false): Questions {
   const options = { ...Object.fromEntries(input.anchors.map(anchor => [anchor.id, null])), none: 'None of the candidates does what is needed.' };
   return { pick: choice(weakSelection ? STATIC_WEAK_ANCHOR_INSTRUCTIONS : STATIC_ANCHOR_INSTRUCTIONS, options), ...Object.fromEntries(input.anchors.map((anchor, index) => [`fits_${index}`, noul({ question: weakSelection ? STATIC_WEAK_ANCHOR_FIT_INSTRUCTIONS : STATIC_ANCHOR_FIT_INSTRUCTIONS, candidate: `\`candidates[${index}]\` (id ${JSON.stringify(anchor.id)})` })])) };
 }
@@ -603,13 +614,17 @@ function currentEvidence(value: unknown, input: StaticSourceInput, selection: bo
     || !(value.requestId === null || nonempty(value.requestId)) || !object(value.answers)
     || (value.captureDecisionSourceHash !== undefined && !nonempty(value.captureDecisionSourceHash))) return null;
   const decision = selection ? (weakSelection ? staticWeakAnchor : staticOffendingAnchor) : batteryFor(input.kind);
-  const state = selection ? { context: staticSelectionContext(input), candidates: staticSelectionCandidates(input) } : staticInputState(input);
-  const questions = selection ? selectionQuestions(input, weakSelection) : { violation: batteryFor(input.kind).items.violation.question };
+  const current = selection ? selectionInput(input, weakSelection)
+    : { state: staticInputState(input), questions: { violation: batteryFor(input.kind).items.violation.question } };
+  const variants = selection ? [current, { state: { context: staticSelectionContext(input), candidates: staticSelectionCandidates(input) },
+    questions: legacySelectionQuestions(input, weakSelection) }] : [current];
+  const exact = variants.map(wire => ({ stateHash: hashState(wire.state), questionsHash: sha256(canonicalJson(toJson(wire.questions))) }))
+    .find(wire => wire.stateHash === value.stateHash && wire.questionsHash === value.questionsHash);
   if (value.battery !== decision.name || value.version !== decision.version || value.site !== `${STATIC_SITE}.${input.kind}`
-    || value.stateHash !== hashState(state) || value.questionsHash !== sha256(canonicalJson(toJson(questions)))) return null;
+    || !exact) return null;
   if (selection && selectionAnswer(value.answers, input) === null) return null;
   return { id: value.id, at: value.at, battery: decision.name, version: decision.version, site: `${STATIC_SITE}.${input.kind}`,
-    stateHash: hashState(state), questionsHash: sha256(canonicalJson(toJson(questions))), requestedModel: DEFAULT_MODEL,
+    stateHash: exact.stateHash, questionsHash: exact.questionsHash, requestedModel: DEFAULT_MODEL,
     observedModel: value.observedModel as string, requestId: value.requestId, answers: value.answers,
     ...(typeof value.captureDecisionSourceHash === 'string' ? { captureDecisionSourceHash: value.captureDecisionSourceHash } : {}) };
 }

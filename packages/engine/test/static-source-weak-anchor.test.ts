@@ -49,6 +49,21 @@ test('new positive identity and fit must both settle and cannot clear a strong c
   expect(contradiction.receipt.selection?.battery).toBe('engine.gates.static-offending-anchor');
 });
 
+test('current and historical selector receipts keep their own exact state/question pairs', async () => {
+  const { captured, receipt, readings } = await selected(0.5, 'none', 0.99, 0.01);
+  const selection = receipt.selection!;
+  const legacyState = { context: staticSelectionContext(captured), candidates: staticSelectionCandidates(captured) };
+  const legacyQuestions = { pick: choice(STATIC_WEAK_ANCHOR_INSTRUCTIONS, { candidate: null, none: 'None of the candidates does what is needed.' }),
+    fits_0: noul({ question: STATIC_WEAK_ANCHOR_FIT_INSTRUCTIONS, candidate: '`candidates[0]` (id "candidate")' }) };
+  const stateHash = sha256(canonicalJson(toJson(legacyState))), questionsHash = sha256(canonicalJson(toJson(legacyQuestions)));
+  const standing = (hashes: { stateHash: string; questionsHash: string }) => staticInputStanding(captured,
+    { ...readings, readings: { [staticInputKey(captured)]: { ...receipt, selection: { ...selection, ...hashes } } } });
+  expect(staticInputStanding(captured, readings)).toEqual({ kind: 'clear' });
+  expect(standing({ stateHash, questionsHash })).toEqual({ kind: 'clear' });
+  expect(standing({ stateHash, questionsHash: selection.questionsHash }).kind).toBe('held');
+  expect(standing({ stateHash: selection.stateHash, questionsHash }).kind).toBe('held');
+});
+
 test('weak exhaustive negative fits keep the original high band and every contradictory or absent fit holds', async () => {
   for (const pick of ['candidate', 'none'] as const) {
     const negative = await selected(.5, pick, .2, .15);
@@ -217,7 +232,8 @@ test('weak v2 source-only questions leave original strong selector questions unc
     const questions = fixture.requests[1]?.questions;
     if (!questions) throw new Error('Missing exact selector questions');
     expect(questions.pick).toEqual(choice(presence === 0.5 ? STATIC_WEAK_ANCHOR_INSTRUCTIONS : STATIC_ANCHOR_INSTRUCTIONS, { candidate: null, none: 'None of the candidates does what is needed.' }));
-    expect(questions.fits_0).toEqual(noul({ question: presence === 0.5 ? STATIC_WEAK_ANCHOR_FIT_INSTRUCTIONS : STATIC_ANCHOR_FIT_INSTRUCTIONS, candidate: '`candidates[0]` (id "candidate")' }));
+    expect(questions.fits_0).toEqual(noul({ question: 'Apply the complete selectionFitInstructions in state to this exact candidate.', candidate: '`candidates[0]` (id "candidate")' }));
+    expect(fixture.requests[1]?.state).toHaveProperty('selectionFitInstructions', presence === 0.5 ? STATIC_WEAK_ANCHOR_FIT_INSTRUCTIONS : STATIC_ANCHOR_FIT_INSTRUCTIONS);
     expect(receipt.selection?.version).toBe(2);
     expect(receipt.selection?.questionsHash).toBe(sha256(canonicalJson(toJson(questions))));
   }

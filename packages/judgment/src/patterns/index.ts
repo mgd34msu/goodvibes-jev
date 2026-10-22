@@ -36,7 +36,7 @@ export { type PolicyQuestionsSpec, type Screening } from './policy-questions.ts'
 export { type PolicyAction, type PolicyRouting, type PolicyRoutingSpec, type PolicyThresholds } from './policy-routing.ts';
 export { REPLY_READINGS, defineReplyReader, type ReadReply, type ReplyReader, type ReplyReadingName, type ReplySpec } from './reply.ts';
 export { defineRerank, type Candidate, type Ranked, type Rerank, type RerankFixture, type RerankSpec, type Reranking } from './rerank.ts';
-export { NONE, defineSelector, runSelection, type SelectSpec, type Selection, type SelectionConfig, type Selector } from './select.ts';
+export { NONE, buildSelectionInput, defineSelector, runSelection, type SelectSpec, type Selection, type SelectionConfig, type Selector } from './select.ts';
 export { defineFunctionCaller, type ArgSpec, type ArgValue, type CallerSpec, type ChoiceArg, type FilledCall, type FlagArg, type FunctionCaller, type FunctionSpec, type SetArg } from './call.ts';
 export { defineCoarseningClassifier, type Coarsened, type CoarseningClassifier, type CoarseningSpec } from './coarsen.ts';
 export { defineCounter, type Count, type Counter, type CounterSpec } from './count.ts';

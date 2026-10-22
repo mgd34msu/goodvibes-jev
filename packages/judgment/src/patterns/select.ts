@@ -75,13 +75,22 @@ function assertCandidates(decision: string, ids: readonly string[]): void {
   if (!usableIds(ids)) throw new RangeError(`selector ${decision}: candidate ids must be unique and not "${NONE}"`);
 }
 
-function selectionQuestions(config: SelectionConfig, ids: readonly string[]): Record<string, Question> {
+function selectionQuestions(config: Pick<SelectionConfig, 'instructions'>, ids: readonly string[]): Record<string, Question> {
   const options: Record<string, EntryType> = { ...Object.fromEntries(ids.map((id) => [id, null])), [NONE]: 'None of the candidates does what is needed.' };
   const questions: Record<string, Question> = { pick: choice(config.instructions, options) };
   ids.forEach((id, index) => {
     questions[`fits_${index}`] = noul({ question: FIT_REFERENCE, candidate: `\`candidates[${index}]\` (id ${JSON.stringify(id)})` });
   });
   return questions;
+}
+
+/** Exact selector wire input, shared with consumers validating retained receipts. */
+export function buildSelectionInput(config: Pick<SelectionConfig, 'instructions' | 'fitInstructions'>,
+  context: JsonValue, candidates: readonly Candidate[]): { readonly state: EntryType; readonly questions: Record<string, Question> } {
+  return {
+    state: { context, candidates: candidates.map(({ id, content }) => ({ id, content })), selectionFitInstructions: config.fitInstructions },
+    questions: selectionQuestions(config, candidates.map(candidate => candidate.id)),
+  };
 }
 
 /**
@@ -166,9 +175,9 @@ async function selectGroups(port: JudgmentPort, request: SelectionRequest, group
 async function askSelection(port: JudgmentPort, request: SelectionRequest, partitionOnOverflow = true, parallel = true): Promise<Selection> {
   const { header, config, candidates } = request;
   const ids = candidates.map(candidate => candidate.id);
-  const state = { context: request.context, candidates: candidates.map(({ id, content }) => ({ id, content })), selectionFitInstructions: config.fitInstructions };
+  const { state, questions } = buildSelectionInput(config, request.context, candidates);
   let result: JudgmentResult<Record<string, Question>>;
-  try { result = await askAs(port, header, request.pattern, state, selectionQuestions(config, ids), request.options); }
+  try { result = await askAs(port, header, request.pattern, state, questions, request.options); }
   catch (error) {
     // Endpoint tokenization can exceed estimates for dense source and JSON.
     // Retry only this explicit refusal, preserving the full shared evidence and
