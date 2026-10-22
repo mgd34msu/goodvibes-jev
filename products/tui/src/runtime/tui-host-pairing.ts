@@ -1,5 +1,6 @@
 import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { createOperatorSdk } from '@goodvibes-jev/engine/operator-sdk';
+import { GoodVibesSdkError } from '@goodvibes-jev/engine/errors';
 import type { OperatorMethodOutput } from '@goodvibes-jev/engine/sdk/contracts';
 import { resolveDaemonEnabled } from '@goodvibes-jev/engine/sdk/platform/config';
 import { resolveNativeHostCredential, resolveTuiHostOrigin, type NativeHostCredentialOptions } from './client/native-host-credential.ts';
@@ -71,7 +72,33 @@ export async function previewTuiHostPairing(options: TuiHostPairingOptions, name
         if (requestSignal?.aborted || !sourceCurrent() || !sameSelection() || digest(readTuiHostPairing(home, host)) !== expectedState) throw new Error('Pairing selection changed');
         return (options.fetchImpl ?? fetch)(input, { ...init, redirect: 'error' });
       } });
-      try { return await client.invoke('control.auth.current', {}, { signal: AbortSignal.any([AbortSignal.timeout(1500), ...(requestSignal ? [requestSignal] : [])]) }); }
+      const method = client.getOperation('control.auth.current');
+      const schema = method.outputSchema, originalMethod = JSON.stringify(method);
+      const assertCurrent = () => {
+        requestSignal?.throwIfAborted();
+        if (!sourceCurrent() || !sameSelection() || digest(readTuiHostPairing(home, host)) !== expectedState
+          || client.getOperation('control.auth.current') !== method || method.outputSchema !== schema
+          || JSON.stringify(method) !== originalMethod) throw new Error('Pairing authority source changed');
+      };
+      try {
+        for (let attempt = 0; ; attempt++) {
+          assertCurrent();
+          const deadline = AbortSignal.timeout(1500);
+          try {
+            const live = await client.invoke('control.auth.current', {}, {
+              signal: AbortSignal.any([deadline, ...(requestSignal ? [requestSignal] : [])]),
+            });
+            assertCurrent();
+            return live;
+          } catch (error) {
+            assertCurrent();
+            // A fresh read can recover an interrupted or empty host response.
+            // Both attempts validate fully; migration remains a single POST.
+            if (attempt !== 0 || (!deadline.aborted && !(error instanceof GoodVibesSdkError
+              && (error.kind === 'network' || error.kind === 'contract')))) throw error;
+          }
+        }
+      }
       finally { client.dispose(); }
     };
     if (state.status === 'paired') {

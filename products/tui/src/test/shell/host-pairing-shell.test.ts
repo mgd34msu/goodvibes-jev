@@ -78,7 +78,11 @@ function expectNoGrant(s: ReturnType<typeof shellFixture>) {
 }
 
 describe('host pairing shell over the real InputHandler', () => {
-  test('direct slash dispatch tolerates the live commandMode snapshot and wires fresh confirmation', async () => withShell(async s => {
+  test.each([
+    { label: 'ordinary response', options: {}, reads: 3 },
+    { label: 'interrupted first read', options: { holdAuth: 1 }, reads: 4 },
+    { label: 'empty first response', options: { emptyAuth: 'first' as const }, reads: 4 },
+  ])('direct slash dispatch wires fresh confirmation after $label', async ({ options, reads }) => withShell(async s => {
     s.input.feed('/host pair --bootstrap-shared --apply');
     expect(s.input.commandMode).toBe(true);
     s.input.feed('\r');
@@ -109,12 +113,21 @@ describe('host pairing shell over the real InputHandler', () => {
     s.input.feed(`${s.phrase()}\r`);
     await untilPairing(() => !s.controller.active, 'wired owner confirmation');
     expect(s.fixture.migrations()).toBe(1);
+    expect(s.fixture.authCalls()).toBe(reads);
     expect(readTuiHostPairing(s.fixture.homeDirectory, s.fixture.host).status).toBe('paired');
     expect(s.submissions).toEqual([]);
     expect(s.conversation.getMessagesForLLM()).toEqual([]);
     expect(s.renders()).toBeGreaterThan(0);
     expect(s.toBottom()).toBeGreaterThan(0);
-  }));
+  }, options));
+
+  test('repeated empty authority responses remain blocked without a grant or model submission', async () => withShell(async s => {
+    await s.start();
+    expect(s.controller.active).toBe(false);
+    expect(s.fixture.authCalls()).toBe(2);
+    expect(s.text()).not.toMatch(/PAIR [0-9a-f]{12}/);
+    expectNoGrant(s);
+  }, { emptyAuth: 'always' }));
 
   for (const field of ['bookmarkModal', 'settingsModal', 'mcpWorkspace', 'sessionPickerModal',
     'profilePickerModal', 'configModal', 'contextInspectorModal', 'modelPicker', 'filePicker',

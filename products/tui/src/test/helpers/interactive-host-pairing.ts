@@ -13,7 +13,7 @@ export async function untilPairing(predicate: () => boolean, label: string): Pro
   }
 }
 
-export function interactiveHostPairingFixture(options: { holdAuth?: number; holdMigration?: boolean; rejectMinted?: boolean } = {}) {
+export function interactiveHostPairingFixture(options: { holdAuth?: number; emptyAuth?: 'first' | 'always'; holdMigration?: boolean; rejectMinted?: boolean } = {}) {
   const environmentKeys = ['GOODVIBES_CONNECTED_HOST_TOKEN', 'GOODVIBES_DAEMON_TOKEN'] as const;
   const saved = environmentKeys.map(key => process.env[key]);
   for (const key of environmentKeys) delete process.env[key];
@@ -43,6 +43,8 @@ export function interactiveHostPairingFixture(options: { holdAuth?: number; hold
       if (options.holdAuth === authCalls) { held = true; await gate; }
       const isPaired = authorization === `Bearer ${minted}`;
       returned++;
+      if (options.emptyAuth === 'always' || (options.emptyAuth === 'first' && authCalls === 1))
+        return new Response('', { headers: { 'content-type': 'application/json' } });
       return Response.json({ authenticated: authorization === `Bearer ${bootstrap}` || isPaired,
         authMode: 'shared-token', tokenPresent: true, authorizationHeaderPresent: true, sessionCookiePresent: false,
         principalId: isPaired ? `pairing:${id}` : 'shared-token', principalKind: 'token', admin: !(options.rejectMinted && isPaired), scopes: ['*'], roles: [] });
