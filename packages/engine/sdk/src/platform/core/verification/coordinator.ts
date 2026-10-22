@@ -363,6 +363,8 @@ export class CompletionVerification {
     let opened: InspectionCursor['opened'] = retained ? { sources: [...retained.opened.sources], earlier: [...retained.opened.earlier] } : { sources: recent, earlier: [] };
     const seen = new Set(retained?.seen ?? recent.map(source => `source:${source.id}`));
     let localized = retained?.localized ?? false;
+    const primaryIds = new Set(recent.map(source => source.id));
+    const primarySources = (sources: readonly VerificationSource[]) => [...new Map([...recent, ...sources].map(source => [source.id, source])).values()];
     const checkpoint = () => cache.set(key, { frontier: [...frontier], opened: { sources: [...opened.sources], earlier: [...opened.earlier] }, seen: new Set(seen), localized } satisfies InspectionCursor);
     for (;;) {
       access.assertCurrent(); if (defer()) throw new VerificationDeferredError();
@@ -370,7 +372,7 @@ export class CompletionVerification {
       // rechecks the current primary page, preserving the exact source and
       // authority binding instead of reopening every earlier branch.
       checkpoint();
-      const state = { requirement, requirements: ledger, response, evidence: auditSources ? [] : overview.map(node => this.compactNode(node)), opened: { ...opened, sources: opened.sources.map(verificationWireSource) },
+      const state = { requirement, requirements: ledger, response, evidence: auditSources ? [] : overview.map(node => this.compactNode(node)), opened: { ...opened, sources: primarySources(opened.sources).map(verificationWireSource) },
         ...(requirement.id.startsWith('original-') ? { scopeBasis: 'These requirements retain original instruction bytes, without a generated scope rewrite. Read them in their complete original order; later corrections supersede earlier instructions, and restrictions apply from the time given. Judge the active obligations, not a historical instruction that has been withdrawn.', originalOrder: ledger.map(item => ({ id: item.id, references: item.sources.map(id => this.originals.get(id)?.reference) })) } : {}),
         previousReview, chronology: recent.length ? 'Initial opened sources are native observations added since the previous completed check of this SAME original task and authority. Evaluate whether they resolve earlier findings. Earlier failures remain historical; later observed recovery can close them. Every original page is still audited before acceptance.' : 'Source references preserve original message order. Later observed recovery may resolve an earlier failure; plans and assertions cannot.' };
       let run = await verificationRequirement.run(access.port, state as never, { ...this.options(access), site: verificationRequirement.name });
@@ -399,7 +401,7 @@ export class CompletionVerification {
         // interval for counterevidence. These are direct Jev checks, not a new
         // frontier draft for every history page. A changed working-model answer
         // does not invalidate an unchanged source/case qualification.
-        const suspect = await this.audit(requirement, { ...opened, sources: opened.sources.map(verificationWireSource) }, auditSources, access);
+        const suspect = await this.audit(requirement, { ...opened, sources: primarySources(opened.sources).map(verificationWireSource) }, auditSources, access);
         if (!suspect.length) return { requirement, readings: run.readings, state, sourceExhausted: false, auditHeld: false };
         const unseen = suspect.filter(page => page.some(source => !seen.has(`source:${source.id}`)));
         if (!unseen.length) return { requirement, readings: run.readings,
@@ -437,7 +439,11 @@ export class CompletionVerification {
           // The leaf was built from a bounded frame; inspect its ORIGINAL middle,
           // not just its summary. Retain prior retrieval as a checked case record
           // so a later opening cannot forget evidence needed for this requirement.
-          const prior = opened.sources.length ? await this.caseMemory(opened.sources, requirement, access) : [];
+          // The bounded current tool results and host acceptance are permanent
+          // primaries for this case. Retrieving old counterevidence must never
+          // replace them with a lossy summary and resurrect a resolved gap.
+          const previous = opened.sources.filter(source => !primaryIds.has(source.id));
+          const prior = previous.length ? await this.caseMemory(previous, requirement, access) : [];
           let earlier = [...opened.earlier, ...prior.map(node => this.compactNode(node))];
           if (!bounded(earlier, 8_000)) {
             const merged = await this.caseMemory(earlier.map(item => this.nodes.get(item.id)!), requirement, access);
@@ -651,7 +657,7 @@ export class CompletionVerification {
     // result, and the final publication battery can inspect these same bytes.
     const exactPrimary = indexed && bounded(primary.map(verificationWireSource), VERIFICATION_FRAME_CHARACTERS) ? primary : [];
     const deliveryEvidence = indexed ? exactPrimary.length ? [] : await this.evidenceTree(primary, ledger, access) : overview;
-    const publicationOriginals = [...new Map([...exactPrimary, ...this.finalEvidence.opened].map(source => [source.id, source])).values()]
+    const publicationOriginals = [...new Map([...recent, ...exactPrimary, ...this.finalEvidence.opened].map(source => [source.id, source])).values()]
       .sort((left, right) => (this.sourceOrder.get(left.id) ?? 0) - (this.sourceOrder.get(right.id) ?? 0));
     const state: Record<string, unknown> = {
       request: bounded(full.request, 12_000) ? full.request : { originalInstructions: ledger, meaning: 'Exact originals checked in identified source pages and available locally.' },

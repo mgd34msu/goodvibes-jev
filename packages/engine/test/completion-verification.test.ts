@@ -77,6 +77,29 @@ test('a missing-proof reading which demands source retrieves existing recovery b
   expect(fake.requests.some(request => request.context?.battery === 'engine.verification.source')).toBe(true);
 });
 
+test('auditing an older failure never drops the current primary proof from requirement or final-publication evidence', async () => {
+  const before = state('OLDER-FAILED-ATTEMPT: inspection was previously missing. '.repeat(8_000));
+  const input = { ...before, initial: { request: before.request, transcript: before.transcript },
+    transcript: [...before.transcript, { role: 'tool', callId: 'current-inspection', content: 'PINNED-CURRENT-PROOF: the required inspection succeeded.' }],
+    completedWork: [{ kind: 'host-completed-contract', id: 'review', status: 'passed',
+      criteria: 'Actual checked original scope. '.repeat(500), finalCheck: { result: 'pass' }, publication: { status: 'applied' } }] };
+  const fake = fakePort((name, question, raw) => {
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    const current = raw as unknown as { opened?: { sources?: unknown[] }; sources?: unknown[]; caseEvidence?: unknown };
+    const missingPrimary = current.opened && !JSON.stringify(current.opened.sources).includes('PINNED-CURRENT-PROOF');
+    const unaccountedOldAttempt = JSON.stringify(current.sources ?? []).includes('OLDER-FAILED-ATTEMPT')
+      && !JSON.stringify(current.caseEvidence ?? null).includes('OLDER-FAILED-ATTEMPT');
+    return noulAnswer((name === 'unfinished' || name === 'quality_gap') && missingPrimary || name === 'missed' && unaccountedOldAttempt ? .99 : .01);
+  });
+  const result = await new CompletionVerification(verificationWriter).prepare(input, access(fake.port));
+  expect(result.findings).toHaveLength(0);
+  const checks = fake.requests.filter(request => request.context?.battery === 'engine.verification.requirement');
+  expect(checks.length).toBeGreaterThan(1);
+  expect(checks.every(request => JSON.stringify((request.state as unknown as { opened: unknown }).opened).includes('PINNED-CURRENT-PROOF'))).toBe(true);
+  expect(JSON.stringify(result.state.transcript)).toContain('PINNED-CURRENT-PROOF');
+  expect(JSON.stringify(result.state.transcript)).toContain('host completed contract review');
+});
+
 test('lossless source boundaries cannot turn a long numeric identity into refused card material', () => {
   for (const text of ['x'.repeat(11_968) + '7'.repeat(32) + '4111111111111111' + ' end', '7'.repeat(24_000) + '4111111111111111']) {
     snapshotJudgmentEvidence({ text });
