@@ -568,14 +568,25 @@ export class CompletionVerification {
     }
     const requestKey = verificationHash(full.request), previous = this.previousSources;
     const added = indexed && previous?.identity === access.identity && previous.request === requestKey ? observations.filter(source => !previous.ids.has(source.id) && source.kind === 'observation') : [];
-    const acceptance = observations.filter(source => source.reference.startsWith('host completed contract ')
-      && source.reference.includes('; acceptance and publication;'));
+    const acceptance = new Map<string, VerificationSource[]>();
+    for (const source of observations) {
+      if (!source.reference.startsWith('host completed contract ')) continue;
+      const boundary = source.reference.indexOf('; acceptance and publication;');
+      if (boundary < 0) continue;
+      const contract = source.reference.slice(0, boundary);
+      const pages = acceptance.get(contract) ?? []; pages.push(source); acceptance.set(contract, pages);
+    }
     // Begin with bounded actual host acceptance evidence instead of an empty
     // packet or an obsolete partial-progress page. This changes retrieval
     // order only: every original remains available and the complete-history
     // counterevidence audit and final-response checks are still mandatory.
-    const recent = verificationFrames([...new Map([...added, ...acceptance].map(source => [source.id, source])).values()],
-      VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length).at(-1) ?? [];
+    // Keep one contract's scope/check/publication pages together. Packing an
+    // earlier failed contract ahead of the current one can otherwise leave
+    // only the tail of the current receipt in the last frame.
+    const preferred = [...acceptance.values()].at(-1);
+    const recent = preferred
+      ? verificationFrames(preferred, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length)[0] ?? []
+      : verificationFrames(added, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length).at(-1) ?? [];
     const rememberSources = () => { this.previousSources = { identity: access.identity, request: requestKey, ids: new Set(sources.map(source => source.id)) }; };
     const key = verificationHash([sources.map(source => source.id), ledger, full.response, overview.map(node => this.compactNode(node))]);
     if (this.finalEvidence?.key !== key || this.finalEvidence.identity !== access.identity)

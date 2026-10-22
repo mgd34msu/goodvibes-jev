@@ -26,14 +26,22 @@ const state = (content = 'Observed source.') => ({ request: 'Review all source a
 const directory = () => { const value = mkdtempSync(join(tmpdir(), 'completion-verification-')); directories.push(value); return value; };
 
 test('large-history retrieval starts with actual scoped host acceptance and still audits old counterevidence', async () => {
-  const input = { ...state('Retained earlier source. '.repeat(15_000)), completedWork: [{ kind: 'host-completed-contract', id: 'finished-review',
-    ask: 'Review all source and write review.md.', status: 'passed', finalCheck: { id: 'final-check', result: 'pass', decisionIds: ['actual-check'] },
+  const input = { ...state('Retained earlier source. '.repeat(15_000)), completedWork: [
+    { kind: 'host-completed-contract', id: 'previous-failed-review', status: 'failed', error: 'Previous provider interruption. '.repeat(320) },
+    { kind: 'host-completed-contract', id: 'finished-review',
+    ask: 'Review all source and write review.md.', status: 'passed', criteria: 'Original literal acceptance scope. '.repeat(500), finalCheck: { id: 'final-check', result: 'pass', decisionIds: ['actual-check'] },
     publication: { status: 'applied', note: 'Applied review.md.' }, answer: 'The report is saved in review.md.', units: [] }] };
   const fake = good();
   expect((await new CompletionVerification(verificationWriter).prepare(input, access(fake.port))).findings).toHaveLength(0);
   const checks = fake.requests.filter(request => request.context?.battery === 'engine.verification.requirement');
   const first = checks[0]!.state as unknown as { opened: { sources: { text: string; reference: string }[] } };
   expect(first.opened.sources.some(source => source.reference.includes('; acceptance and publication;') && source.text.includes('actual-check'))).toBe(true);
+  const receipt = JSON.parse(first.opened.sources.map(source => source.text).join(''));
+  expect(receipt.id).toBe('finished-review');
+  expect(receipt.ask).toBe('Review all source and write review.md.');
+  expect(receipt.criteria).toBe(input.completedWork[1]!.criteria);
+  expect(receipt.finalCheck.decisionIds).toEqual(['actual-check']);
+  expect(receipt.publication.status).toBe('applied');
   const audits = fake.requests.filter(request => request.context?.battery === 'engine.verification.audit');
   expect(audits.length).toBeGreaterThan(0);
   expect(JSON.stringify(audits)).toContain('Retained earlier source.');
