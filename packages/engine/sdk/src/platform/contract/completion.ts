@@ -831,7 +831,9 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
     if (contract.inputSnapshot.dirty || publication) {
       try {
         const files = await applyCapturedInputDelta(contract, context.plannerDeps(run).readAccessFilter, run.abort.signal, publication);
-        if (files === 0) return { status: 'skipped', note: 'commit skipped: the contract changed no files; owner changes preserved' };
+        if (files === 0) return { status: 'skipped', note: publication
+          ? 'commit skipped: the exact accepted file delta is already present; owner changes preserved'
+          : 'commit skipped: the contract changed no files; owner changes preserved' };
         return { status: 'applied', note: `applied ${files} file${files === 1 ? '' : 's'} as uncommitted changes; pre-existing owner edits and staging preserved${commitOn ? '; automatic commit deferred for the dirty input baseline' : ''}` };
       } catch (error) {
         const assessment = publicationAssessments.get(run);

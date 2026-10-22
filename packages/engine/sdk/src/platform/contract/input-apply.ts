@@ -27,7 +27,7 @@ function git(root: string, args: readonly string[], output?: number): Buffer {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GIT_')));
   const result = spawnSync(
     'git',
-    ['-C', root, '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', ...args],
+    ['--literal-pathspecs', '-C', root, '-c', 'core.fsmonitor=false', '-c', 'core.untrackedCache=false', ...args],
     {
       env: { ...env, GIT_OPTIONAL_LOCKS: '0', GIT_TERMINAL_PROMPT: '0' },
       stdio: ['ignore', output ?? 'pipe', 'pipe'],
@@ -99,6 +99,21 @@ async function applyDelta(
     )
       throw new Error('captured result has ambiguous paths');
     for (const path of paths) await authorizeContractInputPath(authority, path, filter, signal);
+    // A later owner may already contain an exact accepted file (including its
+    // mode or deletion). It needs no second write or integration repair. The
+    // separate current-owner receipt and native compatibility check still
+    // apply; compare only original result targets, never unrelated owner files.
+    const outstanding = publication && paths.length > 0
+      ? git(root, ['diff', '--name-only', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '-z',
+          owner.inputCommit, resultHead, '--', ...paths]).toString('utf8').split('\0').filter(Boolean)
+      : paths;
+    if (outstanding.length === 0) {
+      await assertContractInputAuthority(authority, view, signal);
+      await assertContractInputOwner(owner, signal);
+      signal.throwIfAborted();
+      if (publication) consumePublicationInput(publication, contract);
+      return 0;
+    }
     patchDirectory = mkdtempSync(join(tmpdir(), 'captured-result-patch-'));
     const patch = join(patchDirectory, 'changes.patch');
     const patchFd = openSync(patch, 'wx', 0o600);
@@ -115,13 +130,13 @@ async function applyDelta(
       snapshot.inputCommit,
       resultHead,
       '--',
+      ...outstanding,
     ], patchFd); } finally { closeSync(patchFd); }
     await assertContractInputOwner(owner, signal);
-    if (paths.length === 0) return 0;
     // Default git apply is all-or-nothing on a failed hunk; never use --reject,
     // --3way, --index, --cached or a reset against the owner's working tree.
     try { git(root, ['apply', '--check', '--binary', '--whitespace=nowarn', patch]); }
-    catch (error) { throw new ContractPublicationConflictError(paths, { cause: error }); }
+    catch (error) { throw new ContractPublicationConflictError(outstanding, { cause: error }); }
     for (const path of paths) await authorizeContractInputPath(authority, path, filter, signal);
     await assertContractInputAuthority(authority, view, signal);
     await assertContractInputOwner(owner, signal);
@@ -132,7 +147,7 @@ async function applyDelta(
     // No await between the final admission and synchronous Git application.
     // External noncooperating filesystem writers remain outside this transaction.
     git(root, ['apply', '--binary', '--whitespace=nowarn', patch]);
-    return paths.length;
+    return outstanding.length;
   } finally {
     if (patchDirectory) rmSync(patchDirectory, { recursive: true, force: true });
     revokeContractInputAuthority(authority);

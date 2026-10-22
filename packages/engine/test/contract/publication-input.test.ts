@@ -64,6 +64,32 @@ test('a declined compatibility assessment never admits or applies the pending re
   } finally { rmSync(setup.root, { recursive: true, force: true }); }
 });
 
+test.each([false, true])('publication recognizes accepted files already present in the current owner (remaining delta: %s)', async remaining => {
+  const setup = await fixture();
+  try {
+    writeFileSync(join(setup.root, 'review.md'), 'Accepted report.\n');
+    if (remaining) {
+      writeFileSync(join(setup.view, 'appendix.md'), 'Accepted supporting evidence.\n');
+      git(setup.view, 'add', 'appendix.md'); git(setup.view, 'commit', '-qm', 'accepted appendix');
+    }
+    const head = git(setup.root, 'rev-parse', 'HEAD'), index = readFileSync(join(setup.root, '.git/index'));
+    const original = JSON.stringify(setup.contract.inputSnapshot), authorized: string[] = [];
+    const filter = async (path: string) => { authorized.push(path); return true; };
+    let assessments = 0;
+    const admission = await admitPublicationInput(setup.contract, filter, setup.signal, async () => { assessments++; return () => {}; });
+    expect(admission).not.toBeNull();
+    expect(await applyCapturedInputDelta(setup.contract, filter, setup.signal, admission!)).toBe(remaining ? 1 : 0);
+    expect(readFileSync(join(setup.root, 'review.md'), 'utf8')).toBe('Accepted report.\n');
+    expect(readFileSync(join(setup.root, 'README.md'), 'utf8')).toBe('Later owner note.\n');
+    if (remaining) expect(readFileSync(join(setup.root, 'appendix.md'), 'utf8')).toBe('Accepted supporting evidence.\n');
+    expect(readFileSync(join(setup.root, '.git/index'))).toEqual(index);
+    expect(git(setup.root, 'rev-parse', 'HEAD')).toBe(head);
+    expect(JSON.stringify(setup.contract.inputSnapshot)).toBe(original);
+    expect(assessments).toBe(1);
+    expect(authorized.some(path => path.endsWith('/review.md'))).toBe(true);
+  } finally { rmSync(setup.root, { recursive: true, force: true }); }
+});
+
 test('owner mutation during compatibility checking invalidates its pending admission', async () => {
   const setup = await fixture();
   try {
