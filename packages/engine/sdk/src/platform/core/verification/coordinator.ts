@@ -326,7 +326,7 @@ export class CompletionVerification {
   /** A deterministic retrieval index never asserts that work was performed.
    * Large sessions open relevant originals first, rather than writing hundreds
    * of private summaries before they can inspect the requested deliverable. */
-  private sourceIndex(sources: readonly VerificationSource[]): VerificationReceipt[] {
+  private sourceIndex(sources: readonly VerificationSource[], maxCharacters = VERIFICATION_OVERVIEW_CHARACTERS): VerificationReceipt[] {
     const describe = (source: VerificationSource) => ({ referencePreviewOnly: source.reference.slice(0, 240),
       executionPreviewOnly: source.execution ? JSON.stringify(source.execution).slice(0, 320) : null,
       previewOnly: { beginning: source.text.slice(0, 100), end: source.text.length > 100 ? source.text.slice(-100) : '' } });
@@ -338,8 +338,11 @@ export class CompletionVerification {
           first: describe(page[0]!), last: describe(page.at(-1)!) }), sources: [] }], concerns: [] } };
       this.nodes.set(id, receipt); return receipt;
     }).reverse();
-    while (!bounded(nodes.map(node => this.compactNode(node)), VERIFICATION_OVERVIEW_CHARACTERS)) {
-      nodes = verificationFrames(nodes, 8_000, node => JSON.stringify(this.compactNode(node)).length).map(group => {
+    while (!bounded(nodes.map(node => this.compactNode(node)), maxCharacters)) {
+      // This is local index bookkeeping, not a model payload. Fixed groups
+      // guarantee fewer nodes even when two verbose previews exceed a frame.
+      const groups = Array.from({ length: Math.ceil(nodes.length / 4) }, (_, index) => nodes.slice(index * 4, index * 4 + 4));
+      nodes = groups.map(group => {
         const id = `index-${verificationHash(group.map(node => node.id)).slice(0, 24)}`;
         const receipt: VerificationReceipt = { id, representation: 'source-index', children: group.map(node => node.id), sourceIds: group.flatMap(node => node.sourceIds),
           summary: { facts: [{ text: `RETRIEVAL INDEX ONLY; ordered most recent first. First indexed interval: ${group[0]!.summary.facts[0]!.text.slice(0, 900)} Last indexed interval: ${group.at(-1)!.summary.facts[0]!.text.slice(0, 900)}`, sources: [] }], concerns: [] } };
@@ -392,14 +395,19 @@ export class CompletionVerification {
   }
 
   private async caseMemory(sources: readonly (VerificationSource | VerificationReceipt)[], requirement: VerificationRequirement, access: VerificationAccess): Promise<VerificationReceipt[]> {
+    const originals = () => [...new Map(sources.flatMap(source => 'text' in source ? [source] : source.sourceIds.map(id => this.originals.get(id)!)).map(source => [source.id, source])).values()];
+    // A location index has no facts to qualify or summarize. Rewriting its
+    // previews cannot recover the original evidence and only creates drafts.
+    // Keep a bounded native index; every original remains retrievable.
+    if (sources.some(source => 'representation' in source && source.representation === 'source-index'))
+      return this.sourceIndex(originals(), 8_000);
     try { return [await this.node(sources, [requirement], access, requirement)]; }
     catch (error) {
       access.assertCurrent();
       if (!(error instanceof VerificationSubdivisionError) && (!(error instanceof JudgmentError) || (error.kind !== 'rejected' && error.kind !== 'invalid-request'))) throw error;
       // An irreducible case record is retained as explicitly unqualified source
       // locations, not retried forever or treated as evidence of success.
-      const originals = [...new Map(sources.flatMap(source => 'text' in source ? [source] : source.sourceIds.map(id => this.originals.get(id)!)).map(source => [source.id, source])).values()];
-      return this.sourceIndex(originals);
+      return this.sourceIndex(originals(), 8_000);
     }
   }
 
@@ -768,7 +776,15 @@ export class CompletionVerification {
     // when they fit the same two-frame budget as a bounded latest execution.
     const currentPrimary = currentResults.length > 0 && bounded(currentResults.map(verificationWireSource), VERIFICATION_FRAME_CHARACTERS * 2)
       ? currentResults : latestResults;
-    const recent = [...new Map([...hostPrimary, ...checkedAnswer, ...currentPrimary].map(source => [source.id, source])).values()];
+    // The parent's spawn receipt proves that a worker started, not what it
+    // inspected or returned. Keep bounded actual worker observations beside
+    // that receipt so opening old counterevidence cannot displace the proof.
+    // These remain observations; every work/quality and final gate still runs.
+    const delegatedSources = observations.filter(source => source.reference.startsWith('delegated assignment/result ')
+      || source.reference.startsWith('delegated '));
+    const delegatedPrimary = bounded(delegatedSources.map(verificationWireSource), VERIFICATION_FRAME_CHARACTERS * 2)
+      ? delegatedSources : [];
+    const recent = [...new Map([...hostPrimary, ...checkedAnswer, ...currentPrimary, ...delegatedPrimary].map(source => [source.id, source])).values()];
     const rememberSources = () => { this.previousSources = { identity: access.identity, request: requestKey, ids: new Set(sources.map(source => source.id)) }; };
     const key = verificationHash([sources.map(source => source.id), ledger, full.response, overview.map(node => this.compactNode(node))]);
     if (this.finalEvidence?.key !== key || this.finalEvidence.identity !== access.identity)

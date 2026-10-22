@@ -86,6 +86,72 @@ const noIssueWriter: VerificationWriter = async request => request.operation !==
     reason: 'The existing primary observation resolves the earlier concern.',
     passage: { reference: 'original observation', quote: 'Completed review and delivery observed.' } })) });
 
+test('bounded worker read receipts and returned results stay primary while every older history page is audited', async () => {
+  const older = [{ role: 'user', content: 'Verify review.md using one read-only worker.' },
+    { role: 'tool', callId: 'older-failed-plan', content: 'Historical delegation was held.\n'.repeat(10000) }];
+  const transcript = [...older,
+    { role: 'assistant', content: '', toolCalls: [{ id: 'spawn-worker', name: 'agent', arguments: { mode: 'spawn', outsideContract: true, task: 'Read review.md only.' } }] },
+    { role: 'tool', callId: 'spawn-worker', outcome: 'ok', content: JSON.stringify({ agentId: 'worker', status: 'spawned' }) }];
+  const full = { request: 'Verify review.md using one read-only worker.', response: 'The worker verified review.md: 2 passed, 1 failed, exit 1.',
+    initial: { request: 'Verify review.md using one read-only worker.', transcript: older }, transcript, tools: ['agent'], requirements: null,
+    delegated: [{ id: 'worker', task: 'Read review.md only.', status: 'completed', output: 'Verified report consistency: 2 passed, 1 failed, exit 1.', evidence: [
+      { role: 'assistant', content: '', toolCalls: [{ id: 'worker-read', name: 'read', arguments: { path: 'review.md' } }] },
+      { role: 'tool', callId: 'worker-read', outcome: 'ok', content: 'Complete actual report: 2 passed, 1 failed, exit 1.' },
+      { role: 'assistant', content: 'Verified report consistency: 2 passed, 1 failed, exit 1.' },
+    ] }] };
+  const audited = new Set<string>(); let checked = 0;
+  const fake = fakePort((_name, _question, raw) => {
+    const input = raw as unknown as { requirement?: unknown; opened?: { sources: { reference: string; text: string }[] }; sources?: { id: string }[] };
+    if (input.opened && input.requirement) {
+      checked++;
+      const primaries = input.opened.sources;
+      expect(primaries.some(source => source.reference.startsWith('delegated worker.evidence') && source.text.includes('Complete actual report'))).toBe(true);
+      expect(primaries.some(source => source.reference.startsWith('delegated assignment/result worker') && source.text.includes('Verified report consistency'))).toBe(true);
+    }
+    for (const source of input.sources ?? []) audited.add(source.id);
+    return noulAnswer(.01);
+  });
+  const writer: VerificationWriter = request => {
+    if (request.operation !== 'requirements') throw new Error('No new summaries or diagnoses are needed for this exact primary proof.');
+    return verificationWriter(request);
+  };
+  const result = await new CompletionVerification(writer).prepare(full, access(fake.port));
+  expect(result.findings).toHaveLength(0); expect(checked).toBeGreaterThan(0);
+  const originals = verificationSources(full).filter(source => source.kind !== 'answer');
+  expect(originals.every(source => audited.has(source.id))).toBe(true);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(true);
+});
+
+test('retrieval indexes remain native locations instead of becoming another set of summary drafts', async () => {
+  const history = Array.from({ length: 100 }, (_, i) => ({ role: 'tool', callId: `old-${i}`,
+    content: `Historical observation ${i}: ` + Array.from({ length: 90 }, (_, line) => `Original line ${line}: inspection pending in this earlier attempt.`).join('\n') }));
+  const input = { ...state(), initial: { request: 'Review all source and write review.md.', transcript: history },
+    transcript: [...history, { role: 'tool', callId: 'current-result', content: 'Completed review and delivery observed.' }] };
+  const audited = new Set<string>(); let summaries = 0;
+  const fake = fakePort((name, question, raw) => {
+    const context = raw as unknown as { sources?: { id: string }[] };
+    if (name === 'missed') for (const source of context.sources ?? []) audited.add(source.id);
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    return noulAnswer(name === 'missed' ? .99 : .01);
+  });
+  const writer: VerificationWriter = request => {
+    if (request.operation === 'requirements') return verificationWriter(request);
+    if (request.operation === 'evidence' || request.operation === 'merge') {
+      summaries++;
+      const context = request.context as { sources: { representation?: string }[] };
+      if (context.sources.some(source => source.representation === 'source-index')) throw new Error('Attempted to draft a summary of retrieval previews.');
+      // An irreducible source must fall back to exact originals after two
+      // schema refusals; it cannot cause an unbounded proposal tree.
+      return Promise.resolve('{}');
+    }
+    throw new Error('No working-model repair is justified by this retained evidence.');
+  };
+  const result = await new CompletionVerification(writer).prepare(input, access(fake.port));
+  expect(result.findings).toHaveLength(0); expect(summaries).toBeGreaterThan(0);
+  const originals = verificationSources(input).filter(source => source.kind !== 'answer');
+  expect(new Set(originals.map(source => source.id))).toEqual(audited);
+});
+
 test('a no-issue diagnosis rechecks the original requirement instead of manufacturing a repair', async () => {
   const fake = fakePort((name, _question, raw) => {
     const current = raw as unknown as { requirement?: unknown; privateRepairAssessment?: unknown };
