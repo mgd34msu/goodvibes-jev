@@ -31,6 +31,9 @@ import type { LLMProvider } from '../sdk/src/platform/providers/interface.js';
 import type { ConversationMessageSnapshot } from '../sdk/src/platform/core/conversation.js';
 import type { FeatureFlagManager } from '../sdk/src/platform/runtime/feature-flags/manager.js';
 import { useFailureReadings } from './_helpers/failure-readings.ts';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import type { ChatRequest } from '../sdk/src/platform/providers/interface.js';
 
 // The runner reads a failed chat's error to decide on a context-window,
 // network or rate-limit retry; this generic failure reads as none of them.
@@ -162,6 +165,59 @@ function makeMinimalRunContext(overrides: {
     resolveFallbackModelRoutes: () => [],
   };
 }
+
+test('worker acceptance details reach both the provider and its independent completion gate', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worker-acceptance-'));
+  const requests: ChatRequest[] = [];
+  const criteria = ['Include exact source line references in report.md.'];
+  const evidence = ['Return the report path and the inspected parser revision.'];
+  const writeScope = ['report.md'];
+  const fake = fakePort((name, _question, raw) => {
+    const state = raw as unknown as { response?: string; requirements?: { successCriteria?: string[] } };
+    return noulAnswer(name === 'unfinished' && state.response === 'Review complete.' && state.requirements?.successCriteria?.includes(criteria[0]!) ? .99 : .01);
+  });
+  const previous = installJudgmentPort(fake.port);
+  try {
+    const context = makeMinimalRunContext({ workingDirectory: dir, provider: {
+      name: 'test-provider', models: ['test-model'], async chat(request) {
+        requests.push(request);
+        return { content: requests.length === 1 ? 'Review complete.' : 'The report is in report.md, with source line references and parser revision abc.',
+          toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
+      },
+    } });
+    const record = makeAgentRecord({ id: 'worker-acceptance', task: 'Review parser.ts and write report.md.',
+      successCriteria: criteria, requiredEvidence: evidence, writeScope });
+    await runAgentTask(context, record);
+    expect(record.status).toBe('completed');
+    expect(requests).toHaveLength(2);
+    for (const value of [...criteria, ...evidence, ...writeScope]) expect(requests[0]!.systemPrompt).toContain(value);
+    const checks = fake.requests.filter(request => request.context?.battery === 'engine.core.response-completion');
+    expect(checks).toHaveLength(2);
+    expect((checks[0]!.state as never as { requirements: unknown }).requirements).toEqual({ successCriteria: criteria, requiredEvidence: evidence, writeScope });
+    expect(requests[1]!.systemPrompt).toContain('[Response completion check]');
+    expect(record.fullOutput).toContain('source line references');
+  } finally { installJudgmentPort(previous); rmSync(dir, { recursive: true, force: true }); }
+});
+
+test('changing worker acceptance before a provider retry prevents transmission under the retired assignment', async () => {
+  const dir = mkdtempSync(join(tmpdir(), 'worker-acceptance-owner-'));
+  const previous = installJudgmentPort(fakePort(() => noulAnswer(.01)).port);
+  const record = makeAgentRecord({ id: 'worker-acceptance-owner', task: 'Review parser.ts.', requiredEvidence: ['Return source references.'] });
+  let transmissions = 0;
+  try {
+    const context = makeMinimalRunContext({ workingDirectory: dir, provider: {
+      name: 'test-provider', models: ['test-model'], async chat(request) {
+        record.requiredEvidence![0] = 'A different assignment now requires runtime evidence.';
+        await request.beforeAttempt?.();
+        transmissions++;
+        return { content: 'Done.', toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
+      },
+    } });
+    await expect(runAgentTask(context, record)).rejects.toThrow();
+    expect(transmissions).toBe(0);
+    expect(record.status).not.toBe('completed');
+  } finally { installJudgmentPort(previous); rmSync(dir, { recursive: true, force: true }); }
+});
 
 describe('runAgentTask: conversation-snapshot bridge call sites', () => {
   test('registers a live source right after creating the ConversationManager, then releases exactly once on normal completion', async () => {

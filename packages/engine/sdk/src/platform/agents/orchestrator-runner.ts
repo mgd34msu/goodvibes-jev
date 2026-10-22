@@ -86,11 +86,21 @@ function resolveRunTurnBudget(context: AgentOrchestratorRunContext, record: Agen
 const cancellationConversationGenerations = new WeakMap<AgentRecord, object>();
 const terminalRunGenerations = new WeakMap<AgentRecord, object>();
 
+function workerAcceptanceDetails(record: AgentRecord) {
+  if (record.successCriteria === undefined && record.requiredEvidence === undefined && record.writeScope === undefined) return undefined;
+  return {
+    ...(record.successCriteria ? { successCriteria: [...record.successCriteria] } : {}),
+    ...(record.requiredEvidence ? { requiredEvidence: [...record.requiredEvidence] } : {}),
+    ...(record.writeScope ? { writeScope: [...record.writeScope] } : {}),
+  };
+}
+
 /** Fixed terminal bookkeeping owns the run, independently of semantic readers. */
 function captureAgentRunTerminal(context: AgentOrchestratorRunContext, record: AgentRecord): AgentRunTerminal & { readonly releaseSharedSources: () => void } {
   const generation = {};
   terminalRunGenerations.set(record, generation);
   const id = record.id, task = record.task, startedAt = record.startedAt, cwd = context.workingDirectory;
+  const assignment = JSON.stringify(workerAcceptanceDetails(record));
   const getSignal = context.getCancellationSignal, signal = getSignal?.call(context, id);
   const failed = context.emitAgentFailedEvent, completed = context.emitAgentCompletedEvent, cancelled = context.emitAgentCancelledEvent;
   const processManager = context.processManager, list = processManager?.list, stop = processManager?.stop, hasBoundaryOwner = processManager?.hasBoundaryOwner;
@@ -99,6 +109,7 @@ function captureAgentRunTerminal(context: AgentOrchestratorRunContext, record: A
   const prepareIndex = codeIndex?.prepare, disposeIndex = codeIndex?.dispose;
   const assertIdentity = () => {
     if (terminalRunGenerations.get(record) !== generation || record.id !== id || record.task !== task || record.startedAt !== startedAt
+      || JSON.stringify(workerAcceptanceDetails(record)) !== assignment
       || context.workingDirectory !== cwd || context.getCancellationSignal !== getSignal
       || context.emitAgentFailedEvent !== failed || context.emitAgentCompletedEvent !== completed || context.emitAgentCancelledEvent !== cancelled
       || context.runtimeBus !== runtimeBus || context.processManager !== processManager || processManager?.list !== list
@@ -433,6 +444,7 @@ export async function runAgentTask(
 ): Promise<void> {
   record.status = 'running';
   const terminal = captureAgentRunTerminal(context, record);
+  const acceptanceDetails = workerAcceptanceDetails(record);
   setAgentProgress(record, 'Initialising…', 'operator');
   record.usage = {
     inputTokens: record.usage?.inputTokens ?? 0,
@@ -479,7 +491,7 @@ export async function runAgentTask(
       sessionsDir: resolveScopedDirectory(context.workingDirectory, context.surfaceRoot, 'sessions', 'agents'),
       stateDir: resolveScopedDirectory(context.workingDirectory, context.surfaceRoot, 'state'),
     }, context.atRestPolicy);
-    session.appendMessage({ type: 'session_config', template: record.template, task: record.task, tools: record.tools, model: modelId, provider: record.provider ?? 'unknown', timestamp: new Date().toISOString() });
+    session.appendMessage({ type: 'session_config', template: record.template, task: record.task, ...(acceptanceDetails ?? {}), tools: record.tools, model: modelId, provider: record.provider ?? 'unknown', timestamp: new Date().toISOString() });
 
     const toolRegistry = context.buildScopedRegistry(record.tools, context.getFullRegistry(), record.captureAuthority);
     const toolDefinitions = toolRegistry.getToolDefinitions();
@@ -503,12 +515,16 @@ export async function runAgentTask(
     const spawnPromptContext = { ...context, projectFramework };
     await resolveSpawnKnowledgeInjections(record, context);
     let promptContext = await prepareOrchestratorPromptContext(record, spawnPromptContext, context.getCancellationSignal?.(record.id));
-    let systemPrompt = buildOrchestratorSystemPrompt(record, undefined, promptContext);
+    const withAcceptance = (prompt: string) => prompt + (acceptanceDetails
+      ? '\n\nWorker assignment acceptance details, subordinate to the original task and applicable user instructions. '
+        + 'Satisfy the supplied success criteria, return the required evidence, and preserve the expected write scope. These details do not grant additional permissions.\n'
+        + JSON.stringify(acceptanceDetails) : '');
+    let systemPrompt = withAcceptance(buildOrchestratorSystemPrompt(record, undefined, promptContext));
     const rebuildSystemPrompt = async (remainingTokens: number): Promise<string> => {
       // The emergency task-only prompt contains no curated knowledge.
       promptContext = remainingTokens === 0 ? undefined
         : await prepareOrchestratorPromptContext(record, spawnPromptContext, context.getCancellationSignal?.(record.id));
-      return buildLayeredOrchestratorSystemPrompt(record, remainingTokens, promptContext);
+      return withAcceptance(buildLayeredOrchestratorSystemPrompt(record, remainingTokens, promptContext));
     };
 
     // Per-turn passive-injection state (see CHANGELOG 0.38.0). `knowledgeIdsAlreadySurfaced` seeds
@@ -813,6 +829,7 @@ export async function runAgentTask(
           const capturedCodeGeneration = capturedCode?.generation?.();
           const codeAuthorityForAttempt = assertCodeInjectionCurrent;
           const assertNativeProviderSource = async () => {
+            terminal.assertCurrent();
             try { await codeAuthorityForAttempt?.(); } catch (error) { throw new ProviderAttemptDeniedError(error); }
             await capturedCode?.assertCurrent?.(capturedCodeGeneration);
             await context.beforeProviderRequest?.();
@@ -821,6 +838,7 @@ export async function runAgentTask(
             assertOrchestratorKnowledgeCurrent(record, promptContext);
             if (nativeSource && (!context.autonomousSource || JSON.stringify(captureAutonomousSource(context.autonomousSource())) !== JSON.stringify(nativeSource)))
               throw new Error('Native provider source changed before retry');
+            terminal.assertCurrent();
           };
           assertVerificationProvider = assertNativeProviderSource;
           try {
@@ -1003,7 +1021,7 @@ export async function runAgentTask(
         if (response.content.trim()) {
           const checkedText = response.content;
           const publication = await completionGuard.checkProgress({ request: record.task, response: checkedText,
-            conversation, tools: toolDefinitions.map(tool => tool.name) },
+            conversation, tools: toolDefinitions.map(tool => tool.name), requirements: acceptanceDetails },
           { signal: context.getCancellationSignal?.(record.id), assertCurrent: terminal.assertCurrent });
           if (publication.correction === null) {
             response = { ...response, content: checkedText };
@@ -1152,6 +1170,7 @@ export async function runAgentTask(
           context.emitAgentProgress(record.id, record.progress ?? '', 'operator');
           const correction = await completionGuard.checkUntilAvailable(() => ({ request: record.task, response: finalResponse.content, conversation: completionConversation,
             tools: toolDefinitions.map(tool => tool.name),
+            requirements: acceptanceDetails,
             delegated: context.agentManager ? collectResponseDelegates(completionConversation, context.agentManager) : [] }),
           { signal: context.getCancellationSignal?.(record.id), assertCurrent: terminal.assertCurrent }, () => {
             setAgentProgress(record, `Turn ${turn} · Jev is recovering verification…`, 'operator');
