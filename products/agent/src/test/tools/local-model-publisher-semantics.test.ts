@@ -53,12 +53,12 @@ function readings(overrides: {
 
 function fixture() {
   const provider = { id: 'synthetic-local', baseURL: 'http://127.0.0.1:8080/v1',
-    description: 'Synthetic local llama-server', undisplayedTail: 'Complete original provider context' };
+    description: 'Synthetic local llama-server', details: 'Complete original provider context' };
   const model = { providerId: 'synthetic-local', registryKey: 'synthetic-local:synthetic-model', modelId: 'synthetic-model',
     baseURL: 'http://127.0.0.1:8080/v1', description: 'Synthetic llama-server route' };
   const diagnostic = { providerId: 'synthetic-local', baseUrl: 'http://127.0.0.1:8080/v1', stack: 'llama.cpp',
     status: 'healthy', loadedModels: ['synthetic-model'], toolSupport: 'supported', resourcePressure: 'critical',
-    schemaStatus: 'certified', summary: 'Synthetic publisher observation', undisplayedTail: 'Complete original diagnostic context' } satisfies Record<string, unknown>;
+    schemaStatus: 'certified', summary: 'Synthetic publisher observation', details: 'Complete original diagnostic context' } satisfies Record<string, unknown>;
   const snapshot = { servers: [diagnostic] };
   const producer: { getSnapshot(): unknown } = { getSnapshot() { if (this !== producer) throw new Error('Snapshot receiver lost.'); return snapshot; } };
   const providers = [provider], models = [model];
@@ -315,8 +315,8 @@ describe('Local model publisher wording and native discovery', () => {
     expect(diagnostics?.schemaStatus).toBe('legacy');
     expect(diagnostics?.loadedModels).toEqual(['synthetic-model']);
     const sent = JSON.stringify(port.requests);
-    expect(sent).toContain(f.provider.undisplayedTail);
-    expect(sent).toContain(f.diagnostic.undisplayedTail);
+    expect(sent).toContain(f.provider.details);
+    expect(sent).toContain(f.diagnostic.details);
   });
 
   test.each([69, 70, 89, 90])('numeric pressure %i keeps the original deterministic bands and does not ask a word question', async percent => {
@@ -329,15 +329,27 @@ describe('Local model publisher wording and native discovery', () => {
     expect(port.requests.some(request => Object.hasOwn(request.questions, 'pressure'))).toBe(false);
   });
 
-  test('native Map diagnostics keep all publisher fields and their original keyed identity', async () => {
+  test.each(['root', 'servers'] as const)('native %s Map diagnostics keep all publisher fields and their original keyed identity', async (location) => {
     const f = fixture(), port = readings(); installJudgmentPort(port.port);
-    const snapshot = new Map([['native-diagnostic', f.diagnostic]]);
+    const records = new Map([['native-diagnostic', f.diagnostic]]);
+    const snapshot = location === 'root' ? records : { servers: records };
     f.producer.getSnapshot = function () { if (this !== f.producer) throw new Error('Native Map receiver lost.'); return snapshot; };
     const result = await localModelServerHealthMap(f.context, true, { sourceOwner: ordinaryResearchOwner() });
     expect(result.daemonDiagnostics.matchedEndpointCount).toBe(1);
     expect(result.endpoints[0]?.servingDiagnostics?.status).toBe('blocked');
-    expect(JSON.stringify(port.requests)).toContain(f.diagnostic.undisplayedTail);
-    expect(snapshot.get('native-diagnostic')).toBe(f.diagnostic);
+    expect(JSON.stringify(port.requests)).toContain(f.diagnostic.details);
+    expect(records.get('native-diagnostic')).toBe(f.diagnostic);
+  });
+
+  test('an undeclared publisher field stays private and cannot become a partial native diagnostic', async () => {
+    const f = fixture(), port = readings(); installJudgmentPort(port.port);
+    const privateValue = 'synthetic unpublished diagnostic value';
+    Object.defineProperty(f.diagnostic, 'unpublishedField', { value: privateValue, enumerable: true });
+    const result = await localModelServerHealthMap(f.context, true, { sourceOwner: ordinaryResearchOwner() });
+    expect(result.daemonDiagnostics.status).toBe('read-model-error');
+    expect(result.daemonDiagnostics.recordCount).toBe(0);
+    expect(JSON.stringify(port.requests)).not.toContain(privateValue);
+    expect(port.requests.some(request => request.context?.battery === 'agent.local-model.serving-status')).toBe(false);
   });
 
   test('registry dispatch excludes hosted Ollama and maps the canonical llama.cpp choice', async () => {
@@ -355,7 +367,7 @@ describe('Local model publisher wording and native discovery', () => {
     expect(detection.stacks).toEqual(['vllm']);
     expect(detection.providerIds).toEqual(['synthetic-local']);
     expect(detection.modelRoutes).toEqual(['synthetic-local:synthetic-model']);
-    expect(JSON.stringify(port.requests)).toContain(f.provider.undisplayedTail);
+    expect(JSON.stringify(port.requests)).toContain(f.provider.details);
   });
 
   test('a proxied native registry method is refused without invoking its apply trap', async () => {
@@ -421,7 +433,7 @@ describe('Local model publisher wording and native discovery', () => {
     try {
       await entered.promise;
       if (mode === 'cancel') cancel.abort();
-      else if (mode === 'source change') f.diagnostic.undisplayedTail = 'Changed undisplayed original';
+      else if (mode === 'source change') f.diagnostic.details = 'Changed undisplayed original';
       else if (mode === 'snapshot method') f.producer.getSnapshot = () => f.snapshot;
       else if (mode === 'producer replacement') f.platform.readModels.models.servingDiagnostics = { getSnapshot: () => f.snapshot };
       else if (mode === 'provider registration') f.providers[0] = { ...f.provider };
@@ -437,7 +449,7 @@ describe('Local model publisher wording and native discovery', () => {
     const guards: Array<() => void> = [], options = { sourceOwner: ordinaryResearchOwner(), retainCurrent: (guard: () => void): void => { guards.push(guard); }, assertCurrent: () => {} };
     await localModelServerHealthMap(f.context, true, options);
     guards.forEach(guard => guard());
-    if (mode === 'source') f.diagnostic.undisplayedTail = 'Changed after native return';
+    if (mode === 'source') f.diagnostic.details = 'Changed after native return';
     else if (mode === 'port') installJudgmentPort(readings().port);
     else options.assertCurrent = () => {};
     expect(() => guards.forEach(guard => guard())).toThrow();

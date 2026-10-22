@@ -9,12 +9,14 @@ const fields: Readonly<Record<FieldKind, ReadonlySet<string>>> = {
   owner_profile: new Set(['shippingaddress', 'billingaddress', 'homeaddress', 'emailaddress', 'phonenumber', 'privateaddress', 'quiethours']),
   content: new Set(['message', 'body', 'text', 'content', 'prompt', 'response', 'stdout', 'stderr', 'output', 'error', 'stack',
     'summary', 'hint', 'name', 'note', 'description', 'reasoningcontent', 'reasoningsummary', 'instructions', 'document', 'transcript', 'title',
-    'data', 'details', 'payload', 'attributes', 'arguments', 'result', 'results', 'records', 'items', 'nested', 'self', 'metadata', 'judgment', 'config', 'extension', 'surfaces', 'diagnostics']),
-  other: new Set(['id', 'requestid', 'sessionid', 'agentid', 'taskid', 'documentid', 'traceid', 'spanid', 'workstreamid',
+    'data', 'details', 'payload', 'attributes', 'arguments', 'result', 'results', 'records', 'items', 'nested', 'self', 'metadata', 'judgment', 'config', 'extension', 'surfaces', 'diagnostics',
+    'servers', 'endpoints', 'baseurl', 'modelsurl']),
+  other: new Set(['id', 'recordid', 'requestid', 'sessionid', 'agentid', 'taskid', 'documentid', 'traceid', 'spanid', 'workstreamid',
     'domain', 'eventtype', 'source', 'turnid', 'stopreason', 'model', 'modelid', 'provider', 'providerid', 'registrykey', 'site', 'universe', 'kind', 'type', 'category', 'code', 'status', 'state',
     'count', 'tokencount', 'maxtokens', 'maxoutputtokens', 'totaltokens', 'inputtokens', 'outputtokens', 'cachereadtokens', 'cachewritetokens',
     'durationms', 'latencyms', 'elapsedms', 'timestamp', 'at', 'attempt', 'attempts', 'retryafterms', 'size', 'bytes', 'limit', 'total',
-    'active', 'enabled', 'success', 'valid', 'complete', 'cached', 'recoverable', 'stable', 'found']),
+    'active', 'enabled', 'success', 'valid', 'complete', 'cached', 'recoverable', 'stable', 'found',
+    'loadedmodels', 'loadedmodelcount', 'toolsupport', 'schemastatus', 'resourcepressure', 'memoryusagepercent', 'vramusagepercent']),
 };
 
 export class FieldKindReader {

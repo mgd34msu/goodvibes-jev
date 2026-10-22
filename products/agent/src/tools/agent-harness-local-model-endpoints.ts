@@ -249,6 +249,24 @@ function sourceMethods(source: unknown, keys: readonly string[]): () => void {
 }
 
 const SERVING_SNAPSHOT_METHODS = ['getSnapshot', 'snapshot', 'list', 'listDiagnostics', 'listServingDiagnostics', 'listLocalServers', 'listServers', 'readSnapshot'] as const;
+const SERVING_COLLECTION_KEYS = ['localModelServers', 'localServers', 'servingDiagnostics', 'diagnostics', 'servers', 'endpoints', 'records', 'items', 'entries'] as const;
+
+/** Native Map keys are record identities, not arbitrary object field roles.
+ * Preserve each key and complete original record in declared envelope fields. */
+function servingSnapshotData(original: unknown, captured: unknown): unknown {
+  const isMap = (value: unknown): value is Map<string, unknown> => value !== null && typeof value === 'object'
+    && !nodeTypes.isProxy(value) && Object.getPrototypeOf(value) === Map.prototype;
+  const rows = (value: unknown) => Object.entries(readRecord(value)).map(([recordId, metadata]) => ({
+    id: readString(readRecord(metadata).id) || recordId, recordId, metadata,
+  }));
+  if (isMap(original)) return { records: rows(readRecord(captured).records) };
+  if (captured === null || typeof captured !== 'object' || Array.isArray(captured)) return captured;
+  const snapshot = readRecord(captured), descriptors = original !== null && typeof original === 'object'
+    ? Object.getOwnPropertyDescriptors(original) : {};
+  return Object.fromEntries(Object.entries(snapshot).map(([key, value]) => [key,
+    SERVING_COLLECTION_KEYS.some(collection => collection === key) && isMap(descriptors[key]?.value) ? rows(value) : value]));
+}
+
 function captureServingSource(context: CommandContext, entry: LocalModelServingReadModelSource): {
   readonly data: unknown; readonly assertCurrent: () => void;
 } {
@@ -267,8 +285,8 @@ function captureServingSource(context: CommandContext, entry: LocalModelServingR
     }
     methods(); return value;
   };
-  const original = acquire(), data = captureModelReadModelData(original, false);
-  const serialized = JSON.stringify(data);
+  const original = acquire(), captured = captureModelReadModelData(original, false);
+  const data = servingSnapshotData(original, captured), serialized = JSON.stringify(captured);
   const assertCurrent = () => {
     if (modelReadingServicePath(context, entry.path.split('.').slice(1)) !== source) throw new Error('Local serving diagnostic source changed.');
     methods();
@@ -286,7 +304,7 @@ function diagnosticEntriesFromSnapshot(snapshot: unknown): readonly unknown[] {
     return Object.keys(entryRecord).length > 0 && !readString(entryRecord.id) ? { ...entryRecord, id } : entry;
   });
   const record = readRecord(snapshot);
-  for (const key of ['localModelServers', 'localServers', 'servingDiagnostics', 'diagnostics', 'servers', 'endpoints', 'records', 'items', 'entries']) {
+  for (const key of SERVING_COLLECTION_KEYS) {
     const value = record[key];
     if (value instanceof Map) return [...value.entries()].map(([id, entry]) => {
       const entryRecord = readRecord(entry);
