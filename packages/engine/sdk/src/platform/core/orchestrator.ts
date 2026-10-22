@@ -10,6 +10,7 @@ import { JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { JudgmentInputError } from '../gate/judgment-input.js';
 import { PlannerJudgmentError } from './adaptive-planner.js';
 import { ResponseCompletionError } from './response-completion.js';
+import { completedContractEvidence } from './response-completion-contracts.js';
 import type { ConversationManager } from './conversation.js';
 import { resolveCompactionStrategy } from './conversation-compaction.js';
 import type { ToolRegistry } from '../tools/registry.js';
@@ -1001,6 +1002,7 @@ export class Orchestrator {
         }
         return !blockedContracts.has(record.contractId);
       },
+      getCompletedWork: () => completedContractEvidence(this.contractRunner, this.currentSessionId),
       getCompletionRequirements: () => {
         const lineage = getSessionLineageTracker(this.coreServices, this.ownedSessionLineageTracker);
         const plan = isNativeConversationTurn() ? null : this.coreServices.planManager?.getActive(this.currentSessionId);

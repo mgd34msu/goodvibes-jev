@@ -246,6 +246,7 @@ export interface OrchestratorTurnLoopContext {
   readonly continuationEvidence?: string | undefined;
   readonly canWaitForDelegate?: ((agentId: string) => boolean) | undefined;
   readonly getCompletionRequirements?: (() => unknown) | undefined;
+  readonly getCompletedWork?: (() => readonly Record<string, unknown>[]) | undefined;
 }
 
 export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopContext): Promise<void> {
@@ -930,6 +931,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
         request: context.text, response: enrichedResponse.content, conversation: context.conversation,
         tools: toolDefinitions.map(tool => tool.name),
         requirements: context.getCompletionRequirements?.(),
+        completedWork: context.getCompletedWork?.(),
         delegated: collectResponseDelegates(context.conversation, context.agentManager, intakeAgentIds),
       }), { signal, assertCurrent: assertActiveTurn }, () => {
         context.setCompletionActivity?.('waiting'); context.requestRender();

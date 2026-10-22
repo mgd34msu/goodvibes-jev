@@ -104,6 +104,7 @@ export class CompletionEvidenceProjection {
     readonly request: string; readonly response: string; readonly transcript: readonly Record<string, unknown>[];
     readonly tools: readonly string[]; readonly delegated: readonly Record<string, unknown>[];
     readonly requirements: unknown; readonly initial: unknown;
+    readonly completedWork?: readonly Record<string, unknown>[];
     readonly archive?: readonly { readonly messages: readonly Record<string, unknown>[] }[];
   }) {
     this.withheld = new Set();
@@ -112,6 +113,7 @@ export class CompletionEvidenceProjection {
       ...source,
       transcript: this.transcript(source.transcript),
       delegated: source.delegated.map(agent => this.observation(agent)),
+      ...(source.completedWork ? { completedWork: source.completedWork.map(work => this.observation(work)) } : {}),
       requirements: this.observation(source.requirements),
       initial: initial ? { request: initial.request, transcript: this.transcript(initial.transcript) } : null,
       ...(source.archive ? { archive: source.archive.map(history => ({ messages: this.transcript(history.messages) })) } : {}),

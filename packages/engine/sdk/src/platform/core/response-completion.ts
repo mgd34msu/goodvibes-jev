@@ -36,6 +36,7 @@ export interface ResponseCompletionInput {
   readonly conversation: ConversationManager;
   readonly tools: readonly string[];
   readonly requirements?: unknown;
+  readonly completedWork?: readonly Record<string, unknown>[] | undefined;
   readonly delegated?: readonly { readonly id: string; readonly task: string; readonly status: string; readonly output: string; readonly error?: string; readonly evidence?: readonly ConversationMessageSnapshot[] }[];
 }
 
@@ -277,7 +278,8 @@ export class ResponseCompletionGuard {
     // Validate all retained text before touching the port. Never trim away an earlier request or late secret.
     const source = retainStrictJudgmentJson({ request: input.request, response: input.response, transcript,
       archive: verificationHistory(conversation).map(history => ({ messages: completionTranscript(history.messages as ConversationMessageSnapshot[]) })), tools: input.tools, delegated: (input.delegated ?? []).map(agent => ({ id: agent.id, task: agent.task, status: agent.status,
-        output: agent.output, ...(agent.error ? { error: agent.error } : {}), evidence: completionTranscript(agent.evidence ?? []) })), requirements: input.requirements ?? null, initial: this.initial, previousReview: this.previousReview });
+        output: agent.output, ...(agent.error ? { error: agent.error } : {}), evidence: completionTranscript(agent.evidence ?? []) })),
+      completedWork: input.completedWork ?? [], requirements: input.requirements ?? null, initial: this.initial, previousReview: this.previousReview });
     const fullState = this.evidenceProjection.prepareFull(source.snapshot);
     this.sourceAdmitted = true;
     const conversationSource = messages.native ? null : JSON.stringify(transcript);
@@ -318,7 +320,7 @@ export class ResponseCompletionGuard {
       responseCompletion.run(owner.port, state as never, { ...readingOptions, site: responseCompletion.name }),
       source.snapshot.delegated.length ? delegationConsolidation.run(owner.port, state as never,
         { ...readingOptions, site: delegationConsolidation.name }) : Promise.resolve(null),
-      this.hasToolEvidence || source.snapshot.transcript.some(message => message.role === 'tool') || source.snapshot.delegated.length
+      this.hasToolEvidence || source.snapshot.transcript.some(message => message.role === 'tool') || source.snapshot.delegated.length || source.snapshot.completedWork.length
         ? executionAssurance.run(owner.port, state as never,
           { ...readingOptions, site: executionAssurance.name }) : Promise.resolve(null),
     ].map(async work => {

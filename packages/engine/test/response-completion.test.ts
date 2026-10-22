@@ -226,6 +226,17 @@ function loop(replies: string[]) {
   return { context, events, requests, bus, unsubscribe };
 }
 
+test('the main turn passes completed host work into its mandatory response checker', async () => {
+  const fake = answered(); installJudgmentPort(fake.port);
+  const f = loop(['See review.md.']);
+  const completedWork = [{ kind: 'host-completed-contract', id: 'finished', status: 'passed', answer: 'See review.md.' }];
+  try {
+    await executeOrchestratorTurnLoop({ ...f.context, getCompletedWork: () => completedWork });
+    expect((fake.requests.find(request => request.context?.battery === 'engine.core.response-completion')!.state as unknown as { completedWork: unknown }).completedWork).toEqual(completedWork);
+    expect(f.events).toEqual(['TURN_COMPLETED']);
+  } finally { f.unsubscribe(); }
+});
+
 test('one rejected draft gives a concrete repair list, executes the repair and delivers the second draft', async () => {
   const root = mkdtempSync(join(tmpdir(), 'jev-private-review-')), report = join(root, 'review.md');
   const f = loop([]), conversation = new ConversationManager();
