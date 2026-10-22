@@ -24,7 +24,7 @@ test('outside-contract single and mixed batch spawns cannot bypass original-scop
     { task: 'Review auth.ts only and call the review complete.', outsideContract: true }, { task: 'Write the report.' },
   ] });
   expect(batch.success).toBe(false); expect(spawns).toBe(0); expect(contracts).toBe(0);
-  expect(fake.requests).toHaveLength(2);
+  expect(fake.requests.filter(request => request.context?.battery === 'engine.agents.brief-fidelity')).toHaveLength(2);
 });
 
 test('unsettled, unavailable and private delegation evidence never starts a brief', async () => {
@@ -141,10 +141,39 @@ test('a held batch cannot be abandoned for a contract, and revised assignments a
   expect(bypass.success).toBe(false);
   expect(bypass.error).toContain('Repair and revalidate');
   expect(spawns).toBe(0); expect(contracts).toBe(0);
-  expect(uncertain.requests).toHaveLength(1);
+  expect(uncertain.requests.filter(request => request.context?.battery === 'engine.agents.brief-fidelity')).toHaveLength(1);
   const accepted = fakePort(() => noulAnswer(.01)); installJudgmentPort(accepted.port);
   const revised = await tool.execute({ mode: 'batch-spawn', authoritativeTask: request, tasks: tasks.map(task => ({ ...task,
     task: task.task + ' The coordinator retains all remaining scope and writes the final consolidated artifact.' })) });
   expect(revised.success).toBe(true); expect(spawns).toBe(2); expect(contracts).toBe(0);
   expect(accepted.requests).toHaveLength(1);
+});
+
+test('an uncertain whole-plan reading resolves every original requirement without a blind plan rewrite', async () => {
+  const request = 'Use one read-only agent. Keep all files unchanged. The coordinator checks git diff once.';
+  const input = { request, assignments: [{ task: 'Read review.md and return its verification result; the coordinator runs git diff.',
+    tools: ['read'], restrictTools: true, executionIntent: { filesystemPolicy: 'read-only' as const } }] };
+  const requirements: string[] = [];
+  const fake = fakePort((_name, _question, state) => {
+    const source = state as { request: string; requirement?: string; assignments: typeof input.assignments };
+    expect(source.request).toBe(request);
+    expect(source.assignments).toEqual(input.assignments);
+    if (source.requirement) { requirements.push(source.requirement); return noulAnswer(.01); }
+    return noulAnswer(.5);
+  });
+  installJudgmentPort(fake.port);
+  await assertAgentBriefFidelity(input);
+  expect(new Set(requirements)).toEqual(new Set(['Use one read-only agent.', 'Keep all files unchanged.', 'The coordinator checks git diff once.']));
+  expect(fake.requests).toHaveLength(4);
+});
+
+test('a delegation rejection returns the exact conflicting requirement as a numbered fix', async () => {
+  const request = 'Read review.md. Do not change any files.';
+  const fake = fakePort((name, _question, state) => {
+    const requirement = (state as { requirement?: string }).requirement;
+    return noulAnswer(name === 'constraint_conflict' && (!requirement || requirement === 'Do not change any files.') ? .99 : .01);
+  });
+  installJudgmentPort(fake.port);
+  await expect(assertAgentBriefFidelity({ request, assignments: [{ task: 'Edit review.md.' }] }))
+    .rejects.toThrow('1. {"requirement":"Do not change any files.","check":"constraint_conflict"');
 });

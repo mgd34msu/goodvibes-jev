@@ -1,4 +1,6 @@
 import { isNativeConversationTurn, NATIVE_TURN_EXECUTION_REFUSAL } from '../../core/native-turn-scope.js';
+import { readDelegationRequest } from '../../core/delegation-request-context.js';
+import { delegationPlanHolds, delegationPlanKey } from '../../agents/delegation-plan-holds.js';
 import type { Tool } from '../../types/tools.js';
 import { resolveCredentialEnvScrub, scrubCredentialEnv, type CredentialEnvScrubConfig, type ResolvedCredentialEnvScrub } from '../exec/credential-env.js';
 import type { ContractRunner } from '../../contract/runner.js';
@@ -473,6 +475,12 @@ export function createWorkflowTool(services: WorkflowServices, contracts: Workfl
           }
           if (input.definition === CONTRACT_WORKFLOW_DEFINITION) {
             if (isNativeConversationTurn()) return { success: false, error: NATIVE_TURN_EXECUTION_REFUSAL };
+            const sessionId = contracts.resolveSessionId(), source = readDelegationRequest();
+            const holds = delegationPlanHolds(contracts.contractRunner);
+            const held = source ? holds.get(delegationPlanKey(sessionId, source.request))
+              : [...holds.values()].find(plan => plan.sessionId === sessionId);
+            if (held) return { success: false, error: 'Delegation remains held. Repair and revalidate the pending agent plan before starting a replacement contract.',
+              output: JSON.stringify({ recovery: { kind: 'revise-delegation', ...held, requiredMode: held.mode } }) };
             const started = contracts.contractRunner.start({
               ask: input.task,
               sessionId: contracts.resolveSessionId(),

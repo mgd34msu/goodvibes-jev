@@ -49,10 +49,11 @@ test.each([false, true])('ACP delegation judges the actual captured owner reques
     response: { content: '', toolCalls: [{ id: 'delegate-call', name: 'delegate', arguments: args }] } as never,
     userText: request, executeToolCalls: async () => [await h.tools.execute('delegate-call', 'delegate', args)],
     setPendingToolCalls: () => {}, messageQueueLength: 0, requestRender: () => {}, sessionId: 'fixture' });
-  if (refused) await expect(attempt).rejects.toThrow('Delegation held');
-  else expect((await attempt).results[0]?.success).toBe(true);
+  const outcome = await attempt;
+  expect(outcome.results[0]?.success).toBe(!refused);
+  if (refused) expect(JSON.parse(outcome.results[0]!.output!).recovery.fixes[0].requirement).toBe(request);
   expect(h.spawned).toHaveLength(refused ? 0 : 1);
-  expect(fake.requests).toHaveLength(1);
+  expect(fake.requests.filter(request => request.context?.battery === 'engine.agents.brief-fidelity')).toHaveLength(1);
 });
 
 test('a direct ACP tool invocation cannot supply its own original request', async () => {

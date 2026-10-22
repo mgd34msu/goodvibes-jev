@@ -1,4 +1,5 @@
-import { assertAgentBriefFidelity } from '../../agents/brief-fidelity.js';
+import { assertAgentBriefFidelity, DelegationPlanHeldError } from '../../agents/brief-fidelity.js';
+import { delegationPlanHolds, delegationPlanKey } from '../../agents/delegation-plan-holds.js';
 import { readCompletionRepairContext } from '../../core/completion-repair-context.js';
 import { types as nodeTypes } from 'node:util';
 import type { Tool, ToolExecuteOptions } from '../../types/tools.js';
@@ -204,9 +205,9 @@ function retainContractProperty(object: object, key: 'contractRunner' | 'start' 
 
 export function createAgentTool(config: AgentToolConfig): Tool {
   const archetypeLoader = config.archetypeLoader ?? new ArchetypeLoader();
-  // A refused batch remains a pending proposal, including when the model changes spawn modes.
+  // A refused delegation remains a pending proposal, including when the model changes spawn modes.
   // Keyed by host-stamped source request and session, never a model-supplied parent ID.
-  const heldBatches = new Map<string, { readonly request: string; readonly assignments: readonly { readonly task: string }[]; readonly reason: string }>();
+  const heldPlans = delegationPlanHolds(config.contractRunner);
 
   /**
    * Starts one contract for work handed to the tool. The unit
@@ -356,19 +357,21 @@ export function createAgentTool(config: AgentToolConfig): Tool {
     }
 
     const manager = config.manager;
-    const delegationKey = JSON.stringify([config.resolveSessionId(), input.authoritativeTask ?? '']);
-    const heldBatch = heldBatches.get(delegationKey);
-    const holdBatch = (assignments: readonly { readonly task: string }[], error: unknown) => {
+    const delegationSession = config.resolveSessionId();
+    const delegationKey = delegationPlanKey(delegationSession, input.authoritativeTask ?? '');
+    const heldPlan = heldPlans.get(delegationKey);
+    const holdPlan = (assignments: readonly { readonly task: string }[], error: unknown, mode: 'spawn' | 'batch-spawn' = 'batch-spawn') => {
       const reason = summarizeError(error);
-      const proposal = { request: input.authoritativeTask!, assignments, reason };
-      heldBatches.set(delegationKey, proposal);
+      const proposal = { sessionId: delegationSession, request: input.authoritativeTask!, assignments, reason, mode,
+        ...(error instanceof DelegationPlanHeldError ? { fixes: error.fixes } : {}) };
+      heldPlans.set(delegationKey, proposal);
       return publish({ success: false, error: reason,
         output: JSON.stringify({ recovery: { kind: 'revise-delegation', ...proposal,
-          instruction: 'Revise these assignments and resubmit mode=batch-spawn for Jev revalidation. Do not abandon the held plan by starting another agent or contract. Continue the original request after validation.' } }) });
+          instruction: `Revise these assignments and resubmit mode=${mode}${mode === 'spawn' ? ' with outsideContract=true' : ''} for Jev revalidation. Do not abandon the held plan by starting another agent or contract. Continue the original request after validation.` } }) });
     };
-    if (input.mode === 'spawn' && heldBatch) return publish({ success: false,
-      error: 'Delegation remains held. Repair and revalidate the pending batch before switching execution modes.',
-      output: JSON.stringify({ recovery: { kind: 'revise-delegation', ...heldBatch, requiredMode: 'batch-spawn' } }) });
+    if (input.mode === 'spawn' && heldPlan && (heldPlan.mode === 'batch-spawn' || !input.outsideContract)) return publish({ success: false,
+      error: 'Delegation remains held. Repair and revalidate the pending plan before switching execution modes.',
+      output: JSON.stringify({ recovery: { kind: 'revise-delegation', ...heldPlan, requiredMode: heldPlan.mode } }) });
 
     switch (input.mode) {
       case 'spawn': {
@@ -405,10 +408,13 @@ export function createAgentTool(config: AgentToolConfig): Tool {
           });
         }
 
-        let record;
         try {
           if (input.authoritativeTask) await assertAgentBriefFidelity({ request: input.authoritativeTask, assignments: [briefAssignment(input)], ...(input.context ? { context: input.context } : {}), ...(completionRepair ? { repairContext: completionRepair } : {}) }, { signal, assertCurrent });
           assertCurrent();
+        } catch (error) { return holdPlan([briefAssignment(input)], error, 'spawn'); }
+        heldPlans.delete(delegationKey);
+        let record;
+        try {
           record = spawnOwned(input);
         } catch (error) {
           return {
@@ -774,12 +780,12 @@ export function createAgentTool(config: AgentToolConfig): Tool {
         }
         const outsideInputs = spawnInputs.filter((spawnInput) => spawnInput.outsideContract === true);
         const contractTasks = input.tasks.filter((_, index) => spawnInputs[index]!.outsideContract !== true);
-        if ((outsideInputs.length > 0 || heldBatch) && input.authoritativeTask) {
+        if ((outsideInputs.length > 0 || heldPlan) && input.authoritativeTask) {
           try {
             await assertAgentBriefFidelity({ request: input.authoritativeTask, assignments: spawnInputs.map(briefAssignment), ...(input.context ? { context: input.context } : {}), ...(completionRepair ? { repairContext: completionRepair } : {}) }, { signal, assertCurrent });
             assertCurrent();
-          } catch (error) { return holdBatch(input.tasks.map(task => ({ task: task.task })), error); }
-          heldBatches.delete(delegationKey);
+          } catch (error) { return holdPlan(input.tasks.map(task => ({ task: task.task })), error); }
+          heldPlans.delete(delegationKey);
         }
 
         const batchOutput: Record<string, unknown> = { cohort: input.cohort };

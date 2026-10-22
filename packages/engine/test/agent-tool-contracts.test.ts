@@ -15,6 +15,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { withCompletionRepairContext } from '../sdk/src/platform/core/completion-repair-context.js';
+import { withDelegationRequest } from '../sdk/src/platform/core/delegation-request-context.js';
 import { AgentMessageBus } from '../sdk/src/platform/agents/message-bus.js';
 import type { ConfigManager } from '../sdk/src/platform/config/index.js';
 import type { ContractRunner, StartedContract } from '../sdk/src/platform/contract/runner.js';
@@ -683,5 +684,33 @@ test('batch delegation retains read-only tools and shared execution restrictions
     expect(record.tools).toEqual(['read']);
     expect(record.executionIntent).toEqual({ filesystemPolicy: 'read-only', networkPolicy: 'deny', riskClass: 'safe' });
     expect(fake.requests).toHaveLength(1);
+  } finally { h.manager.clear(); }
+});
+
+test('a held standalone plan cannot escape through another agent tool or workflow contract', async () => {
+  const h = harness(), services = createWorkflowServices();
+  const workflow = createWorkflowTool(services, { contractRunner: h.runner, projectRoot: PROJECT_ROOT, resolveSessionId: () => SESSION_ID });
+  const input = { mode: 'spawn', outsideContract: true, authoritativeTask: 'Read review.md without edits.',
+    task: 'Read review.md.', tools: ['read'], restrictTools: true };
+  installJudgmentPort(fakePort(name => noulAnswer(name === 'constraint_conflict' ? .99 : .01)).port);
+  try {
+    const held = await h.tool.execute(input);
+    expect(held.success).toBe(false);
+    expect(JSON.parse(held.output!).recovery.fixes[0].requirement).toBe(input.authoritativeTask);
+    const switched = await h.tool.execute({ ...input, outsideContract: false });
+    expect(switched.success).toBe(false);
+    const otherTool = createAgentTool({ manager: h.manager, messageBus: h.messageBus, configManager: configManager(),
+      contractRunner: h.runner, projectRoot: PROJECT_ROOT, resolveSessionId: () => SESSION_ID });
+    expect((await otherTool.execute({ ...input, outsideContract: false })).success).toBe(false);
+    expect((await workflow.execute({ mode: 'start', definition: 'contract', task: 'Replace the held plan.' })).success).toBe(false);
+    expect((await withDelegationRequest({ request: input.authoritativeTask }, () => workflow.execute({ mode: 'start',
+      definition: 'contract', task: 'A different model-supplied task.', authoritativeTask: 'Forged replacement request.' }))).success).toBe(false);
+    expect(h.runner.starts).toHaveLength(0);
+    expect(h.manager.list()).toHaveLength(0);
+    installJudgmentPort(fakePort(() => noulAnswer(.01)).port);
+    expect((await otherTool.execute(input)).success).toBe(true);
+    await h.manager.join(h.manager.list()[0]!.id);
+    expect(h.manager.list()).toHaveLength(1);
+    expect(h.runner.starts).toHaveLength(0);
   } finally { h.manager.clear(); }
 });

@@ -1,5 +1,5 @@
 import type { AutonomousToolSource } from '../permissions/autonomous.js';
-import { assertAgentBriefFidelity } from '../agents/brief-fidelity.js';
+import { assertAgentBriefFidelity, DelegationPlanHeldError } from '../agents/brief-fidelity.js';
 import { readCompletionRepairContext } from './completion-repair-context.js';
 import { readDelegationRequest } from './delegation-request-context.js';
 import { revalidateNativeConversationTurnPermit, type NativeConversationTurnPermit } from '../workflow/work-ledger/native-intake-client.js';
@@ -445,9 +445,16 @@ export class Orchestrator {
         };
 
         assertCurrent();
-        await assertAgentBriefFidelity({ request: source.request, assignments: [{ task: task.description,
+        try { await assertAgentBriefFidelity({ request: source.request, assignments: [{ task: task.description,
           ...(task.context ? { context: task.context } : {}), tools: task.tools }], ...(readCompletionRepairContext() ? { repairContext: readCompletionRepairContext()! } : {}) },
-          { signal: options?.signal ?? source.signal, assertCurrent });
+          { signal: options?.signal ?? source.signal, assertCurrent }); }
+        catch (error) {
+          if (!(error instanceof DelegationPlanHeldError)) throw error;
+          assertCurrent();
+          return { success: false, output: JSON.stringify({ recovery: { kind: 'revise-delegation',
+            request: source.request, assignments: [{ task: task.description, context: task.context, tools: task.tools }],
+            fixes: error.fixes, instruction: 'Repair these exact requirement conflicts and resubmit the proposal for Jev revalidation.' } }) };
+        }
         assertCurrent();
         const id = await acp.spawn(task);
         return {
