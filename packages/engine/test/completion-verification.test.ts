@@ -257,7 +257,7 @@ test('an irreducible summary tree switches to audited original retrieval and sti
   expect((checks.at(-1)!.state as never as { opened: { sources: unknown[] } }).opened.sources.length).toBeGreaterThan(0);
 });
 
-test('an invalid selector response resumes the exact requirement cursor without reopening earlier primary pages', async () => {
+test('an invalid selector response opens an admitted original without restarting requirement verification', async () => {
   let selections = 0;
   const fake = fakePort((name, question, input) => {
     if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
@@ -276,14 +276,35 @@ test('an invalid selector response resumes the exact requirement cursor without 
     { role: 'tool', callId: 'latest-observation', content: 'A later observation, not the requested proof.' },
   ] };
   const verifier = new CompletionVerification(verificationWriter), owner = access(port);
-  await expect(verifier.prepare(input, owner)).rejects.toThrow('Synthetic malformed selector response');
+  expect((await verifier.prepare(input, owner)).findings).toHaveLength(0);
+  expect(selections).toBeGreaterThanOrEqual(5);
   const checks = () => fake.requests.filter(request => request.context?.battery === 'engine.verification.requirement')
     .map(request => (request.state as never as { opened: { sources: { id: string }[] } }).opened.sources.map(source => source.id));
   const before = checks();
   expect(before.at(-1)!.length).toBeGreaterThan(0);
-  expect((await verifier.prepare(input, owner)).findings).toHaveLength(0);
-  expect(checks()[before.length]).toEqual(before.at(-1)!);
   expect(checks().filter(ids => JSON.stringify(ids) === JSON.stringify(before.find(ids => ids.length)!))).toHaveLength(1);
+});
+
+test('routing fallback still discovers and holds an actual unfinished original obligation', async () => {
+  let routingFailures = 0;
+  const fake = fakePort((name, _question, raw) => {
+    const current = raw as unknown as { opened?: { sources?: unknown[] } };
+    const gap = JSON.stringify(current.opened?.sources ?? []).includes('ACTUAL-UNREVIEWED-FILE');
+    return noulAnswer(name === 'needs_source' && !gap || gap && ['unfinished', 'quality_gap'].includes(name) ? .99 : .01);
+  });
+  const port: VerificationAccess['port'] = { ...fake.port, async ask(request) {
+    if (request.context?.battery === 'engine.verification.source') {
+      routingFailures++;
+      throw new JudgmentError('invalid-response', 'Synthetic unusable read-order response');
+    }
+    return fake.port.ask(request);
+  } };
+  const input = state('Earlier retained source. '.repeat(6_000) + 'ACTUAL-UNREVIEWED-FILE' + ' Later retained source. '.repeat(7_000));
+  const result = await new CompletionVerification(verificationWriter).prepare(input, access(port));
+  expect(routingFailures).toBeGreaterThan(0);
+  expect(result.findings.length).toBeGreaterThan(0);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.requirement'
+    && JSON.stringify((request.state as unknown as { opened: unknown }).opened).includes('ACTUAL-UNREVIEWED-FILE'))).toBe(true);
 });
 
 test('a failed parallel requirement cancels and drains its sibling before recovery can start', async () => {

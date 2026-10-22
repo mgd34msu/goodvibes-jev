@@ -386,6 +386,26 @@ export class CompletionVerification {
     }
   }
 
+  private async chooseSource(context: unknown, candidates: readonly { id: string; content: unknown }[], access: VerificationAccess,
+    everyCandidateRequired = false) {
+    // Once an audit has retained these pages, ALL of them must be inspected.
+    // Their read order is deterministic bookkeeping, not another judgment.
+    if (everyCandidateRequired) return candidates[0]!;
+    try {
+      const selected = await verificationSource.select(access.port, context as never, candidates as never,
+        { ...this.options(access), site: verificationSource.name });
+      selected.recordAction('Select an existing evidence branch for native retrieval; this does not approve completion.');
+      return candidates.find(candidate => candidate.id === selected.pick.choice) ?? candidates[0]!;
+    } catch (error) {
+      access.assertCurrent();
+      if (!(error instanceof JudgmentError) || error.kind !== 'invalid-response') throw error;
+      // A malformed routing response cannot approve anything. Opening an
+      // already-admitted original is harmless and lets the real work/quality
+      // questions settle it, without restarting the entire verification pass.
+      return candidates[0]!;
+    }
+  }
+
   private async inspect(requirement: VerificationRequirement, ledger: readonly VerificationRequirement[], overview: readonly VerificationReceipt[], response: unknown, access: VerificationAccess, auditSources?: readonly VerificationSource[], defer = () => false, recent: readonly VerificationSource[] = [], previousReview: unknown = null) {
     const key = verificationHash(['retrieval-v1', requirement, ledger, overview.map(node => this.compactNode(node)), response,
       auditSources?.map(source => source.id), recent.map(source => source.id), previousReview]);
@@ -461,10 +481,7 @@ export class CompletionVerification {
           return { requirement, readings: run.readings, state, sourceExhausted: false, auditHeld: false };
         if (!candidates.length) return { requirement, readings: run.readings, state: { ...state,
           sourceGap: 'All retained source branches were inspected. Name the specific missing admissible observation needed for this requirement; obtain that evidence with tools instead of rewriting the same report.' }, sourceExhausted: true, auditHeld };
-        const selection = await verificationSource.select(access.port, { requirement, readings: readingEvidence(run.readings), opened: { ...opened, sources: opened.sources.map(verificationWireSource) } } as never, candidates as never,
-          { ...this.options(access), site: verificationSource.name });
-        selection.recordAction('Select an existing evidence branch for native retrieval; this does not approve completion.');
-        const selected = candidates.find(candidate => candidate.id === selection.pick.choice) ?? candidates[0]!;
+        const selected = await this.chooseSource({ requirement, readings: readingEvidence(run.readings), opened: { ...opened, sources: opened.sources.map(verificationWireSource) } }, candidates, access, auditHeld);
         // Choosing which already-admitted local evidence to inspect is harmless.
         // An uncertain fit can never approve completion, but must not prevent us
         // from opening that candidate and obtaining a decisive primary reading.
@@ -567,10 +584,7 @@ export class CompletionVerification {
       const candidates = [...new Map(evidence.frontier.filter(node => !evidence.seen.has(node.id)).map(node => [node.id, node])).values()].map(node => ({ id: node.id, content: this.compactNode(node) }));
       if (!candidates.length) return false;
       const labels = Object.fromEntries(Object.entries(readings as Record<string, Record<string, { verdict: string; outcome: string }> | null>).map(([aspect, values]) => [aspect, values ? readingEvidence(values) : null]));
-      const selected = await verificationSource.select(access.port, { requirement: 'Settle these held FINAL publication readings against the exact current draft and original request.', readings: labels, evidence: state } as never,
-        candidates as never, { ...this.options(access), site: verificationSource.name });
-      selected.recordAction('Open an existing original evidence branch for final publication inspection; do not revise the user task.');
-      const choice = candidates.find(candidate => candidate.id === selected.pick.choice) ?? candidates[0]!;
+      const choice = await this.chooseSource({ requirement: 'Settle these held FINAL publication readings against the exact current draft and original request.', readings: labels, evidence: state }, candidates, access);
       evidence.seen.add(choice.id);
       const node = this.nodes.get(choice.id)!;
       const children = node.children.map(id => this.nodes.get(id)).filter((entry): entry is VerificationReceipt => !!entry);
