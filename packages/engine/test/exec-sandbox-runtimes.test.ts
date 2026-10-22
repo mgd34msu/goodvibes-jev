@@ -1,5 +1,5 @@
 import { expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { copyFileSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createExecTool } from '../sdk/src/platform/tools/exec/runtime.js';
@@ -42,6 +42,12 @@ test('real contained Bun execution', () => {
 
 test.skipIf(!availability.available || !Bun.which('node') || !Bun.which('npm'))('ordinary sandbox supplies the selected native Node and npm without mounting home directories', async () => {
   const workspace = mkdtempSync(join(tmpdir(), 'sandbox-node-runtime-'));
+  // The installed product supplies a copied Node binary ahead of the user's
+  // package manager. npm must still work without exposing either directory.
+  const runtime = join(workspace, 'installed-runtime'); mkdirSync(runtime);
+  copyFileSync(Bun.which('node')!, join(runtime, 'node'));
+  const startupPath = process.env.PATH;
+  process.env.PATH = `${runtime}:${startupPath ?? ''}`;
   const manager = new ProcessManager();
   const tool = createExecTool(manager, { defaultWorkingDirectory: workspace,
     overflowHandler: new OverflowHandler({ baseDir: workspace }), credentialEnvScrub: { enabled: false },
@@ -55,5 +61,8 @@ test.skipIf(!availability.available || !Bun.which('node') || !Bun.which('npm'))(
     expect(output.stdout).toMatch(/^v\d+\./);
     const custom = await tool.execute({ commands: [{ cmd: 'printf "%s" "$PATH"', env: { PATH: '/usr/bin:/bin' }, progress: false, timeout_ms: 1000 }] });
     expect(JSON.parse(custom.output!).stdout).toBe('/usr/bin:/bin');
-  } finally { await manager.close(); rmSync(workspace, { recursive: true, force: true }); }
+  } finally {
+    if (startupPath === undefined) delete process.env.PATH; else process.env.PATH = startupPath;
+    await manager.close(); rmSync(workspace, { recursive: true, force: true });
+  }
 });

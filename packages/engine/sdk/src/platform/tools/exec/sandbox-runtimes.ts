@@ -30,6 +30,25 @@ function trustedExecutable(name: string): string | undefined {
   return undefined;
 }
 
+function npmPackage(node: string): string | undefined {
+  const candidates = [join(dirname(node), '..', 'lib', 'node_modules', 'npm'),
+    ...(process.env.PATH ?? '').split(':').filter(isAbsolute).flatMap(directory => {
+      try {
+        const entry = realpathSync(join(directory, 'npm'));
+        return entry.endsWith('/bin/npm-cli.js') ? [dirname(dirname(entry))] : [];
+      } catch { return []; }
+    })];
+  for (const candidate of candidates) {
+    try {
+      const npm = realpathSync(candidate);
+      const manifest = JSON.parse(readFileSync(join(npm, 'package.json'), 'utf8')) as { name?: unknown };
+      if (statSync(npm).isDirectory() && manifest.name === 'npm'
+        && statSync(join(npm, 'bin', 'npm-cli.js')).isFile()) return npm;
+    } catch { /* An installation may ship its native Node executable alone. */ }
+  }
+  return undefined;
+}
+
 /** Ordinary execution keeps home and service directories hidden. Admit only
  * standalone interpreters and the selected Node installation's npm package;
  * never mount a PATH directory, an entire installation or a user's home.
@@ -46,16 +65,14 @@ export function withSandboxRuntimes(plan: ExecSandboxPlan, workspace: string): E
   if (bun) mounts.push('--ro-bind', bun, `${SANDBOX_RUNTIME_BIN}/bun`);
   if (node) {
     mounts.push('--ro-bind', node, `${SANDBOX_RUNTIME_BIN}/node`);
-    try {
-      const npm = realpathSync(join(dirname(node), '..', 'lib', 'node_modules', 'npm'));
-      const manifest = JSON.parse(readFileSync(join(npm, 'package.json'), 'utf8')) as { name?: unknown };
-      if (statSync(npm).isDirectory() && manifest.name === 'npm'
-        && statSync(join(npm, 'bin', 'npm-cli.js')).isFile()) {
-        mounts.push('--ro-bind', npm, `${runtimeRoot}/npm`, '--symlink', '../npm/bin/npm-cli.js', `${SANDBOX_RUNTIME_BIN}/npm`);
+    const npm = npmPackage(node);
+    if (npm) {
+      mounts.push('--ro-bind', npm, `${runtimeRoot}/npm`, '--symlink', '../npm/bin/npm-cli.js', `${SANDBOX_RUNTIME_BIN}/npm`);
+      try {
         if (statSync(join(npm, 'bin', 'npx-cli.js')).isFile())
           mounts.push('--symlink', '../npm/bin/npx-cli.js', `${SANDBOX_RUNTIME_BIN}/npx`);
-      }
-    } catch { /* A Node installation without npm still supplies its interpreter. */ }
+      } catch { /* npm remains available when this installation omits npx. */ }
+    }
   }
   return { ...plan, argvPrefix: [...plan.argvPrefix.slice(0, -1), ...mounts, '--'],
     boundary: `${plan.boundary}; installed JavaScript runtimes read-only` };
