@@ -57,6 +57,6 @@ test('session persistence and pages preserve more than 2000 messages', () => {
   expect(listSharedSessionMessages(store, 's', 100, 2000)[0]?.body).toBe('message 0');
 });
 test('default workflow counters do not exhaust work', () => {
-  expect(CONTRACT_CONFIG_DEFAULTS).toMatchObject({ maxUnits: 0, maxFixRounds: 0, planRepairLimit: 0, maxNudgesPerUnit: 0, stallLimit: 0, evidenceNudgeLimit: 0 });
-  expect(detectStall({ criteria: [], checks: [], nudges: Array(20).fill({}) }, { checkId: 'check', trigger: 'completion', met: new Set(), failingGates: 0, qualityProblems: 0, claimsFailed: false }, [], { maxNudgesPerUnit: 0, stallLimit: 0 })).toBeNull();
+  expect(CONTRACT_CONFIG_DEFAULTS).toMatchObject({ maxUnits: 0, maxFixRounds: 0, planRepairLimit: 0, maxNudgesPerUnit: 0, evidenceNudgeLimit: 0 });
+  expect(detectStall({ criteria: [], checks: [], nudges: Array(20).fill({}) }, { checkId: 'check', trigger: 'completion', met: new Set(), failingGates: 0, qualityProblems: 0, claimsFailed: false }, [], CONTRACT_CONFIG_DEFAULTS)).toBeNull();
 });

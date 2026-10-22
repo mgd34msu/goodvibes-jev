@@ -7,13 +7,12 @@ import { SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibe
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { ConfigManager } from '../sdk/src/platform/config/manager.ts';
 import { SecretsManager } from '../sdk/src/platform/config/secrets.ts';
-import { ModelFamilyReadings } from '../sdk/src/platform/providers/model-family.ts';
 import { createJudgmentSourceLifetime } from '../sdk/src/platform/runtime/judgment-source-lifetime.ts';
 import { createAsyncDisposalScope } from '../sdk/src/platform/runtime/disposal.ts';
 import { composeJudgment } from '../sdk/src/platform/runtime/judgment-services.ts';
 import { acquireCrossProcessLock } from '../sdk/src/platform/workspace/checkpoint/cross-process-lock.ts';
 
-const model = (id = 'cached') => ({ registryKey: `synthetic:${id}`, id, displayName: id, provider: 'synthetic' });
+const readMessage = (message = 'cached') => readFailure({ message: `Synthetic failure ${message}` }, 'fixture');
 const turn = () => new Promise<void>(resolve => setTimeout(resolve, 0));
 function deferred() { return Promise.withResolvers<void>(); }
 async function promptly<T>(work: Promise<T>): Promise<T> {
@@ -37,9 +36,8 @@ function fixture() {
   const lifetime = createJudgmentSourceLifetime({ config, secrets, env: {} });
   const log = new SqliteDecisionLog(':memory:'); cleanup.push(() => log[Symbol.dispose]()); cleanup.push(lifetime.dispose);
   const entered = deferred(); const release = deferred();
-  let held = false; let family = 'Llama'; let category = 'billing';
+  let held = false; let category = 'billing';
   const fake = fakePort((name, question) => {
-    if (name === 'family') return choiceAnswer(question, family, 0.99);
     if (name === 'category') return choiceAnswer(question, category, 0.99);
     if (name === 'connection_failure') return choiceAnswer(question, 'none', 0.99);
     return noulAnswer(0.01);
@@ -54,7 +52,7 @@ function fixture() {
   bindJudgmentPortAuthority(port, lifetime.capture); installJudgmentPort(port);
   return { root, config, secrets, log, port, entered, release, lifetime,
     hold() { held = true; }, resume() { held = false; release.resolve(); },
-    changeAnswer() { family = 'Claude'; category = 'network'; }, started: () => started };
+    changeAnswer() { category = 'network'; }, started: () => started };
 }
 
 const changes: readonly { name: string; mutate: (config: ConfigManager) => void }[] = [
@@ -70,20 +68,19 @@ const changes: readonly { name: string; mutate: (config: ConfigManager) => void 
 
 describe('same-port source incarnation', () => {
   for (const change of changes) test(`${change.name} retires cache, pending requests and decision retention`, async () => {
-    const f = fixture(); const readings = new ModelFamilyReadings();
-    await readings.read([model()]); expect(readings.known(model())).toBe('Llama');
+    const f = fixture();
+    expect((await readMessage()).category).toBe('billing');
     const oldIdentity = captureJudgmentPort('fixture').identity;
-    f.hold(); const pending = readings.read([model('pending')]).then(() => null, error => error);
+    f.hold(); const pending = readMessage('pending').then(() => null, error => error);
     await f.entered.promise;
     try {
       change.mutate(f.config);
       expect(await promptly(pending)).toMatchObject({ name: 'JudgmentAuthorityRetiredError' });
-      expect(readings.known(model())).toBeUndefined();
       expect(captureJudgmentPort('fixture').identity).not.toBe(oldIdentity);
       expect(f.log.query()).toHaveLength(1);
       f.changeAnswer(); f.resume(); await turn();
       expect(f.log.query()).toHaveLength(1);
-      await readings.read([model()]); expect(readings.known(model())).toBe('Claude');
+      expect((await readMessage()).category).toBe('network');
       expect(f.log.query()).toHaveLength(2);
       expect(f.started()).toBe(3);
     } finally { f.resume(); await pending; await turn(); }
@@ -93,19 +90,18 @@ describe('same-port source incarnation', () => {
     const f = fixture(); const plain = { scope: 'user', medium: 'plaintext' } as const;
     await f.secrets.set('TYPESAFE_API_KEY', 'goodvibes://secrets/goodvibes/SYNTHETIC_LEAF', plain);
     await f.secrets.set('SYNTHETIC_LEAF', 'synthetic-one', plain);
-    const readings = new ModelFamilyReadings(); await readings.read([model()]);
+    await readMessage();
     const path = (await f.secrets.listDetailed()).find(row => row.key === 'SYNTHETIC_LEAF')!.path!;
     const unlock = await acquireCrossProcessLock(`${path}.mutation.lock`, { strictOwnership: true });
-    f.hold(); const pending = readings.read([model('pending')]).then(() => null, error => error); await f.entered.promise;
+    f.hold(); const pending = readMessage('pending').then(() => null, error => error); await f.entered.promise;
     const write = f.secrets.set('SYNTHETIC_LEAF', 'synthetic-two', plain);
     try {
       expect(f.secrets.getCredentialMutationState().pending).toBe(true);
       expect(await promptly(pending)).toMatchObject({ name: 'JudgmentAuthorityRetiredError' });
       expect(() => captureJudgmentPort('fixture')).toThrow('no longer current');
-      expect(readings.known(model())).toBeUndefined();
     } finally { unlock(); await write; f.resume(); await pending; await turn(); }
     await f.secrets.set('SYNTHETIC_LEAF', 'synthetic-one', plain);
-    f.changeAnswer(); await readings.read([model()]); expect(readings.known(model())).toBe('Claude');
+    f.changeAnswer(); expect((await readMessage()).category).toBe('network');
     const recorded = JSON.stringify(f.log.query());
     for (const marker of ['SYNTHETIC_LEAF', 'TYPESAFE_API_KEY', 'synthetic-one', 'synthetic-two']) expect(recorded).not.toContain(marker);
     expect(Object.keys(captureJudgmentPort('fixture').identity)).toEqual([]);
@@ -123,64 +119,62 @@ describe('same-port source incarnation', () => {
   });
 
   test('revocation inside a record prevents later battery attachments and cache publication', async () => {
-    const f = fixture(); const readings = new ModelFamilyReadings();
+    const f = fixture();
     const original = f.log.record.bind(f.log);
     const record = spyOn(f.log, 'record').mockImplementation(entry => {
       const id = original(entry); changes[0]!.mutate(f.config); return id;
     });
     try {
-      await expect(readings.read([model()])).rejects.toMatchObject({ name: 'JudgmentAuthorityRetiredError' });
-      expect(readings.known(model())).toBeUndefined();
+      await expect(readMessage()).rejects.toMatchObject({ name: 'JudgmentAuthorityRetiredError' });
       expect(f.log.query()).toMatchObject([{ status: 'answered', notes: [] }]);
     } finally { record.mockRestore(); }
   });
 });
 
 describe('installation and consumer lifetimes', () => {
-  test.each(['resolve', 'reject'] as const)('replacement drains a non-aborting reader with late %s, and stops queued siblings', async settlement => {
-    const f = fixture(); const readings = new ModelFamilyReadings(); f.hold();
-    const pending = readings.read(Array.from({ length: 12 }, (_, i) => model(String(i)))).then(() => null, error => error);
+  test.each(['resolve', 'reject'] as const)('replacement drains a non-aborting reader with late %s, without retaining a late result', async settlement => {
+    const f = fixture(); f.hold();
+    const pending = readMessage('pending').then(() => null, error => error);
     await f.entered.promise;
-    const replacement = fakePort((_name, question) => choiceAnswer(question, 'Claude', 0.99));
+    const replacement = fakePort((name, question) => question.type === 'choice' ? choiceAnswer(question, name === 'category' ? 'network' : 'none', 0.99) : noulAnswer(0.01));
     installJudgmentPort(replacement.port);
     try {
       expect(await promptly(pending)).toMatchObject({ name: 'JudgmentAuthorityRetiredError' });
-      expect(f.started()).toBe(8);
-      await readings.read([model()]); expect(readings.known(model())).toBe('Claude');
+      expect(f.started()).toBe(1);
+      expect((await readMessage()).category).toBe('network');
       if (settlement === 'reject') f.release.reject(new Error('synthetic-private-late-error')); else f.resume();
-      await turn(); expect(f.log.query()).toHaveLength(0); expect(f.started()).toBe(8);
+      await turn(); expect(f.log.query()).toHaveLength(0); expect(f.started()).toBe(1);
     } finally { f.resume(); await pending; await turn(); }
   });
 
-  test('one consumer cancellation leaves another shared family consumer alive', async () => {
-    const f = fixture(); const readings = new ModelFamilyReadings(); f.hold();
-    const first = readings.read([model()]); const second = readings.read([model()]);
+  test('one consumer cancellation leaves another shared failure consumer alive', async () => {
+    const f = fixture(); f.hold();
+    const first = readMessage(); const second = readMessage();
     const abort = new AbortController(); const scoped = captureJudgmentPort('fixture', { signal: abort.signal });
     abort.abort(new Error('synthetic-private-abort'));
     expect(() => scoped.assertCurrent()).toThrow('no longer current');
-    f.resume(); expect(await first).toBe(true); expect(await second).toBe(true); expect(f.started()).toBe(1);
-    expect(readings.known(model())).toBe('Llama');
+    f.resume(); expect((await first).category).toBe('billing'); expect((await second).category).toBe('billing'); expect(f.started()).toBe(1);
+    expect((await readMessage()).category).toBe('billing');
   });
 
   test('same-port owner rebinding retires pending reads and cache even with the same frame identity', async () => {
-    const f = fixture(); const readings = new ModelFamilyReadings();
-    await readings.read([model()]);
+    const f = fixture();
+    await readMessage();
     const old = captureJudgmentPort('fixture');
-    f.hold(); const pending = readings.read([model('pending')]).then(() => null, error => error);
+    f.hold(); const pending = readMessage('pending').then(() => null, error => error);
     await f.entered.promise;
     const rebound = () => f.lifetime.capture();
     bindJudgmentPortAuthority(f.port, rebound);
     try {
       expect(await promptly(pending)).toMatchObject({ name: 'JudgmentAuthorityRetiredError' });
       expect(() => old.assertCurrent()).toThrow('no longer current');
-      expect(readings.known(model())).toBeUndefined();
       const current = captureJudgmentPort('fixture');
       expect(current.identity).not.toBe(old.identity);
       bindJudgmentPortAuthority(f.port, rebound);
       expect(() => current.assertCurrent()).not.toThrow();
       f.changeAnswer(); f.resume(); await turn();
       expect(f.log.query()).toHaveLength(1);
-      await readings.read([model()]); expect(readings.known(model())).toBe('Claude');
+      expect((await readMessage()).category).toBe('network');
     } finally { f.resume(); await pending; await turn(); }
   });
 
