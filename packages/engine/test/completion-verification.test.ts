@@ -169,6 +169,47 @@ test('opening held original pages never restarts the audit of pages already chec
   expect(fake.requests.filter(request => request.context?.battery === 'engine.verification.requirement').length).toBeGreaterThan(5);
 });
 
+test('related original pages stay exact together instead of being rewritten between each opening', async () => {
+  const before = state('Original delivery evidence. '.repeat(11_000));
+  const input = { ...before, initial: { request: before.request, transcript: before.transcript },
+    transcript: [...before.transcript, { role: 'tool', callId: 'current-proof', content: 'Current native delivery proof.' }],
+    completedWork: [{ kind: 'host-completed-contract', id: 'review', status: 'passed', finalCheck: { result: 'pass' } }] };
+  let retainedTogether = false;
+  const fake = fakePort((name, question, raw) => {
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    const current = raw as unknown as { opened?: { sources?: { execution?: { callId?: string } }[] } };
+    const originals = current.opened?.sources?.filter(source => source.execution?.callId === 'read-1') ?? [];
+    if (originals.length >= 4) retainedTogether = true;
+    const partial = originals.length > 0 && originals.length < 4;
+    return noulAnswer(name === 'missed' || partial && name === 'needs_source' ? .99 : partial && name === 'quality_gap' ? .4 : .01);
+  });
+  const checked = await new CompletionVerification(verificationWriter).prepare(input, access(fake.port));
+  expect(checked.findings).toHaveLength(0);
+  expect(retainedTogether).toBe(true);
+});
+
+test('publication reuses qualified earlier case records instead of expanding and rewriting their originals again', async () => {
+  const before = state('Earlier retained execution. '.repeat(15_000));
+  const input = { ...before, initial: { request: before.request, transcript: before.transcript },
+    transcript: [...before.transcript, { role: 'tool', callId: 'current-proof', content: 'Current native delivery proof.' }],
+    completedWork: [{ kind: 'host-completed-contract', id: 'review', status: 'passed', finalCheck: { result: 'pass' } }] };
+  const earlier = new Set<string>();
+  const writer: VerificationWriter = async request => {
+    const context = request.context as { focusedRequirement?: unknown; sources?: { id: string }[] };
+    if (request.operation === 'evidence') {
+      if (context.focusedRequirement) for (const source of context.sources ?? []) earlier.add(source.id);
+      else expect(context.sources?.some(source => earlier.has(source.id))).toBe(false);
+    }
+    return verificationWriter(request);
+  };
+  const fake = fakePort((name, question) => question.type === 'choice'
+    ? choiceAnswer(question, Object.keys(question.criteria)[0]!, .99) : noulAnswer(name === 'missed' ? .99 : .01));
+  const result = await new CompletionVerification(writer).prepare(input, access(fake.port));
+  expect(result.findings).toHaveLength(0);
+  expect(earlier.size).toBeGreaterThan(0);
+  expect(JSON.stringify(result.state.transcript)).toContain('jev-qualified');
+});
+
 test('each requirement question binds its exact root scope even when source data contains other requirement fields', async () => {
   const fake = fakePort((name, question, raw) => {
     const current = raw as unknown as { requirement?: { text: string } };

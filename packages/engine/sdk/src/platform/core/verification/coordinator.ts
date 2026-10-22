@@ -10,6 +10,7 @@ import { bindVerificationTargets } from './targets.js';
 
 const clean = (readings: Readonly<Record<string, { verdict: string; outcome: string }>>) => Object.values(readings).every(reading => reading.verdict === 'no' && reading.outcome === 'act');
 const bounded = (value: unknown, limit: number) => JSON.stringify(value).length <= limit;
+const MAX_EXACT_CASE_CHARACTERS = 192_000;
 const readingEvidence = (readings: Readonly<Record<string, { verdict: string; outcome: string }>>) =>
   Object.fromEntries(Object.entries(readings).map(([aspect, reading]) => [aspect, { verdict: reading.verdict, outcome: reading.outcome }]));
 class VerificationDeferredError extends Error {}
@@ -433,7 +434,7 @@ export class CompletionVerification {
         // the unchanged primary proof, and current Jev work AND quality checks
         // confidently accept it. That settles this page, without granting final
         // publication or silently clearing any uninspected original.
-        for (const source of opened.sources) if (audited.has(source.id)) accounted.add(source.id);
+        for (const source of primarySources(opened.sources)) if (audited.has(source.id)) accounted.add(source.id);
         // Affirmative evidence alone is insufficient: inspect EVERY original
         // interval for counterevidence. These are direct Jev checks, not a new
         // frontier draft for every history page. A changed working-model answer
@@ -481,6 +482,16 @@ export class CompletionVerification {
           // primaries for this case. Retrieving old counterevidence must never
           // replace them with a lossy summary and resurrect a resolved gap.
           const previous = opened.sources.filter(source => !primaryIds.has(source.id));
+          const combined = [...new Map([...previous, ...sources].map(source => [source.id, source])).values()];
+          // Keep a useful exact case window. Jev supports long-context input;
+          // forcing a new frontier summary for every 32k page both loses
+          // cross-page proof and spends far more time rewriting old evidence
+          // than judging the user's result. The wire still checks its budget.
+          if (bounded(primarySources(combined).map(verificationWireSource), MAX_EXACT_CASE_CHARACTERS)) {
+            opened = { sources: combined, earlier: opened.earlier };
+            checkpoint();
+            break;
+          }
           const prior = previous.length ? await this.caseMemory(previous, requirement, access) : [];
           let earlier = [...opened.earlier, ...prior.map(node => this.compactNode(node))];
           if (!bounded(earlier, 8_000)) {
@@ -702,12 +713,18 @@ export class CompletionVerification {
       rememberSources();
       return { state: { requirements: ledger, response: answer, verification: { heldRequirements: findings.map(finding => finding.check), publicationAllowed: false } }, findings };
     }
-    const primary = indexed ? [...new Map(cases.flatMap(entry => [...entry.state.opened.sources.map(source => source.id), ...entry.state.opened.earlier.flatMap(node => this.nodes.get(node.id)?.sourceIds ?? [])]).map(id => [id, this.originals.get(id)!])).values()] : [];
+    const primary = indexed ? [...new Map(cases.flatMap(entry => entry.state.opened.sources.map(source => source.id)).map(id => [id, this.originals.get(id)!])).values()] : [];
+    // Earlier case records were already qualified against their originals.
+    // Re-expanding their source IDs and summarizing all of them again at the
+    // publication boundary repeats the entire retrieval/reduction workload.
+    // Preserve the existing records and their explicit provenance instead.
+    const earlierEvidence = indexed ? [...new Map(cases.flatMap(entry => entry.state.opened.earlier)
+      .map(node => [node.id, this.nodes.get(node.id)!])).values()] : [];
     // Already bounded exact primaries need no additional summary proposal.
     // Requirement/quality checks and the complete-history audit qualified the
     // result, and the final publication battery can inspect these same bytes.
-    const exactPrimary = indexed && bounded(primary.map(verificationWireSource), VERIFICATION_FRAME_CHARACTERS) ? primary : [];
-    const deliveryEvidence = indexed ? exactPrimary.length ? [] : await this.evidenceTree(primary, ledger, access) : overview;
+    const exactPrimary = indexed && bounded(primary.map(verificationWireSource), MAX_EXACT_CASE_CHARACTERS) ? primary : [];
+    const deliveryEvidence = indexed ? [...earlierEvidence, ...(exactPrimary.length ? [] : await this.evidenceTree(primary, ledger, access))] : overview;
     const publicationOriginals = [...new Map([...recent, ...exactPrimary, ...this.finalEvidence.opened].map(source => [source.id, source])).values()]
       .sort((left, right) => (this.sourceOrder.get(left.id) ?? 0) - (this.sourceOrder.get(right.id) ?? 0));
     const state: Record<string, unknown> = {
