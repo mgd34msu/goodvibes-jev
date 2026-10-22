@@ -1,4 +1,5 @@
 import { assertCurrentExecInvocation, captureCurrentExecWorkspaceConstraint } from '../registry.js';
+import { SANDBOX_RUNTIME_BIN, withSandboxRuntimes } from './sandbox-runtimes.js';
 import { startCapturedBackground } from './captured-exec-background.js';
 import { capturedExecUnsupportedOptions, runCapturedCommand, type CapturedExecAuthority } from './captured-exec.js';
 import { join, resolve, isAbsolute } from 'node:path';
@@ -266,7 +267,8 @@ async function runCommand(
     if (inputRevision !== JSON.stringify(cmdInput) || policyRevision !== JSON.stringify(policy.sandbox)) throw new Error('Exec command or sandbox policy changed');
   };
   const cwd = resolveCwd(cmdInput.cwd, workingDirectory);
-  const plan = await resolveRuntimeSandboxPlan(policy.sandbox, cmdStr, workingDirectory, cwd, { signal, assertCurrent });
+  const resolved = await resolveRuntimeSandboxPlan(policy.sandbox, cmdStr, workingDirectory, cwd, { signal, assertCurrent });
+  const plan = resolved && !policy.capturedInput ? withSandboxRuntimes(resolved, workingDirectory) : resolved;
   assertCurrent();
   if (!policy.capturedInput) {
     const uncontained = containmentRefusal(policy, cmdStr, plan);
@@ -339,6 +341,8 @@ async function runAdmittedCommand(
   // command did NOT re-provide, by name only, never values.
   const scrubbed = await scrubCredentialEnv(buildCleanEnv(), scrub);
   const mergedEnv = { ...scrubbed.env, ...cmdInput.env };
+  if (sandboxPlan?.sandboxed && cmdInput.env?.PATH === undefined)
+    mergedEnv.PATH = `${SANDBOX_RUNTIME_BIN}:${mergedEnv.PATH ?? '/usr/bin:/bin'}`;
   const withheldEnv = scrubbed.withheld.filter((name) => !(cmdInput.env && name in cmdInput.env));
   const attachWithheld = (result: ExecCommandResult): ExecCommandResult => {
     const withMeta = attachSandboxMeta(result, sandboxPlan);
