@@ -60,6 +60,21 @@ describe('machine help is the canonical CLI capability contract', () => {
 });
 
 describe('machine WebUI discovery never initializes or migrates settings', () => {
+  test('inspection and invalid commands never construct the service runtime', async () => {
+    const root = makeOwnedTempDir('daemon-inspection-no-runtime');
+    const env = { HOME: root, GOODVIBES_HOME: root, GOODVIBES_DAEMON_HOME: join(root, 'daemon') };
+    let constructions = 0;
+    for (const [args, expected] of [
+      [['--help', '--json'], 0], [['version'], 0], [['webui', 'status', '--json'], 0], [['install-servce'], 2],
+    ] as const) {
+      expect(await runDaemonCli(args, { env, cwd: root, stdout() {}, stderr() {},
+        async createRuntime() { constructions++; throw new Error('Inspection must not construct a runtime'); },
+      })).toBe(expected);
+    }
+    expect(constructions).toBe(0);
+    expect(readdirSync(root)).toEqual([]);
+  });
+
   test('an empty home stays empty, with an explicitly configured endpoint receipt', async () => {
     const root = makeOwnedTempDir('daemon-webui-machine-empty');
     const home = join(root, 'home'); const daemon = join(root, 'daemon'); const cwd = join(root, 'work');

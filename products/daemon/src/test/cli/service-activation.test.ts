@@ -66,7 +66,12 @@ function mutations(calls: readonly Call[]) {
 
 test('shipped native admission installs the exact executable and selected homes through the real service dispatcher', async () => {
   const f = fixture();
-  expect(await f.invoke('install-service')).toBe(0);
+  const { runtime, ...options } = f.options;
+  let constructions = 0;
+  expect(await runDaemonCli(['install-service', ...f.selected], { ...options,
+    async createRuntime() { constructions++; return runtime; },
+  })).toBe(0);
+  expect(constructions).toBe(1);
   const unit = readFileSync(f.unit, 'utf8');
   expect(unit).toContain(f.native.execPath); expect(unit).toContain(f.daemon);
   expect(unit).toContain(f.tree); expect(unit).toContain(f.workspace);

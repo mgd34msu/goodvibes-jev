@@ -28,6 +28,8 @@ export interface DaemonCliOptions {
   readonly cwd?: string;
   /** Required for serve until all built-in inbox prerequisites are available. */
   readonly runtime?: DaemonCliRuntime;
+  /** Shipped hosts load their service composition only for actual activation. */
+  readonly createRuntime?: () => Promise<DaemonCliRuntime>;
   /** Explicit installed executable that composes the same runtime; never guessed from Bun. */
   readonly serviceBinaryPath?: string;
   /** Code-owned shipped entrypoint admission, invoked only for service activation. */
@@ -86,10 +88,12 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
         },
       }));
     }
-    if (cli.command === 'serve' && typeof options.runtime?.inboxFactory !== 'function') return refuse(PARTIAL);
+    const needsRuntime = ['serve', 'install-service', 'start-service', 'restart-service', 'migrate-service'].includes(cli.command);
+    const runtime = options.runtime ?? (needsRuntime ? await options.createRuntime?.() : undefined);
+    if (cli.command === 'serve' && typeof runtime?.inboxFactory !== 'function') return refuse(PARTIAL);
     let serviceExecutable: ShippedServiceExecutable | undefined;
     if (['install-service', 'start-service', 'restart-service', 'migrate-service'].includes(cli.command)) {
-      if (typeof options.runtime?.inboxFactory !== 'function') return refuse(PARTIAL);
+      if (typeof runtime?.inboxFactory !== 'function') return refuse(PARTIAL);
       serviceExecutable = options.resolveServiceExecutable?.();
       if (!serviceExecutable && !options.serviceBinaryPath) return refuse(`${PARTIAL} Service activation requires an explicitly composed executable.`);
       serviceExecutable?.assertCurrent();
@@ -134,7 +138,7 @@ export async function runDaemonCli(argv: readonly string[], options: DaemonCliOp
         const { prepareDaemonCliServe, runConfiguredDaemonCli } = await import('./serve.js');
         const errors = prepareDaemonCliServe(config, cli.flags);
         if (errors.length) return result({ exitCode: 2, lines: errors });
-        const processHandle = runConfiguredDaemonCli(configuration, options.runtime!, env, options.process, stderr, stdout, options.pairingOutput);
+        const processHandle = runConfiguredDaemonCli(configuration, runtime!, env, options.process, stderr, stdout, options.pairingOutput);
         return await processHandle.finished;
       }
       default: {
