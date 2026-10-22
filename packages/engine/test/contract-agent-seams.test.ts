@@ -7,7 +7,7 @@
  * Drives the real turn loop (orchestrator-runner.ts) against a scripted fake
  * provider, and the real AgentManager, AgentMessageBus and RuntimeEventBus.
  */
-import { afterEach, describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { mkdtempSync, rmSync } from 'node:fs';
@@ -188,6 +188,27 @@ function consumedEvents(runtimeBus: RuntimeEventBus): ConsumedEvent[] {
 
 const NUDGE_TEXT = 'Contract check 1 on "Parser": the work does not pass yet. Fix what is listed, then finish your turn; it will be checked again.\n\nNot met:\n- [u1.c1] parse() rejects empty input';
 
+let previousReading: ReturnType<typeof installJudgmentPort>;
+beforeEach(() => {
+  const fixture = fakePort((name, question, state) => {
+    if (question.type !== 'noul' || !state || typeof state !== 'object' || Array.isArray(state)) throw new Error('Unexpected agent lifecycle reading');
+    if (state.request === 'implement the parser' && state.response === 'checking the file'
+      && ['unsupported', 'repetitive'].includes(name)) return noulAnswer(.01);
+    if (state.request === 'separate fixture' && state.response === 'separate job'
+      && ['false_blocker', 'unfinished', 'unsupported', 'unanswered', 'unnecessary_permission', 'implementation_presented',
+        'verification_claimed', 'criteria_altered', 'ineffective_fix', 'irrelevant_verification', 'weakened_criteria'].includes(name)) return noulAnswer(.01);
+    throw new Error(`Unexpected agent lifecycle reading: ${name}`);
+  });
+  previousReading = installJudgmentPort({ ...fixture.port, ask: request => {
+    if (!['engine.core.response-progress', 'engine.core.response-completion', 'engine.core.execution-assurance'].includes(request.context?.battery ?? '')) {
+      if (previousReading) return previousReading.ask(request);
+      throw new Error('Unexpected agent lifecycle battery');
+    }
+    return fixture.port.ask(request);
+  } });
+});
+afterEach(() => installJudgmentPort(previousReading));
+
 let tmpDir: string | undefined;
 function workDir(): string {
   tmpDir = mkdtempSync(join(tmpdir(), 'contract-seams-'));
@@ -199,7 +220,7 @@ afterEach(() => {
 });
 
 describe('completion hold', () => {
-  test('a held agent receives the continue message verbatim as a user turn and completes only on release', async () => {
+  test('a held agent receives the continue message as private repair context and completes only on release', async () => {
     const runtimeBus = new RuntimeEventBus();
     const consumed = consumedEvents(runtimeBus);
     const taps: LoopTaps = { completed: [], failed: [], cancelled: [] };
@@ -220,7 +241,8 @@ describe('completion hold', () => {
     expect(provider.requests).toHaveLength(2);
     expect(userMessages(provider.requests[0])).not.toContain(NUDGE_TEXT);
     const secondTurnUser = userMessages(provider.requests[1]);
-    expect(secondTurnUser.at(-1)).toBe(NUDGE_TEXT);
+    expect(secondTurnUser).not.toContain(NUDGE_TEXT);
+    expect(provider.requests[1]?.systemPrompt).toContain(NUDGE_TEXT);
     expect(hooks.holdCalls).toEqual(['agent-held', 'agent-held']);
     expect(record.status).toBe('completed');
     expect(record.fullOutput).toBe('fixed attempt');

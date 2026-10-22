@@ -207,7 +207,7 @@ jobs:
           if-no-files-found: error
 
   # ---------------------------------------------------------------------------
-  # Platform matrix: four disjoint Bun partitions and the companion runtimes.
+  # Platform matrix: disjoint Bun partitions and the companion runtimes.
   # The build's canonical discovery generates every row. All legs restore its
   # exact compiled artifacts; none invokes the pretest build lifecycle.
   # ---------------------------------------------------------------------------

@@ -4,7 +4,7 @@ import { defaultTestArgs } from './test-discovery.ts';
 
 // Capacity changes belong here, not in the runner's deadlines. CI runs these
 // on separate hosts; a local invocation still owns one sequential Bun child.
-export const ENGINE_TEST_PARTITIONS = 4;
+export const ENGINE_TEST_PARTITIONS = 8;
 const MAX_PARTITIONS = 16;
 
 export function partitionTestFiles(files: readonly string[], count: number): readonly (readonly string[])[] {
@@ -19,15 +19,15 @@ export function partitionTestFiles(files: readonly string[], count: number): rea
   return partitions;
 }
 
-export function engineTestManifest(engineRoot: string, count = ENGINE_TEST_PARTITIONS) {
+export function engineTestManifest(engineRoot: string, count?: number) {
   const files = defaultTestArgs(engineRoot);
   const sha256 = createHash('sha256').update(JSON.stringify(files)).digest('hex');
   return {
     version: 1,
     sha256,
     files,
-    partitions: partitionTestFiles(files, count).map((selected, index) => ({
-      id: `${index + 1}/${count}`, files: selected,
+    partitions: partitionTestFiles(files, count ?? Math.min(ENGINE_TEST_PARTITIONS, files.length)).map((selected, index, partitions) => ({
+      id: `${index + 1}/${partitions.length}`, files: selected,
     })),
   };
 }
