@@ -381,13 +381,13 @@ describe('cache-vs-cold equivalence', () => {
     cm.markLastUserMessageCancelled(turnStart);
     assertCacheMatchesCold(cm);
     const restored = new ConversationManager(() => 100);
-    restored.fromJSON(cm.toJSON());
+    restored.fromJSON(cm.toJSON() as Parameters<ConversationManager['fromJSON']>[0]);
     const messages = restored.getMessageSnapshot();
     expect(messages.map(message => message.role)).toEqual(['user', 'assistant', 'tool', 'user']);
-    expect(messages[0]?.cancelled).toBe(true);
-    expect(messages[1]?.toolCalls?.[0]?.id).toBe('read-report');
-    expect(messages[2]?.callId).toBe('read-report');
-    expect(messages[3]?.cancelled).not.toBe(true);
+    expect(messages).toMatchObject([{ role: 'user', cancelled: true },
+      { role: 'assistant', toolCalls: [{ id: 'read-report' }] }, { role: 'tool', callId: 'read-report' },
+      { role: 'user', content: 'Preserve the completed inspection' }]);
+    expect(messages[3]).not.toHaveProperty('cancelled', true);
     expect(JSON.stringify(messages)).not.toContain('Unpublished draft');
   });
 
