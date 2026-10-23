@@ -3,7 +3,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { ChatRequest, ChatResponse } from '../sdk/src/platform/providers/interface.js';
 import type { AgentRecord } from '../sdk/src/platform/tools/agent/record.js';
-import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { JudgmentError } from '@goodvibes-jev/judgment';
@@ -581,4 +581,94 @@ test('a contract waiting for a necessary user decision returns control to its co
   const evidence = await waitForResponseDelegates(input.conversation, manager, {}, [], () => false);
   expect(evidence).toContain('"status":"running"');
   expect(evidence).toContain('original request');
+});
+
+
+test('native large responses use private provider proposals and publish one checked final', async () => {
+  const task = 'Return the complete supplied reference text exactly.';
+  const lines = Array.from({ length: 2_000 }, (_, index) => `Reference ${index.toString(36)}: The supplied reference states that the marmot answer is forty-two. The full original line must survive independent verification.`);
+  const response = lines.join('\n');
+  expect(response.length).toBeGreaterThan(250_000);
+  const conversation = new ConversationManager();
+  conversation.addUserMessage(task);
+  conversation.addAssistantMessage('', { toolCalls: [{ id: 'reference-read', name: 'read', arguments: { path: 'reference.txt' } }] });
+  conversation.addToolResults([{ callId: 'reference-read', success: true, output: response }]);
+  const fixture = loop([]), controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(new Error('Large native verification did not settle')), 25_000);
+  const nativeCheck = ResponseCompletionGuard.prototype.check;
+  const checked = spyOn(ResponseCompletionGuard.prototype, 'check').mockImplementation(async function (this: ResponseCompletionGuard, ...args: Parameters<ResponseCompletionGuard['check']>) {
+    try { return await nativeCheck.apply(this, args); }
+    catch (error) { controller.abort(error); throw error; }
+  });
+  const publicEvents: unknown[] = [], privateRequests: ChatRequest[] = [], privatePayloads: string[] = [];
+  const stopDelta = fixture.bus.on('STREAM_DELTA', event => { publicEvents.push(event); });
+  const stopResponse = fixture.bus.on('LLM_RESPONSE_RECEIVED', event => { publicEvents.push(event); });
+  let mainCalls = 0, reviewed = false;
+  const readings = fakePort((name, question, state) => {
+    if (name === 'pick' || name.startsWith('fits_')) {
+      const selection = state as unknown as { context: { requirement: { text: string } }; candidates: { id: string; content: unknown }[]; selectionFitInstructions: string };
+      expect(selection.context.requirement.text).toBe(task);
+      expect(selection.selectionFitInstructions).toBe('Could opening this node help settle the stated requirement or uncertainty? Do not choose an unrelated source merely because a winner is requested.');
+
+      const chosen = selection.candidates[0];
+      if (!chosen) throw new Error('Missing native reference evidence branch');
+      if (name === 'pick' && question.type === 'choice') {
+        expect(Object.keys(question.criteria)).toEqual([...selection.candidates.map(candidate => candidate.id), 'none']);
+        return choiceAnswer(question, chosen.id, .999);
+      }
+      if (name.startsWith('fits_') && question.type === 'noul') return noulAnswer(name === 'fits_0' ? .999 : .001);
+      throw new Error('Unexpected native evidence selection question');
+    }
+    if (question.type !== 'noul') throw new Error(`Unscripted large-response judgment ${name}`);
+    return noulAnswer(.001);
+  });
+  installJudgmentPort({ model: readings.port.model, async ask(request) {
+    if (request.context?.battery === 'engine.core.response-completion') reviewed = true;
+    return readings.port.ask(request);
+  } });
+  const provider = { name: 'test', models: ['test-model'], async chat(request: ChatRequest): Promise<ChatResponse> {
+    const privateProposal = request.systemPrompt?.startsWith('You prepare PRIVATE verification proposals for an independent Jev evaluator.');
+    if (privateProposal) {
+      privateRequests.push(request);
+      expect(request.onDelta).toBeUndefined();
+      expect(request.tools).toBeUndefined();
+      const message = request.messages[0];
+      if (!message || typeof message.content !== 'string') throw new Error('Private proposal requires its complete JSON request');
+      const wire = JSON.parse(message.content) as { operation: string; context: { sources: { id: string; text?: string }[]; citationIds?: string[] } };
+      if (wire.operation !== 'requirements' && wire.operation !== 'evidence' && wire.operation !== 'merge') throw new Error(`Unexpected private operation ${wire.operation}`);
+      const citations = wire.context.citationIds ?? wire.context.sources.map(source => source.id);
+      expect(citations.length).toBeGreaterThan(0);
+      const content = wire.operation === 'requirements'
+        ? { requirements: [{ text: task, sources: [citations[0]!] }] }
+        : { facts: [{ text: 'The complete original reference remains available with its original role and source boundaries.', sources: citations }], concerns: [] };
+      const payload = JSON.stringify(content); privatePayloads.push(payload);
+      return { content: payload, toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
+    }
+    mainCalls++;
+    expect(mainCalls).toBe(1);
+    request.onDelta?.({ content: response.slice(0, 100_000) });
+    request.onDelta?.({ content: response.slice(100_000) });
+    expect(publicEvents).toEqual([]);
+    expect(reviewed).toBe(false);
+    return { content: response, toolCalls: [], usage: { inputTokens: 1, outputTokens: 1 }, stopReason: 'completed' };
+  } };
+  try {
+    await executeOrchestratorTurnLoop({ ...fixture.context, conversation, text: task,
+      getAbortSignal: () => controller.signal,
+      providerRegistry: { ...fixture.context.providerRegistry, getForModel: () => provider } });
+    expect(mainCalls).toBe(1);
+    expect(privateRequests.length).toBeGreaterThan(0);
+    expect(reviewed).toBe(true);
+    const originalWire = JSON.stringify(readings.requests);
+    expect(lines.every(line => originalWire.includes(line))).toBe(true);
+    expect(fixture.events).toEqual(['TURN_COMPLETED']);
+    const delivered = conversation.getMessageSnapshot().filter(message => message.role === 'assistant' && message.content);
+    expect(delivered).toHaveLength(1);
+    expect(delivered[0]?.content).toBe(response);
+    const publicStrings = (value: unknown): string[] => typeof value === 'string' ? [value]
+      : Array.isArray(value) ? value.flatMap(publicStrings)
+        : value && typeof value === 'object' ? Object.values(value).flatMap(publicStrings) : [];
+    const visible = publicStrings(publicEvents).join('\n');
+    for (const payload of privatePayloads) expect(visible).not.toContain(payload);
+  } finally { clearTimeout(timer); controller.abort(); checked.mockRestore(); stopDelta(); stopResponse(); fixture.unsubscribe(); }
 });
