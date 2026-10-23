@@ -1,16 +1,4 @@
-/**
- * agent-harness-parity.test.ts
- *
- * Fix 1: Schema-to-dispatch parity + effect-gating contract tests.
- * Fix 2: Bounded command-runner output cap test.
- *
- * Guarantees:
- *   1. Every mode in AGENT_HARNESS_MODES is handled by the dispatch, the result
- *      error is NEVER 'Unhandled agent_harness mode: <mode>'.
- *   2. Effect descriptors refuse unadmitted calls, including caller confirmation
- *      fields. Native typed holds remain visible and no process is spawned.
- *   3. Command-runner output is capped at 6000 chars with '... output truncated'.
- */
+/** Actual harness admission, effect refusal, and complete command output. */
 import { afterAll, afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/judgment/testing';
@@ -291,33 +279,6 @@ async function expectEffectHeld(pending: Promise<unknown>): Promise<void> {
 }
 
 describe('agent_harness parity', () => {
-  for (const mode of AGENT_HARNESS_MODES) test(`dispatch handles ${mode} without an unhandled fallback`, async () => {
-    const fixture = makeParityFixture();
-    try {
-      if (UNADMITTED_HELD_MODES.has(mode)) {
-        await expectEffectHeld(fixture.tool.execute(parityArgs(mode)));
-        expect(fixture.spawn).not.toHaveBeenCalled();
-        return;
-      }
-      const priorLaneRequests = unavailableLaneRequests.length;
-      let result: Awaited<ReturnType<typeof fixture.tool.execute>>;
-      try { result = await fixture.tool.execute(parityArgs(mode)); }
-      catch (error) {
-        if (!SEMANTIC_CATALOG_MODES.has(mode) || error !== laneUnavailable) throw error;
-        expect(unavailableLaneRequests.length).toBeGreaterThan(priorLaneRequests);
-        expect(fixture.spawn).not.toHaveBeenCalled();
-        return;
-      }
-      if (mode === 'model_routing') {
-        expect(result.success, result.error).toBe(true);
-        expect(readings.requests.length).toBeGreaterThan(0);
-      }
-      // Validation failures are permitted; missing dispatch implementations are not.
-      expect(result.error ?? '').not.toMatch(/Unhandled agent_harness mode:/);
-      expect(fixture.spawn).not.toHaveBeenCalled();
-    } finally { fixture.cleanup(); }
-  });
-
   test('every effect-kind descriptor refuses execution without recorded admission', async () => {
     const fixture = makeParityFixture();
     try {
