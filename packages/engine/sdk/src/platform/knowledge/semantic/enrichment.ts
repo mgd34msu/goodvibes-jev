@@ -7,6 +7,7 @@ import { guardKnowledgeEdgeInput } from '../store-edge-writes.js';
 import { captureKnowledgeSourceReferences, knowledgeSourceJudgmentUris, projectKnowledgeSourceReferences } from '../source-structural-references.js';
 import { createSemanticNodeSlugPlanner } from './node-slug.js';
 import { prepareObservedKnowledgeNodeInput } from '../store-node-observation.js';
+import { KnowledgeRecordAdmissionHeldError } from '../store-record-snapshot.js';
 import { enrichmentFactNodeInput, enrichmentGapNodeInput } from './enrichment-node-plans.js';
 import { prepareEnrichmentFactDrafts, resolveEnrichmentSpaceId } from './enrichment-fact-drafts.js';
 import { assertJudgmentInput } from '../../gate/judgment-input.js';
@@ -382,11 +383,16 @@ async function persistSemanticExtraction(
   const qualitySubjects = sourceLinkedObjects.map((subject) => ({ subject, current: store.getNode(subject.id), version: JSON.stringify(subject) }));
   const evidenceVersion = JSON.stringify({ source, extraction });
   const assertQualityCurrent = () => {
-    assertSemanticWriteAllowed(options.signal, options.shouldStop); options.assertCurrent?.(); qualityReader.assertCurrent(); subjectSelection.assertCurrent();
-    if (store.getSource(source.id) !== qualitySource || store.getExtractionBySourceId(source.id) !== qualityExtraction
-      || JSON.stringify({ source: store.getSource(source.id), extraction: store.getExtractionBySourceId(source.id) }) !== evidenceVersion
-      || qualitySubjects.some(({ subject, current, version }) => store.getNode(subject.id) !== current || JSON.stringify(store.getNode(subject.id)) !== version)) {
-      throw new KnowledgeRepairFactUsefulnessHeldError('stale');
+    try { store.assertRecordSnapshotFrame(() => {
+      assertSemanticWriteAllowed(options.signal, options.shouldStop); options.assertCurrent?.(); qualityReader.assertCurrent(); subjectSelection.assertCurrent();
+      if (store.getSource(source.id) !== qualitySource || store.getExtractionBySourceId(source.id) !== qualityExtraction
+        || JSON.stringify({ source: store.getSource(source.id), extraction: store.getExtractionBySourceId(source.id) }) !== evidenceVersion
+        || qualitySubjects.some(({ subject, current, version }) => store.getNode(subject.id) !== current || JSON.stringify(store.getNode(subject.id)) !== version)) {
+        throw new KnowledgeRepairFactUsefulnessHeldError('stale');
+      }
+    }); } catch (error) {
+      if (error instanceof KnowledgeRecordAdmissionHeldError) throw new KnowledgeRepairFactUsefulnessHeldError('stale');
+      throw error;
     }
   };
   const qualityInputs = proposedFacts.flatMap((fact, index) => featureKinds.has(fact.kind) ? [{
@@ -727,7 +733,7 @@ async function linkedObjectsForSource(store: KnowledgeStore, source: KnowledgeSo
   const selected = await canonicalRepairSubjectNodes({ store, spaceId: sourceKnowledgeSpace(source), context: { source },
     nodes, excludedNodeIds: [...entityOverlayIds], signal, shouldStop,
     text: `${source.title ?? ''} ${source.summary ?? ''} ${source.description ?? ''}` });
-  const assertCurrent = () => { guard.assertCurrent(); selected.assertCurrent(); };
+  const assertCurrent = () => { store.assertRecordSnapshotFrame(() => { guard.assertCurrent(); selected.assertCurrent(); }); };
   assertCurrent(); return { nodes: selected.nodes, assertCurrent };
 }
 
