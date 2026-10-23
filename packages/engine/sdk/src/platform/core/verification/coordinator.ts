@@ -158,7 +158,10 @@ export class CompletionVerification {
     const originals = instructions.filter(source => !((source.reference.startsWith('current user request') || source.reference.startsWith('original request at turn entry')) && userTexts.has(source.text))
       && !(source.reference.startsWith('original request at turn entry') && currentTexts.has(source.text)))
       .sort((left, right) => Number(left.reference.startsWith('current user request')) - Number(right.reference.startsWith('current user request')));
-    const exactScopeFits = bounded(originals, VERIFICATION_OVERVIEW_CHARACTERS);
+    // Exact originals use the existing source-frame budget. The smaller
+    // overview is only a preview; outgrowing it must not force repeated scope
+    // paraphrases when the complete originals still fit a native source page.
+    const exactScopeFits = bounded(originals, VERIFICATION_FRAME_CHARACTERS);
     // Large instruction histories are reduced with the same source qualification
     // as observations, then the ledger is audited against EVERY original page.
     const pages = verificationFrames(instructions, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length);

@@ -1442,6 +1442,29 @@ test('unsettled scope paraphrases fall back to exact original instructions witho
   expect(checked.scopeBasis).toContain('original instruction bytes');
 });
 
+test.each([false, true])('ordered originals fitting a source frame bypass repeated preview rewrites (unfinished: %s)', async unfinished => {
+  const originals = Array.from({ length: 24 }, (_, index) => `Original requirement ${index}: ` + 'Preserve its complete exact constraints. '.repeat(16));
+  const request = 'Finish all active original requirements and provide the report.';
+  let drafts = 0;
+  const fake = fakePort((name, question) => {
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    return noulAnswer(name.startsWith('fits_') || name === 'unfinished' && unfinished ? .99 : name === 'lost' ? .6 : .01);
+  });
+  const writer: VerificationWriter = async input => {
+    if (input.operation === 'requirements' && ++drafts > 2) throw new Error('Repeated scope rewriting instead of reading the exact originals.');
+    return verificationWriter(input);
+  };
+  const result = await new CompletionVerification(writer).prepare({ ...state(), request,
+    initial: { request, transcript: originals.map(content => ({ role: 'user', content })) },
+    transcript: [...originals.map(content => ({ role: 'user', content })), { role: 'user', content: request },
+      { role: 'tool', callId: 'actual-result', content: unfinished ? 'A requested source remains unreviewed.' : 'Completed review and delivery observed.' }] }, access(fake.port));
+  expect(drafts).toBe(2);
+  expect(result.findings).toHaveLength(unfinished ? 1 : 0);
+  const checked = fake.requests.find(entry => entry.context?.battery === 'engine.verification.requirement')!.state as unknown as { requirement: { text: string } };
+  const retained = JSON.parse(checked.requirement.text).orderedInstructions.map((entry: { text: string }) => JSON.parse(entry.text).content);
+  expect(retained).toEqual([...originals, request]);
+});
+
 test.each([true, false])('scope fallback keeps later authorization after its superseded restriction (current message present: %s)', async currentMessagePresent => {
   const earlier = 'Do not edit the review report.', later = 'Correct the stale runtime statements in the same review report.';
   const fake = fakePort((name, question, input) => {
