@@ -145,11 +145,10 @@ describe('native contract source', () => {
   });
 
   test('planned correction retains all original requirements and revisions through final re-verification', async () => {
-    let checks = 0;
     const scripted = stepPlanner(nativePlan(), { fix: () => plannerOutput(fixPlan([{ serves: ['c1', 'c2'] }])) });
     const h = makeHarness({ recordNative: true, planner: scripted.runner,
       scripts: scriptsWith({ u1: finishes('initial result') }, unitId => unitId.endsWith('.f1.u1') ? finishes('corrected result') : undefined),
-      port: context => { if (judgeOf(context) !== 'deliverable') return undefined; if (context.name === 'goal') checks += 1; return noulAnswer(checks <= 1 ? 0.9 : 0.03); } });
+      port: context => { if (judgeOf(context) !== 'deliverable') return undefined; return noulAnswer(JSON.stringify((context.state['evidence'] as Record<string, unknown>)['currentArtifacts']).includes('corrected result') ? 0.03 : 0.9); } });
     harnesses.push(h);
     const { contract } = startContract(h, { nativeSource: source() });
     await waitFor(() => terminal(h, contract.id), 'corrected native completion', 15_000);

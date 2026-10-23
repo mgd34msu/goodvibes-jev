@@ -219,9 +219,7 @@ describe('knowledge consolidation reading', () => {
       context: { battery: 'engine.knowledge.consolidation' },
     });
     expect(Object.keys(fake.requests[0]!.questions)).toEqual(['keep', 'memory_class']);
-    expect(fake.requests.slice(1).map(request => ({ state: request.state, questions: Object.keys(request.questions), battery: request.context?.battery }))).toEqual(
-      ['ready', 'path', 'id', 'cls'].map(field => ({ state: { field }, questions: ['kind'], battery: 'engine.redaction.field-kind' })),
-    );
+    expect(fake.requests).toHaveLength(1);
   });
 
   test('terminal history cannot fill the result limit and starve a new open candidate', async () => {

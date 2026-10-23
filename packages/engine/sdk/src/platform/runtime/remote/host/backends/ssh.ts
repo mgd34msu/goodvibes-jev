@@ -130,6 +130,7 @@ export function createSshBackend(ctx: BackendContext): Backend {
           throw new BackendDispatchError('Empty command.', 'REMOTE_BACKEND_BAD_COMMAND');
         }
         const config = { ...peer.backendConfig };
+        await lifetime.waitFor(() => scratch.prepare());
         const lease = await acquire(peer.peerId, config);
         try {
           lifetime.assertOpen();

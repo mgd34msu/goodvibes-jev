@@ -269,7 +269,7 @@ export class ResponseCompletionGuard {
       if (this.reviewStore && this.reviewKey) this.reviewStore.rememberProposal(this.reviewKey, 'null');
       return current;
     }
-    catch { throw new ResponseCompletionError('unavailable'); }
+    catch (error) { throw new ResponseCompletionError('unavailable', { cause: error }); }
   }
 
   async check(input: ResponseCompletionInput, options: JudgmentReadingOptions = {}, onWaiting?: () => void): Promise<string | null> {
@@ -505,7 +505,7 @@ export class ResponseCompletionGuard {
             if (verificationHistory(conversation) !== archiveIdentity) throw new ResponseCompletionError('unavailable');
             if (conversationSource !== null && JSON.stringify(projectTranscript().slice(0, transcript.length)) !== conversationSource) throw new ResponseCompletionError('unavailable');
             if (response.content !== source.snapshot.response) throw new ResponseCompletionError('unavailable');
-          } catch { throw new ResponseCompletionError('unavailable'); }
+          } catch (error) { throw new ResponseCompletionError('unavailable', { cause: error }); }
         };
         assertCurrent();
         return assertCurrent;

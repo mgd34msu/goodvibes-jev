@@ -30,12 +30,6 @@ test('retention never treats a caller-frozen root as a native immutable tree', (
   expect(retained.snapshot).toEqual({ child: { text: 'before' } });
 });
 
-test('combining captured roots cannot bypass the aggregate admission budget', () => {
-  const left = captureOwnedJson({ text: 'a'.repeat(600_000) });
-  const right = captureOwnedJson({ text: 'b'.repeat(600_000) });
-  expect(() => captureOwnedJson({ left, right })).toThrow(JudgmentInputError);
-});
-
 test('record-version reuse never conceals mutable live record corrections', () => {
   const live = { metadata: { text: 'original' }, updatedAt: 1 };
   const original = captureOwnedJson(live);

@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { randomUUID } from 'node:crypto';
+import { makeProjectTempDir } from './_helpers/project-temp.js';
 import { createOperatorNativeConversationIntakeClient, readNativeConversationTurnPermit, revalidateNativeConversationTurnPermit, type NativeConversationIntakeResult, type NativeConversationTurnPermit } from '../sdk/src/platform/workflow/work-ledger/native-intake-client.js';
 import type { OperatorRemoteClient } from '../operator-sdk/src/client-core.js';
 import { admitNativeConversationTurn, failNativeConversationTurn, readNativeConversationTurnStatus, settleNativeConversationTurn, startNativeConversationTurn } from '../sdk/src/platform/core/native-turn-admission.js';
@@ -90,10 +91,11 @@ const model: ModelDefinition = { id: 'fixture', provider: 'fixture', registryKey
 const finalResponse = () => ({ content: 'Answer', toolCalls: [], stopReason: 'completed' as const, usage: { inputTokens: 1, outputTokens: 1 } });
 function orchestrator(chat: LLMProvider['chat'] = async () => finalResponse(), forbidPlanReads = true) {
   const conversation = new ConversationManager(); const tools = new ToolRegistry();
+  const workingDirectory = makeProjectTempDir('native-turn');
   let intakeCalls = 0, spawned = 0, planReads = 0;
   const planManager = { getActive: () => { planReads++; if (forbidPlanReads) throw new Error('legacy plan read'); return null; } } as unknown as NonNullable<OrchestratorCoreServices['planManager']>;
   const configManager = { get: (key: string) => key === 'behavior.notifyOnComplete' ? false : key === 'agents.contextCompactThreshold' ? 0.85 : undefined,
-    getCategory: () => ({}), getWorkingDirectory: () => '/fixture' } as OrchestratorCoreServices['configManager'];
+    getCategory: () => ({}), getWorkingDirectory: () => workingDirectory } as OrchestratorCoreServices['configManager'];
   const providerRegistry = { getCurrentModel: () => model, getForModel: () => ({ name: 'fixture', models: [model], chat }),
     getContextWindowForModel: () => 0, getKnownContextWindowForModel: () => null,
     getTokenLimitsForModel: () => ({ maxOutputTokens: 1024, maxToolResultTokens: 10_000, maxToolCalls: 10, maxReasoningTokens: 0 }),
@@ -173,6 +175,7 @@ describe('native ordinary turn through the real orchestrator', () => {
     await h.instance.handleUserInput(text, undefined, { nativeConversationTurnPermit: permit });
     expect(h.instance.messageQueue).toHaveLength(0);
     gate.resolve(); await drain;
+    expect(h.conversation.getMessageSnapshot().some(message => message.role === 'assistant' && message.content === 'Answer')).toBe(true);
     await h.instance.handleUserInput(text, undefined, { nativeConversationTurnPermit: permit });
     expect(calls).toBe(1); expect(h.counters()).toEqual({ intakeCalls: 0, spawned: 0, planReads: 0 });
     expect(f.calls.filter(method => method.endsWith('.get'))).toHaveLength(1);
