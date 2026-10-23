@@ -256,7 +256,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
 
     expect(answer.answer.gaps).toHaveLength(0);
     expect(answer.answer.sources[0]?.id).toBe(official.id);
-    expect(answer.answer.facts.map((fact) => fact.title)).toContain('Display and picture specifications');
+    expect(answer.answer.linkedObjects.map((object) => object.id)).toContain(device.id);
     expect(answer.answer.facts.every((fact) => fact.linkedObjectIds?.includes(device.id))).toBe(true);
     expect(answer.answer.text).toContain('Dolby Vision');
     expect(answer.answer.text).not.toContain('matching sources');
