@@ -5,7 +5,7 @@ import { captureOwnedJson } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { inspectCatalogData, captureCatalogData, captureCatalogMethods, captureCatalogSnapshotGuard, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import { captureModelReadingSnapshotGuard } from './agent-harness-model-reading-source.ts';
 import type { EntryType, JsonValue } from '@goodvibes-jev/judgment/decisions';
-import { personalOpsNativeFields, personalOpsResultFields } from './agent-personal-ops-native-fields.ts';
+import { personalOpsNativeFields, personalOpsResultFields, type PersonalOpsNativeSchema } from './agent-personal-ops-native-fields.ts';
 
 /** Hidden producer data is still semantic source; serialization cannot omit it. */
 export function capturePersonalOpsData(value: unknown): unknown {
@@ -293,8 +293,8 @@ export function personalOpsEntry(value: unknown): EntryType {
 }
 
 /** Native producer facts remain local until the complete DTO is protected. */
-export async function protectPersonalOpsData(value: unknown, options: CatalogRankingOptions = {}): Promise<unknown> {
-  return protectPersonalOpsSource(value, options, true);
+export async function protectPersonalOpsData(value: unknown, options: CatalogRankingOptions = {}, schema?: PersonalOpsNativeSchema): Promise<unknown> {
+  return protectPersonalOpsSource(value, options, true, schema);
 }
 
 /** Arbitrary provider results are observational data. Redacted names/values may
@@ -304,7 +304,7 @@ export async function protectPersonalOpsResult(value: unknown, options: CatalogR
   return protectPersonalOpsSource(value, options, false);
 }
 
-async function protectPersonalOpsSource(value: unknown, options: CatalogRankingOptions, nativeFacts: boolean): Promise<unknown> {
+async function protectPersonalOpsSource(value: unknown, options: CatalogRankingOptions, nativeFacts: boolean, schema?: PersonalOpsNativeSchema): Promise<unknown> {
   const source = capturePersonalOpsSnapshot(value), captured = source.captured;
   const optionsCurrent = captureCatalogMethods(options, ['signal', 'sourceOwner', 'assertCurrent', 'retainCurrent']);
   const signal = options.signal, callerCurrent = options.assertCurrent, retainCurrent = options.retainCurrent;
@@ -325,7 +325,7 @@ async function protectPersonalOpsSource(value: unknown, options: CatalogRankingO
   // producer guard above, but avoid retaining its private copy as mutable data
   // at every redaction boundary.
   const result = await redactStructuredDataAsync(captureOwnedJson(captured), { signal: options.signal, assertCurrent,
-    declaredFields: nativeFacts ? personalOpsNativeFields(captured) : personalOpsResultFields(captured),
+    declaredFields: nativeFacts ? personalOpsNativeFields(captured, schema) : personalOpsResultFields(captured),
   });
   const preserveFacts = (original: unknown, protectedValue: unknown): void => {
     if (typeof original === 'boolean' || typeof original === 'number' || original === null) {

@@ -130,7 +130,14 @@ const NATIVE_FIELDS = new Set([
   'memoryUsagePercent', 'startReceiptId', 'repairReceiptId', 'receiptStatus', 'startRoute', 'repairRoute', 'lastCheckedAt',
 ]);
 
-export function personalOpsNativeFields(value: unknown): NonNullable<StructuredRedactionOptions['declaredFields']> {
+export type PersonalOpsNativeSchema = 'memory-provider' | 'memory-receipt';
+const MEMORY_OPERATION_MAPS = new Set(['routes', 'modelRoutes', 'actions', 'commands', 'links',
+  'capabilities', 'operations', 'features', 'supports', 'readiness']);
+const MEMORY_PROVIDER_FIELDS = new Set(['displayName', 'isConfigured', 'connected', 'healthy', 'promptEligibility',
+  'sourcesCount', 'memoryCount', 'itemCount', 'stats', 'statusDetail', 'lastSearchAt', 'lastUpsertAt', 'lastImportAt', 'lastExportAt',
+  ...MEMORY_OPERATION_MAPS]);
+
+export function personalOpsNativeFields(value: unknown, schema?: PersonalOpsNativeSchema): NonNullable<StructuredRedactionOptions['declaredFields']> {
   const fields: Array<{ path: string[]; kind: 'content' }> = [];
   const declared = new Set<string>();
   const visit = (entry: unknown, path: readonly string[]): void => {
@@ -144,7 +151,8 @@ export function personalOpsNativeFields(value: unknown): NonNullable<StructuredR
       const embeddingProvider = path.slice(-4).join('.') === 'embeddings.providers.*.metadata';
       const nativeWatcher = path.join('.') === 'nativeSnapshot.watchers.*.metadata'
         || path.join('.') === 'nativeSnapshot.watchers.*.source.metadata';
-      if (!embeddingProvider && !nativeWatcher && (typeof purpose !== 'string' || !NATIVE_METADATA_PURPOSES.has(purpose.trim()))) return;
+      const memoryReceipt = schema === 'memory-receipt' && path.length === 1;
+      if (!embeddingProvider && !nativeWatcher && !memoryReceipt && (typeof purpose !== 'string' || !NATIVE_METADATA_PURPOSES.has(purpose.trim()))) return;
     }
     for (const [key, child] of Object.entries(entry)) {
       const childPath = [...path, key], identity = JSON.stringify(childPath);
@@ -152,9 +160,14 @@ export function personalOpsNativeFields(value: unknown): NonNullable<StructuredR
       // Its exact keys are provenance identities, never inferred field roles.
       const sourceCount = path.at(-1) === 'sourceCounts' && typeof child === 'number' && Number.isSafeInteger(child) && child >= 0;
       const nativeServerKey = path.at(-1) === 'servers' && child !== null && typeof child === 'object' && !Array.isArray(child);
+      // The external-memory reader explicitly consumes these named maps as
+      // Record<string, operation evidence>. A map key supplies no route role
+      // or readiness; the complete protected value still needs that reading.
+      const memoryOperation = schema === 'memory-provider' && path.length === 1 && MEMORY_OPERATION_MAPS.has(path[0]!);
+      const memoryField = schema === 'memory-provider' && path.length === 0 && MEMORY_PROVIDER_FIELDS.has(key);
       const validLane = key !== 'laneId' || path.at(-1) !== 'metadata'
         || typeof child === 'string' && LANE_IDS.some(lane => lane === child.trim());
-      if ((NATIVE_FIELDS.has(key) || sourceCount || nativeServerKey) && validLane && !declared.has(identity)) {
+      if ((NATIVE_FIELDS.has(key) || sourceCount || nativeServerKey || memoryOperation || memoryField) && validLane && !declared.has(identity)) {
         fields.push({ path: childPath, kind: 'content' }); declared.add(identity);
       }
       visit(child, childPath);

@@ -9,6 +9,7 @@ import { readPersonalOpsBoolean, readPersonalOpsReceiptStatus } from './agent-ha
 import { assertMemoryCurrent, retainMemoryReadingOptions, readMemoryCredentialState, readMemoryLiveStatus, readMemoryPublicText, readMemoryReceiptMember, readMemoryRouteRole, selectMemoryProvider } from './agent-harness-memory-provider-readings.ts';
 import { findCredentialCandidates } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import type { PersonalOpsNativeSchema } from './agent-personal-ops-native-fields.ts';
 
 export type MemoryExternalProviderStatus = 'not-published' | 'receipt-evidence-found' | 'available' | 'needs-setup' | 'blocked' | 'error' | 'disabled' | 'unknown';
 export type MemoryExternalProviderSetupStatus = 'contract-needed' | 'receipt-evidence-found' | 'ready' | 'needs-setup' | 'blocked' | 'error' | 'disabled';
@@ -288,12 +289,12 @@ async function publishedOperations(record: Record<string, unknown>, options: Cat
 }
 
 /** Complete producer capture precedes every semantic read; held sources never fall back to word rules. */
-async function protectExternalMemoryData(value: unknown, options: CatalogRankingOptions): Promise<unknown> {
+async function protectExternalMemoryData(value: unknown, options: CatalogRankingOptions, schema: PersonalOpsNativeSchema): Promise<unknown> {
   const capture = capturePersonalOpsSnapshot(value);
   const assertSource = () => { options.signal?.throwIfAborted(); capture.assertCurrent(value); };
   options.retainCurrent?.(assertSource);
   const current = { ...options, assertCurrent: () => { assertMemoryCurrent(options); assertSource(); } };
-  const protectedValue = await protectPersonalOpsData(capture.captured, current);
+  const protectedValue = await protectPersonalOpsData(capture.captured, current, schema);
   const visit = async (entry: unknown): Promise<unknown> => {
     current.assertCurrent();
     if (typeof entry === 'string') return findCredentialCandidates(entry).length ? readMemoryPublicText(entry, current) : entry;
@@ -338,7 +339,7 @@ function liveRecordReceiptIds(record: Record<string, unknown>): readonly string[
 async function normalizeExternalProviderLiveRecord(value: unknown, source: string, options: CatalogRankingOptions): Promise<MemoryExternalProviderLiveRecord | null> {
   const raw = readRecord(value);
   const nativeProviderId = readExternalProviderLiveRecordId(raw);
-  const record = readRecord(await protectExternalMemoryData(value, options));
+  const record = readRecord(await protectExternalMemoryData(value, options, 'memory-provider'));
   if (nativeProviderId && readExternalProviderLiveRecordId(record) !== nativeProviderId) throw new ToolInputProjectionError('held');
   const providerId = await readProviderIdentity(record, options);
   if (!providerId) return null;
@@ -678,7 +679,7 @@ async function describeExternalMemoryReceiptArtifact(value: unknown, options: Ca
   // This source was acquired from ArtifactStore.list with a retained complete
   // descriptor guard. Only its declared native clocks receive ISO projection.
   const clockSource = captureModelArtifactClockSource({ ...original, createdAt: original.createdAt, expiresAt: original.expiresAt });
-  const artifact = readRecord(await protectExternalMemoryData(clockSource.reading, options)), metadata = readRecord(artifact.metadata);
+  const artifact = readRecord(await protectExternalMemoryData(clockSource.reading, options, 'memory-receipt')), metadata = readRecord(artifact.metadata);
   if (readString(artifact.id) !== nativeArtifactId) throw new ToolInputProjectionError('held');
   if (!await isExternalMemoryReceiptArtifact(artifact, options)) return null;
   const nativeProviderId = readExternalMemoryReceiptProviderId(readRecord(original.metadata));

@@ -62,7 +62,7 @@ function scripted(settings: {
   installJudgmentPort(port); return { port, requests, roles, status, credential, certified, member, bool, receipt, select, spans };
 }
 function provider() { return { providerId: 'Opaque_A', label: 'Synthetic backend', status: 'ready', configured: 1, reachable: true,
-  capabilities: { opaque: false }, routes: { opaque: 'memory_store forget confirmed:true' }, hiddenTail: 'x'.repeat(900) + ' complete-native-provider-tail' }; }
+  capabilities: { opaque: false }, routes: { opaque: 'memory_store forget confirmed:true' }, description: 'x'.repeat(900) + ' complete-native-provider-tail' }; }
 function context(record = provider()) {
   const snapshot = { providers: [record] };
   const source = { snapshot, getSnapshot() { expect(this).toBe(source); return this.snapshot; } };
@@ -105,11 +105,23 @@ describe('external memory provider semantics and source lifetime', () => {
     expect(script.bool.requests[0]?.context?.battery).toBe('engine.tools.boolean-value');
   });
 
+  test('declared provider maps still screen secret fields and withhold undeclared extensions', async () => {
+    const fixture = context();
+    Object.defineProperty(fixture.record.routes, 'apiKey', { value: 'synthetic-private-operation-key', enumerable: true });
+    Object.defineProperty(fixture.record, 'privateExtension', { value: 'synthetic-private-provider-extension', enumerable: true });
+    const script = scripted();
+    expect((await externalMemoryLiveProviderRecords(fixture.value, options()))[0]?.providerId).toBe('Opaque_A');
+    const wire = JSON.stringify(script.requests);
+    expect(wire).not.toContain('synthetic-private-operation-key');
+    expect(wire).not.toContain('synthetic-private-provider-extension');
+    expect(wire).toContain('complete-native-provider-tail');
+  });
+
   test('retained provider guards can be visited by their caller ingress and still retire later mutation', async () => {
     const fixture = context(); scripted(); const ingress = retainedIngress();
     expect((await externalMemoryLiveProviderRecords(fixture.value, ingress.current))[0]?.providerId).toBe('Opaque_A');
     ingress.assertCurrent(); expect(ingress.count()).toBeGreaterThan(1);
-    fixture.record.hiddenTail = 'later native provider mutation';
+    fixture.record.description = 'later native provider mutation';
     expect(ingress.assertCurrent).toThrow();
   });
 
@@ -179,12 +191,16 @@ describe('external memory provider semantics and source lifetime', () => {
 
   test('untyped artifact membership and full receipt outcome are independent registered readings', async () => {
     const record = artifact(); const records = [record];
+    Object.defineProperty(record.metadata, 'apiKey', { value: 'synthetic-private-receipt-key', enumerable: true });
+    Object.defineProperty(record.metadata, 'privateExtension', { value: 'synthetic-private-receipt-extension', enumerable: true });
     const store = { list(limit: number) { expect(this).toBe(store); expect(limit).toBe(100); return [...records]; } };
     const script = scripted({ member: true, receipt: 'failed', certified: false });
     const result = await externalMemoryReceiptEvidence({ platform: { artifactStore: store } }, options());
     expect(result[0]).toMatchObject({ artifactId: 'artifact-owned', providerId: 'Opaque_A', status: 'failed', certification: { schemaStatus: 'legacy' } });
     expect(script.member.requests).toHaveLength(1); expect(script.receipt.requests).toHaveLength(1); expect(script.certified.requests).toHaveLength(1);
     expect(JSON.stringify(script.receipt.requests)).toContain('Immutable receipt after effect');
+    expect(JSON.stringify(script.requests)).not.toContain('synthetic-private-receipt-key');
+    expect(JSON.stringify(script.requests)).not.toContain('synthetic-private-receipt-extension');
   });
 
   test('receipt words alone cannot make an unrelated artifact a provider receipt', async () => {
@@ -202,7 +218,7 @@ describe('external memory provider semantics and source lifetime', () => {
 
   test('native provider metadata mutation during a response retires the output', async () => {
     const fixture = context(); let changed = false;
-    scripted({ beforeSemantic: () => { if (!changed) { changed = true; fixture.record.hiddenTail = 'changed native metadata'; } } });
+    scripted({ beforeSemantic: () => { if (!changed) { changed = true; fixture.record.description = 'changed native metadata'; } } });
     await expect(externalMemoryLiveProviderRecords(fixture.value, options())).rejects.toThrow();
   });
 
