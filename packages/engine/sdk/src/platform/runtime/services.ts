@@ -406,6 +406,7 @@ export function createRuntimeServices(options: RuntimeServicesOptions): RuntimeS
     providerOptimizer,
   } = createProviderStack({
     configManager,
+    registerDispose: release => { disposalScope.registry.add('provider model configuration', release); },
     subscriptionManager,
     secretsManager,
     serviceRegistry,

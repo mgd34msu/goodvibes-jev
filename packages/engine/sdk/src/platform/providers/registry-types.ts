@@ -119,4 +119,6 @@ export interface ProviderRegistryOptions {
   readonly modelLimitsService?: ModelLimitsService | undefined;
   readonly featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null | undefined;
   readonly runtimeBus?: RuntimeEventBus | null | undefined;
+  /** Own subscriptions when this registry borrows a longer-lived configuration. */
+  readonly registerDispose?: ((release: () => void) => void) | undefined;
 }

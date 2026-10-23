@@ -10,6 +10,8 @@
 
 - Apply restored model settings after temporary runtime selections, including intervening configuration writes between model reads.
 
+- Release borrowed model-setting subscriptions when runtime startup fails or the runtime shuts down.
+
 - Recover bounded private SQLite allocation collisions without treating a healthy persisted database as corrupt.
 
 - Cancel and drain Home Graph ingest enrichment before foreground publication, reset, or shutdown, retaining pending work for later enrichment.

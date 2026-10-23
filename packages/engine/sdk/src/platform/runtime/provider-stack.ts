@@ -81,6 +81,7 @@ export interface ProviderStackOptions {
   readonly providerRegistryFactory?: ProviderRegistryFactory | undefined;
   /** Whether to run model discovery and the benchmark load at construction. Default: `run`. */
   readonly modelDiscovery?: ProviderModelDiscoveryMode | undefined;
+  readonly registerDispose?: ((release: () => void) => void) | undefined;
 }
 
 /** Everything a composition needs to choose and call a model. */
@@ -118,6 +119,7 @@ export function createProviderStack(options: ProviderStackOptions): ProviderStac
     modelLimitsService,
     featureFlags: options.featureFlags,
     runtimeBus: options.runtimeBus,
+    registerDispose: options.registerDispose,
   });
   providerRegistry.initCustomProviders();
   // Default `run`: every composition did this unconditionally before the option

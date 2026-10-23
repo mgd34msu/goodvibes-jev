@@ -180,6 +180,7 @@ export async function createRuntimeBaseServices(options: RuntimeServicesOptions)
     // Canonical construction preserves honest unconfigured provider status.
     const providerRegistry = createLaunchTolerantProviderRegistry({
       configManager,
+      registerDispose: release => { disposalScope.registry.add('provider model configuration', release); },
       subscriptionManager,
       secretsManager,
       serviceRegistry,

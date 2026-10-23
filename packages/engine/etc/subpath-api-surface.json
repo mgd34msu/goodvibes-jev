@@ -907,7 +907,7 @@
     {
       "name": "FOUNDATION_METADATA",
       "kind": "const",
-      "text": "FOUNDATION_METADATA: { readonly productId: \"goodvibes\"; readonly productVersion: \"2.0.23\"; readonly operatorMethodCount: 542; readonly operatorEventCount: 34; readonly peerEndpointCount: 6; }"
+      "text": "FOUNDATION_METADATA: { readonly productId: \"goodvibes\"; readonly productVersion: \"2.0.24\"; readonly operatorMethodCount: 542; readonly operatorEventCount: 34; readonly peerEndpointCount: 6; }"
     },
     {
       "name": "FailureCategory",
@@ -4184,7 +4184,7 @@
     {
       "name": "FOUNDATION_METADATA",
       "kind": "const",
-      "text": "FOUNDATION_METADATA: { readonly productId: \"goodvibes\"; readonly productVersion: \"2.0.23\"; readonly operatorMethodCount: 542; readonly operatorEventCount: 34; readonly peerEndpointCount: 6; }"
+      "text": "FOUNDATION_METADATA: { readonly productId: \"goodvibes\"; readonly productVersion: \"2.0.24\"; readonly operatorMethodCount: 542; readonly operatorEventCount: 34; readonly peerEndpointCount: 6; }"
     },
     {
       "name": "GatewayEventTransport",
@@ -47329,7 +47329,7 @@
         "serviceRegistry",
         "subscriptionManager"
       ],
-      "text": "export interface ProviderRegistryOptions { readonly configManager: Pick<ConfigManager, 'get' | 'getCategory' | 'getControlPlaneConfigDir'> & Partial<Pick<ConfigManager, 'subscribe'>>; readonly subscriptionManager: Pick<SubscriptionManager, 'get' | 'getPending' | 'saveSubscription' | 'resolveAccessToken'>; readonly secretsManager: ProviderRuntimeMetadataDeps['secretsManager']; readonly serviceRegistry: ProviderRuntimeMetadataDeps['serviceRegistry']; readonly capabilityRegistry: ProviderCapabilityRegistry; readonly cacheHitTracker: CacheHitTracker; readonly favoritesStore: Pick<FavoritesStore, 'load'>; readonly benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks' | 'getKnownBenchmarks' | 'readBenchmarks' | 'getTopBenchmarkModelIds' | 'benchmarksSettled'>; readonly modelLimitsService?: ModelLimitsService | undefined; readonly featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null | undefined; readonly runtimeBus?: RuntimeEventBus | null | undefined; } ;; via Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
+      "text": "export interface ProviderRegistryOptions { readonly configManager: Pick<ConfigManager, 'get' | 'getCategory' | 'getControlPlaneConfigDir'> & Partial<Pick<ConfigManager, 'subscribe'>>; readonly subscriptionManager: Pick<SubscriptionManager, 'get' | 'getPending' | 'saveSubscription' | 'resolveAccessToken'>; readonly secretsManager: ProviderRuntimeMetadataDeps['secretsManager']; readonly serviceRegistry: ProviderRuntimeMetadataDeps['serviceRegistry']; readonly capabilityRegistry: ProviderCapabilityRegistry; readonly cacheHitTracker: CacheHitTracker; readonly favoritesStore: Pick<FavoritesStore, 'load'>; readonly benchmarkStore: Pick<BenchmarkStore, 'getBenchmarks' | 'getKnownBenchmarks' | 'readBenchmarks' | 'getTopBenchmarkModelIds' | 'benchmarksSettled'>; readonly modelLimitsService?: ModelLimitsService | undefined; readonly featureFlags?: Pick<FeatureFlagManager, 'isEnabled'> | null | undefined; readonly runtimeBus?: RuntimeEventBus | null | undefined; readonly registerDispose?: ((release: () => void) => void) | undefined; } ;; via Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
     },
     {
       "name": "ProviderRuntimeMetadata",
@@ -50646,7 +50646,7 @@
         "subscriptionManager",
         "surfaceRoot"
       ],
-      "text": "export interface ProviderStackOptions { readonly configManager: ConfigManager; readonly subscriptionManager: SubscriptionManager; readonly secretsManager: SecretsManager; readonly serviceRegistry: ServiceRegistry; readonly featureFlags: FeatureFlagManager; readonly runtimeBus: RuntimeEventBus; readonly shellPaths: ShellPathService; readonly surfaceRoot: string; readonly providerRegistryFactory?: ProviderRegistryFactory | undefined; readonly modelDiscovery?: ProviderModelDiscoveryMode | undefined; } ;; via ProviderModelDiscoveryMode = export type ProviderModelDiscoveryMode = 'run' | 'skip'; ;; ProviderRegistryFactory = export type ProviderRegistryFactory = (options: ProviderRegistryConstructionOptions) => ProviderRegistry; ;; ShellPathService = export interface ShellPathService { readonly workingDirectory: string; readonly homeDirectory: string; readonly projectGoodVibesRoot: string; readonly userGoodVibesRoot: string; expandHomePath(path: string): string; resolveWorkspacePath(path: string): string; resolveProjectPath(...segments: string[]): string; resolveUserPath(...segments: string[]): string; isWithinWorkingDirectory(path: string): boolean; }"
+      "text": "export interface ProviderStackOptions { readonly configManager: ConfigManager; readonly subscriptionManager: SubscriptionManager; readonly secretsManager: SecretsManager; readonly serviceRegistry: ServiceRegistry; readonly featureFlags: FeatureFlagManager; readonly runtimeBus: RuntimeEventBus; readonly shellPaths: ShellPathService; readonly surfaceRoot: string; readonly providerRegistryFactory?: ProviderRegistryFactory | undefined; readonly modelDiscovery?: ProviderModelDiscoveryMode | undefined; readonly registerDispose?: ((release: () => void) => void) | undefined; } ;; via ProviderModelDiscoveryMode = export type ProviderModelDiscoveryMode = 'run' | 'skip'; ;; ProviderRegistryFactory = export type ProviderRegistryFactory = (options: ProviderRegistryConstructionOptions) => ProviderRegistry; ;; ShellPathService = export interface ShellPathService { readonly workingDirectory: string; readonly homeDirectory: string; readonly projectGoodVibesRoot: string; readonly userGoodVibesRoot: string; expandHomePath(path: string): string; resolveWorkspacePath(path: string): string; resolveProjectPath(...segments: string[]): string; resolveUserPath(...segments: string[]): string; isWithinWorkingDirectory(path: string): boolean; }"
     },
     {
       "name": "RuntimeEventNotice",

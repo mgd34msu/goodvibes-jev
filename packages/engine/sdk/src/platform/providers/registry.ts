@@ -149,10 +149,14 @@ export class ProviderRegistry {
       runtimeBus: this.runtimeBus,
     });
     this.currentModelRegistryKey = this.configuredModel.initialRegistryKey();
-    this.configManager.subscribe?.('provider.model', () => {
+    const stopModelConfiguration = this.configManager.subscribe?.('provider.model', () => {
       this.configuredModel.configurationChanged();
       this._modelRegistryRevision += 1;
     });
+    if (stopModelConfiguration) {
+      try { options.registerDispose?.(stopModelConfiguration); }
+      catch (error) { stopModelConfiguration(); throw error; }
+    }
   }
 
   private registerBuiltins(resolvedKeys?: Record<string, string>): void {

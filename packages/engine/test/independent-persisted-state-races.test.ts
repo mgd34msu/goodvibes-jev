@@ -1,15 +1,29 @@
-import { afterEach, expect, test } from 'bun:test';
+import { afterEach, beforeEach, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { KnowledgeStore, ProjectPlanningService, type ProjectPlanningStateUpsertInput } from '@goodvibes-jev/engine/sdk/platform/knowledge';
 
 const roots: string[] = [];
-afterEach(() => { for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true }); });
+const stores: KnowledgeStore[] = [];
+let previousPort: JudgmentPort | undefined;
+// These cases race unapproved storage state. Readiness remains unavailable;
+// a retired reader left by an unrelated test must not become their owner.
+beforeEach(() => { previousPort = installJudgmentPort(undefined); });
+afterEach(async () => {
+  try { await Promise.all(stores.splice(0).map(store => store.close())); }
+  finally {
+    installJudgmentPort(previousPort);
+    for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  }
+});
+function openStore(dbPath: string) { const store = new KnowledgeStore({ dbPath }); stores.push(store); return store; }
 function path() { const root = mkdtempSync(join(tmpdir(), 'persisted-state-independent-')); roots.push(root); return join(root, 'knowledge.sqlite'); }
 async function seeded() {
   const file = path();
-  const store = new KnowledgeStore({ dbPath: file });
+  const store = openStore(file);
   const service = new ProjectPlanningService(store);
   const authored: ProjectPlanningStateUpsertInput['state'] = { goal: 'Original selected plan', executionApproved: false,
     openQuestions: [{ id: 'q1', prompt: 'Which tests?', status: 'open' }],
@@ -23,14 +37,14 @@ async function seeded() {
 
 test('a writer through another real handle invalidates a selected approval without overwriting its rows', async () => {
   const first = await seeded();
-  const otherStore = new KnowledgeStore({ dbPath: first.file });
+  const otherStore = openStore(first.file);
   const otherService = new ProjectPlanningService(otherStore);
   await otherService.upsertState({ projectId: 'fixture', state: { ...first.authored, goal: 'Replacement from second handle',
     tasks: [{ id: 'replacement', title: 'Replacement task' }], executionApproved: false,
   } });
   const before = readFileSync(first.file);
   const result = await first.service.applyStateAction({ projectId: 'fixture', expected: { kind: 'revision', revision: first.selected.revision! }, action: { kind: 'approve' } });
-  const reopened = new ProjectPlanningService(new KnowledgeStore({ dbPath: first.file }));
+  const reopened = new ProjectPlanningService(openStore(first.file));
   const after = await reopened.getState({ projectId: 'fixture' });
   console.log(JSON.stringify({ scenario: 'two-handles-approval', applied: result.applied, persistedGoal: after.state?.goal, persistedApproval: after.state?.executionApproved, diskUnchanged: readFileSync(first.file).equals(before) }));
   expect(result).toMatchObject({ applied: false, reason: 'state-changed' });
@@ -41,13 +55,13 @@ test('a writer through another real handle invalidates a selected approval witho
 
 test('an absent-row condition observes a creation through another initialized real handle', async () => {
   const file = path();
-  const first = new KnowledgeStore({ dbPath: file }); const second = new KnowledgeStore({ dbPath: file });
+  const first = openStore(file); const second = openStore(file);
   await first.init(); await second.init();
   const input = { id: 'shared-row', connectorId: 'fixture', sourceType: 'dataset' as const, status: 'indexed' as const, metadata: { value: 'first' } };
   expect((await first.upsertSourceIfCurrent(input, null)).kind).toBe('written');
   const before = readFileSync(file);
   const result = await second.upsertSourceIfCurrent({ ...input, metadata: { value: 'second' } }, null);
-  const reopened = new KnowledgeStore({ dbPath: file }); await reopened.init();
+  const reopened = openStore(file); await reopened.init();
   console.log(JSON.stringify({ scenario: 'two-handles-absent', kind: result.kind, persisted: reopened.getSource('shared-row')?.metadata.value }));
   expect(result.kind).toBe('held');
   expect(readFileSync(file)).toEqual(before);

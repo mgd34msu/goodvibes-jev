@@ -453,6 +453,7 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
 
   const providers = createProviderStack({
     configManager,
+    registerDispose: release => { disposalScope.registry.add('provider model configuration', release); },
     subscriptionManager,
     secretsManager,
     serviceRegistry,
