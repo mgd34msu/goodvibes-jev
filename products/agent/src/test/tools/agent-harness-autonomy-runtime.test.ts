@@ -1316,6 +1316,7 @@ afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previous
             };
             readonly daemonOperatorContract: {
               readonly status: string;
+              readonly terminalOrPtyRoutes: readonly { readonly methodId: string }[];
               readonly sessionInputRoutes: readonly { readonly methodId: string; readonly modelRoute: string }[];
             };
             readonly auditedTerms: readonly string[];
@@ -1342,7 +1343,7 @@ afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previous
       expect(empty.capabilities.substrate.localProcessManager.supports).toContain('spawn');
       expect(empty.capabilities.substrate.localProcessManager.stdinWrite.status).toBe('contract-discovered');
       expect(empty.capabilities.substrate.localProcessManager.stdinWrite.missingAnyOf ?? []).toEqual([]);
-      expect(empty.capabilities.substrate.daemonOperatorContract.status).toContain('no-published-terminal');
+      expect(empty.capabilities.substrate.daemonOperatorContract.terminalOrPtyRoutes).toHaveLength(0);
       expect(empty.capabilities.substrate.daemonOperatorContract.sessionInputRoutes.map((route) => route.methodId)).toContain('sessions.inputs.list');
       expect(empty.capabilities.substrate.auditedTerms).toContain('sessions.inputs');
       expect(empty.capabilities.pty.status).toContain('not-yet-supported');
@@ -1649,7 +1650,7 @@ afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previous
   });
 
 
-  test('reports unsupported PTY/stdin and blocks background sudo prompts', async () => {
+  test('rejects an uncertified PTY method and blocks background sudo prompts', async () => {
     const fixture = makeFixture();
     try {
       const pty = await executeHarnessJson<{ readonly status: string; readonly capability: string; readonly guidance: string }>(fixture, {
@@ -1715,6 +1716,10 @@ afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previous
       expect(sudo.guidance.credentialSignal.rawValueReturned).toBe(false);
       expect(sudo.guidance.blockedRoutes.map((route) => route.id)).toContain('background-sudo-prompt');
 
+      // An unrelated extension method with a suggestive name is not a PTY contract.
+      Object.defineProperty(fixture.context.workspace.processManager, 'spawnPty', {
+        enumerable: true, configurable: true, value: () => { throw new Error('Uncertified method must not be invoked'); },
+      });
       const capabilities = await executeHarnessJson<{
         readonly status: string;
         readonly capabilities: {

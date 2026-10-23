@@ -146,11 +146,11 @@ function processSubstrateReport(context?: CommandContext): Record<string, unknow
         ? { status: 'contract-discovered', method: localStdinMethod, executableByHarness: true }
         : { status: 'blocked-contract-gap', missingAnyOf: STDIN_WRITE_METHOD_NAMES },
       pty: localPtyMethod
-        ? { status: 'contract-discovered', method: localPtyMethod, executableByHarness: false }
+        ? { status: 'candidate-method', method: localPtyMethod, executableByHarness: false }
         : { status: 'blocked-contract-gap', missingAnyOf: PTY_METHOD_NAMES },
     },
     daemonOperatorContract: {
-      status: terminalRoutes.length > 0 ? 'terminal-or-pty-methods-discovered' : 'no-published-terminal-or-pty-method',
+      status: terminalRoutes.length > 0 ? 'candidate-methods-found' : 'no-candidate-methods',
       terminalOrPtyRoutes: terminalRoutes,
       sessionInputRoutes,
       credentialRoutes,
@@ -315,17 +315,12 @@ async function matchingProcesses(context: CommandContext, manager: ProcessManage
 function processToolParity(context: CommandContext | undefined, interactive: InteractiveRuntimeParity | null): readonly Record<string, unknown>[] {
   const substrate = processSubstrateReport(context);
   const localProcessManager = substrate.localProcessManager as Record<string, unknown>;
-  const daemonContract = substrate.daemonOperatorContract as Record<string, unknown>;
   const stdinWrite = localProcessManager.stdinWrite as Record<string, unknown>;
-  const pty = localProcessManager.pty as Record<string, unknown>;
-  const terminalRoutes = Array.isArray(daemonContract.terminalOrPtyRoutes) ? daemonContract.terminalOrPtyRoutes : [];
   const writeStatus: ProcessCapabilityStatus = stdinWrite.status === 'contract-discovered'
     ? 'supported'
     : interactive?.stdinWriteContract ? 'contract-discovered'
-    : terminalRoutes.some((route) => String((route as Record<string, unknown>).methodId).toLowerCase().includes('write'))
-      ? 'contract-discovered'
-      : 'blocked-contract-gap';
-  const ptyStatus: ProcessCapabilityStatus = interactive?.ptyContract || pty.status === 'contract-discovered' || terminalRoutes.length > 0 ? 'contract-discovered' : 'blocked-contract-gap';
+    : 'blocked-contract-gap';
+  const ptyStatus: ProcessCapabilityStatus = interactive?.ptyContract ? 'contract-discovered' : 'blocked-contract-gap';
   const sudoStatus: ProcessCapabilityStatus = interactive?.sudoMediationContract ? 'contract-discovered' : 'visible-only';
   return [
     {
@@ -396,7 +391,6 @@ async function capabilities(context?: CommandContext, options: CatalogRankingOpt
   const substrate = processSubstrateReport(context);
   const localProcessManager = substrate.localProcessManager as Record<string, unknown>;
   const stdinWrite = localProcessManager.stdinWrite as Record<string, unknown>;
-  const pty = localProcessManager.pty as Record<string, unknown>;
   return {
     start: 'terminal command:"..." background:true',
     inspect: 'execution action:"processes" or action:"process"',
@@ -419,9 +413,9 @@ async function capabilities(context?: CommandContext, options: CatalogRankingOpt
     },
     interactiveRuntime: snapshot?.capabilitySummary ?? null,
     pty: {
-      status: pty.status === 'contract-discovered' ? 'contract-discovered-but-not-generic-executable' : 'not-yet-supported-in-agent-harness',
-      guidance: pty.status === 'contract-discovered'
-        ? 'A PTY-like method is discoverable, but Agent needs a typed session contract before generic PTY spawn can be safe.'
+      status: snapshot?.parityStatus.ptyContract ? 'contract-discovered-but-not-generic-executable' : 'not-yet-supported-in-agent-harness',
+      guidance: snapshot?.parityStatus.ptyContract
+        ? 'A certified PTY runtime record is published. Use its confirmed session routes; generic PTY spawn is not exposed.'
         : 'Use foreground exec for noninteractive commands. Interactive PTY needs a published SDK/daemon session API before Agent can expose it safely.',
     },
     stdinWrite: {
