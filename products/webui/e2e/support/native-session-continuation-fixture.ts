@@ -270,12 +270,21 @@ export async function installNativeContinuationDaemon(
       localStorage.setItem("goodvibes.webui.hosted.clientId", "native-continuation-proof-client");
       localStorage.setItem("goodvibes.webui.push.deviceId", "native-continuation-proof-device");
       const original = crypto.randomUUID.bind(crypto);
+      // A real hosted attachment now owns its own fresh UUID. Only the
+      // submitted original consumes the two recorded source identities;
+      // navigation, attachment and inspection keep their native random IDs.
+      let submitting = false;
+      document.addEventListener("click", (event) => {
+        const button = event.target instanceof Element ? event.target.closest("button") : null;
+        if (button && !button.disabled && button.textContent?.trim() === "Submit") submitting = true;
+      }, true);
       Object.defineProperty(crypto, "randomUUID", {
         configurable: true,
         value: () => {
           const index = Number(sessionStorage.getItem("native-continuation-proof-id") ?? 0);
-          if (index >= ids.length) return original();
+          if (!submitting || index >= ids.length) return original();
           sessionStorage.setItem("native-continuation-proof-id", String(index + 1));
+          if (index % 2 === 1) submitting = false;
           return ids[index];
         },
       });

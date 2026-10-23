@@ -39,12 +39,14 @@ for (const pending of [true, false]) {
       await openNavigation(account);
       await account.getByRole('button', { name: /^Account:/ }).click();
       await account.getByRole('menuitem', { name: 'Sign out' }).click();
-      await expect(palette.locator('[data-search-status="unavailable"]')).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Sign in to GoodVibes', exact: true })).toBeVisible();
+      await expect(palette).toHaveCount(0);
       release();
       await expect(palette.getByRole('option')).toHaveCount(0);
       await page.keyboard.press('Enter');
       await expect(page).toHaveURL(/view=work/);
-      await expect(palette).toBeVisible();
+      await expect(page.getByRole('heading', { name: 'Sign in to GoodVibes', exact: true })).toBeVisible();
+      await expect(palette).toHaveCount(0);
     } finally { release(); await account.close(); }
   });
 }
