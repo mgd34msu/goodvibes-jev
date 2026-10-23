@@ -4,7 +4,8 @@ import { defaultTestArgs } from './test-discovery.ts';
 
 // Capacity changes belong here, not in the runner's deadlines. CI runs these
 // on separate hosts; a local invocation still owns one sequential Bun child.
-export const ENGINE_TEST_PARTITIONS = 8;
+export const ENGINE_TEST_PARTITIONS = 9;
+const DEDICATED_TEST_FILES = ['test/knowledge-semantic-answer.test.ts'];
 const MAX_PARTITIONS = 16;
 
 export function partitionTestFiles(files: readonly string[], count: number): readonly (readonly string[])[] {
@@ -13,9 +14,16 @@ export function partitionTestFiles(files: readonly string[], count: number): rea
   }
   if (new Set(files).size !== files.length) throw new Error('Test manifest contains duplicate files');
   const partitions: string[][] = Array.from({ length: count }, () => []);
+  // This complete native workflow suite needs its own host. Sharing its
+  // nine-minute CI run with ordinary suites exhausted their enclosing budget.
+  const dedicated = count > DEDICATED_TEST_FILES.length
+    ? DEDICATED_TEST_FILES.filter(file => files.includes(file)) : [];
+  const sharedCount = count - dedicated.length;
   // A sorted round-robin spreads neighboring subsystem files rather than
   // concentrating all expensive daemon/contract fixtures in one contiguous leg.
-  [...files].sort().forEach((file, index) => partitions[index % count]!.push(file));
+  [...files].filter(file => !dedicated.includes(file)).sort()
+    .forEach((file, index) => partitions[index % sharedCount]!.push(file));
+  dedicated.forEach((file, index) => partitions[sharedCount + index]!.push(file));
   return partitions;
 }
 

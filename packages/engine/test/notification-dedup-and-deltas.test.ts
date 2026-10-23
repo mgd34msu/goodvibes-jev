@@ -11,7 +11,10 @@
  * Covers, in order: delta-only progress, identical-body suppression (including
  * under `force`), and the reachable-URL resolution.
  */
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import type { JudgmentPort } from '@goodvibes-jev/judgment';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { ChannelReplyPipeline } from '../sdk/src/platform/channels/reply-pipeline.ts';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.ts';
 import { emitAgentProgress } from '../sdk/src/platform/runtime/emitters/index.ts';
@@ -91,6 +94,19 @@ function pipelineHarness(surfaceKind = 'ntfy') {
 }
 
 describe('reply pipeline progress', () => {
+  let previousPort: JudgmentPort | undefined;
+  beforeEach(() => {
+    const notices = new Set(['engineering', 'reviewing', 'gating', 'awaiting_gates']);
+    const readings = fakePort((name, _question, state) => {
+      if (name !== 'substantive' || !notices.has((state as { content: string }).content)) {
+        throw new Error('Unexpected notification fixture reading');
+      }
+      return noulAnswer(0.99);
+    });
+    previousPort = installJudgmentPort(readings.port);
+  });
+  afterEach(() => { installJudgmentPort(previousPort); });
+
   test('an identical body is never republished, even when forced', async () => {
     const harness = pipelineHarness();
     harness.track('agent-1');

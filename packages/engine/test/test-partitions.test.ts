@@ -72,7 +72,10 @@ test('the actual repo matrix is an exact disjoint cover of canonical and indepen
   expect(selected.flat().sort()).toEqual([...manifest.files]);
   expect(new Set(selected.flat()).size).toBe(manifest.files.length);
   expect(selected.map((files) => files.length).every((count) => count > 0)).toBe(true);
-  expect(Math.max(...selected.map((files) => files.length)) - Math.min(...selected.map((files) => files.length))).toBeLessThanOrEqual(1);
+  const dedicated = selected.find(files => files.includes('test/knowledge-semantic-answer.test.ts'));
+  expect(dedicated).toEqual(['test/knowledge-semantic-answer.test.ts']);
+  const shared = selected.filter(files => files !== dedicated);
+  expect(Math.max(...shared.map(files => files.length)) - Math.min(...shared.map(files => files.length))).toBeLessThanOrEqual(1);
 });
 
 test('new nested files enter the manifest once and stale CI discovery fails closed', () => {

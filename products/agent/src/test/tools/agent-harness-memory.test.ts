@@ -28,7 +28,7 @@ afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previous
       if (surface === 'workspace-actions') {
         const actions = await executeHarnessJson<{
           readonly actions: readonly { readonly id: string; readonly modelRoute?: string }[];
-        }>(fixture, { mode: 'workspace_actions', query: 'memory posture' });
+        }>(fixture, { mode: 'workspace_actions', categoryId: 'memory', query: 'memory posture' });
         expect(actions.actions.find((entry) => entry.id === 'memory-posture')?.modelRoute).toBe('memory action:"status"');
         return;
       }

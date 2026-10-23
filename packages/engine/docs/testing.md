@@ -52,7 +52,7 @@ checks, the TypeScript build, type-level tests, API-surface and bundle-size
 checks, package metadata, and packaging smoke tests, but it deliberately does
 not execute the test suite itself. Test execution belongs to the
 `platform-matrix` CI job, which restores the single build artifact and runs the complete engine manifest
-in four disjoint Bun partitions, plus the React Native bundle scan and the two
+in nine disjoint Bun partitions, plus the React Native bundle scan and the two
 Workers runtime lanes. Judgment and the deterministic fake-IMAP race sweep run
 once on the first Bun leg. Every partition retains the owned runner and its
 unchanged deadlines; local default execution remains one sequential child. See

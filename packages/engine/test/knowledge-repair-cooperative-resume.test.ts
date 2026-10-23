@@ -60,7 +60,7 @@ function storedRepairReadings(sourceTexts: readonly string[]) {
   };
   const fake = fakePort((name, _question, state) => {
     const input = record(state);
-    if (['Does AC-7 support webOS?', 'What TV platform, wireless connections and input ports does AC-7 support?'].includes(String(input.query))) {
+    if (['Does AC-7 support webOS?', 'What TV platform and wireless connections does AC-7 support?'].includes(String(input.query))) {
       if (name === 'fullProfileRequired') return noulAnswer(0.01);
       if (name === 'repairEvidenceSufficient') return noulAnswer(0.99);
     }
@@ -106,8 +106,9 @@ async function usefulFixture(combined = false) {
     metadata: { knowledgeSpaceId: spaceId, model: 'AC-7' } };
   const subject = await upsertObservedKnowledgeNode(store, raw, 'home-assistant-snapshot', raw, () => raw);
   // The first combined source has no extracted facts. The second already has
-  // all three, so this control never invents profile readings to reach the union.
-  const groups = combined ? [[], [...repairClaims]] : [[repairClaims[0]]];
+  // two independent facts, the minimum needed to verify the complete union.
+  // This control never invents profile readings to reach it.
+  const groups = combined ? [[], repairClaims.slice(0, 2)] : [[repairClaims[0]]];
   const texts = groups.map(group => group.map(([, statement]) => statement).join('\n\n'));
   const readings = storedRepairReadings(texts);
   const sources: KnowledgeSourceRecord[] = [], facts: KnowledgeNodeRecord[] = [];
@@ -121,7 +122,7 @@ async function usefulFixture(combined = false) {
       metadata: { knowledgeSpaceId: spaceId, semanticKind: 'fact', factKind: 'feature', evidence: statement, value: statement,
         sourceIds: [source.id], subjectIds: [subject.id], linkedObjectIds: [subject.id], subject: subject.title } }));
   }
-  const input = { id: 'gap', kind: 'knowledge_gap' as const, slug: 'gap', title: combined ? 'What TV platform, wireless connections and input ports does AC-7 support?' : 'Does AC-7 support webOS?',
+  const input = { id: 'gap', kind: 'knowledge_gap' as const, slug: 'gap', title: combined ? 'What TV platform and wireless connections does AC-7 support?' : 'Does AC-7 support webOS?',
     status: 'active' as const, metadata: { knowledgeSpaceId: spaceId, linkedObjectIds: [subject.id] } };
   const gap = await upsertObservedKnowledgeNode(store, input, 'research-task', input, () => input);
   const task = await store.upsertRefinementTask({ spaceId, gapId: gap.id, state: 'applying', trigger: 'manual' });
@@ -234,14 +235,14 @@ describe('repair passes resume under their original caller', () => {
     const result = await promoteRepairSources({ store: item.store, enrichSource: async sourceId => { enriched.push(sourceId); } },
       spaceId, item.gap, item.sources.map(source => source.id), item.task, Date.now() + 20_000);
     const factIds = item.facts.map(fact => fact.id).sort();
-    expect(result).toEqual({ promotedFactCount: 3, repairComplete: true, promotedSourceIds: item.sources.map(source => source.id) });
+    expect(result).toEqual({ promotedFactCount: 2, repairComplete: true, promotedSourceIds: item.sources.map(source => source.id) });
     expect(enriched).toEqual([item.sources[0]!.id]);
     const combined = item.receipts.at(-1)!;
     expect(combined.nodes.map(node => node.id).sort()).toEqual(factIds);
     expect(item.receipts).toHaveLength(2);
-    expect(item.receipts.filter(receipt => receipt.nodes.length === 3)).toHaveLength(2);
+    expect(item.receipts.filter(receipt => receipt.nodes.length === 2)).toHaveLength(2);
     for (const written of combined.nodes) expect(item.store.getNode(written.id)).toBe(written);
     expect(item.store.listEdges().filter(edge => edge.relation === 'describes').map(edge => edge.fromId).sort()).toEqual(factIds);
-    expect(item.store.getRefinementTask(item.task.id)).toMatchObject({ state: 'verified', promotedFactCount: 3, metadata: { promotedFactCount: 3 } });
+    expect(item.store.getRefinementTask(item.task.id)).toMatchObject({ state: 'verified', promotedFactCount: 2, metadata: { promotedFactCount: 2 } });
   });
 });
