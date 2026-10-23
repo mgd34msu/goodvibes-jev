@@ -196,6 +196,14 @@ test('worker acceptance details reach both the provider and its independent comp
     expect((checks[0]!.state as never as { requirements: unknown }).requirements).toEqual({ successCriteria: criteria, requiredEvidence: evidence, writeScope });
     expect(requests[1]!.systemPrompt).toContain('[Response completion check]');
     expect(record.fullOutput).toContain('source line references');
+    const journal = readFileSync(join(dir, '.goodvibes/sessions/agents/worker-acceptance.jsonl'), 'utf8')
+      .trim().split('\n').map(line => JSON.parse(line));
+    const saved = journal.filter(entry => entry.type === 'agent_conversation');
+    expect(saved).toHaveLength(1);
+    expect(saved[0].messages.some((message: ConversationMessageSnapshot) => message.role === 'assistant'
+      && message.content === 'Review complete.')).toBe(false);
+    expect(saved[0].messages.some((message: ConversationMessageSnapshot) => message.role === 'assistant'
+      && message.content === record.fullOutput)).toBe(true);
   } finally { installJudgmentPort(previous); rmSync(dir, { recursive: true, force: true }); }
 });
 
@@ -251,6 +259,9 @@ describe('runAgentTask: conversation-snapshot bridge call sites', () => {
       const snapshot = liveSourceDuringRun!();
       expect(snapshot.some((m) => m.role === 'user' && m.content === 'say hello')).toBe(true);
       expect(snapshot.some((m) => m.role === 'assistant' && m.content === 'All done.')).toBe(true);
+      const journal = readFileSync(join(dir, '.goodvibes/sessions/agents/ag-bridge-1.jsonl'), 'utf8')
+        .trim().split('\n').map(line => JSON.parse(line));
+      expect(journal.filter(entry => entry.type === 'agent_conversation').map(entry => entry.messages)).toEqual([snapshot]);
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }

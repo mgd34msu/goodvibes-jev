@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync } from 'fs';
 import { join, dirname } from 'path';
 import { ConversationManager } from '../core/conversation.js';
+import { verificationHistory, verificationMessages } from '../core/verification/archive.js';
 import { KVState } from '../state/kv-state.js';
 import { logger } from '../utils/logger.js';
 import { summarizeError } from '../utils/error-display.js';
@@ -56,6 +57,7 @@ export class AgentSession {
 
   /** Keeps journal lines in order while their credential spans are read. */
   private readonly lineWriter = new AtRestLineWriter(AGENT_JOURNAL_CREDENTIAL_SITE);
+  private disposal: Promise<void> | undefined;
 
   constructor(
     agentId: string,
@@ -132,14 +134,22 @@ export class AgentSession {
    * Clean up resources held by this session.
    * Flushes and disposes the KV state.
    */
-  async dispose(): Promise<void> {
-    await this.flush();
-    try {
-      await this.kvState.dispose();
-    } catch (err) {
-      logger.error('AgentSession.dispose failed', { agentId: this.agentId, error: summarizeError(err) });
-    }
-    logger.debug('AgentSession disposed', { agentId: this.agentId });
+  dispose(): Promise<void> {
+    if (this.disposal) return this.disposal;
+    // Only native accepted messages enter this conversation. Private rejected
+    // final drafts remain in their separate verification journal. Archives
+    // preserve original observations through compaction, without promoting a
+    // worker instruction or summary into an owner request or current approval.
+    this.appendMessage({ type: 'agent_conversation', version: 1, agentId: this.agentId,
+      messages: verificationMessages(this.conversation, this.conversation.getMessageSnapshot()),
+      archive: verificationHistory(this.conversation), timestamp: Date.now() });
+    this.disposal = (async () => {
+      await this.flush();
+      try { await this.kvState.dispose(); }
+      catch (err) { logger.error('AgentSession.dispose failed', { agentId: this.agentId, error: summarizeError(err) }); }
+      logger.debug('AgentSession disposed', { agentId: this.agentId });
+    })();
+    return this.disposal;
   }
 
   // ---------------------------------------------------------------------------

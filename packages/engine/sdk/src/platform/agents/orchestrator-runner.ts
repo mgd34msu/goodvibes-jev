@@ -502,7 +502,7 @@ export async function runAgentTask(
       ? estimateTokens(JSON.stringify(toolDefinitions))
       : 0;
 
-    conversation = new ConversationManager();
+    conversation = session.conversation;
     conversation.addUserMessage(record.task);
     const wake = record.resumeSteer ? Object.freeze({ ...record.resumeSteer }) : undefined;
     record.resumeSteer = undefined;
