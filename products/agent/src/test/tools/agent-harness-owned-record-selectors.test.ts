@@ -1,6 +1,7 @@
 import { afterAll, afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { ToolRegistry, ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { registerAccountIdentityRedaction, registerProfileRedactionValues } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
 import { executionVerification } from '@goodvibes-jev/engine/sdk/platform/gate';
@@ -80,8 +81,14 @@ function readings(fits: Readonly<Record<string, number>>, verification: Readonly
 }
 const options = () => ({ sourceOwner: ordinaryResearchOwner() });
 let previous: ReturnType<typeof installJudgmentPort>;
-beforeEach(() => { previous = installJudgmentPort(undefined); });
-afterEach(() => { installJudgmentPort(previous); });
+beforeEach(() => {
+  previous = installJudgmentPort(undefined);
+  registerAccountIdentityRedaction(null); registerProfileRedactionValues(null);
+});
+afterEach(() => {
+  installJudgmentPort(previous);
+  registerAccountIdentityRedaction(null); registerProfileRedactionValues(null);
+});
 afterAll(cleanupResearchScreeningFixtures);
 
 const cases = [
