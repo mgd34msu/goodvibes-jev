@@ -4,7 +4,7 @@ import { copyFileSync, cpSync, existsSync, lstatSync, mkdirSync, mkdtempSync, re
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { Writable } from 'node:stream';
-import { AGENT_TEST_GROUPS, agentGroupTestArgs, agentGroupTestPlans, agentTestFiles, agentTestManifest, agentTestMatrix, groupAgentTestFiles } from '../scripts/agent-test-partitions.ts';
+import { AGENT_TEST_GROUPS, AGENT_HARNESS_GROUP_FILES, agentGroupTestArgs, agentGroupTestPlans, agentTestFiles, agentTestManifest, agentTestMatrix, groupAgentTestFiles } from '../scripts/agent-test-partitions.ts';
 import { replayTestOwnerLogs } from '../scripts/test.ts';
 import { sweepStaleTmpDirs } from '../scripts/stale-tmp-sweep.ts';
 import { RUN_TMP_PREFIX, STALE_RUN_MS } from '../scripts/test-run-tmp.ts';
@@ -73,7 +73,22 @@ test('actual Agent inventory is an independent complete disjoint census, with no
   expect(manifest.groups[1]!.files).toEqual([headless]);
   expect(manifest.groups[2]!.files).toEqual([modelCatalog]);
   expect(manifest.groups[3]!.files).toEqual([modelReadiness]);
-  expect(manifest.groups[4]!.files).toEqual(census.filter(file => !file.startsWith('src/test/e2e/') && ![headless, modelCatalog, modelReadiness].includes(file)));
+  const harness = new Set<string>(Object.values(AGENT_HARNESS_GROUP_FILES));
+  expect(manifest.groups[4]!.files).toEqual(census.filter(file => !file.startsWith('src/test/e2e/') && ![headless, modelCatalog, modelReadiness].includes(file) && !harness.has(file)));
+});
+
+test('native harness groups retain whole files and leave nested names in the complete remaining inventory', () => {
+  const { agent } = fixture();
+  for (const file of Object.values(AGENT_HARNESS_GROUP_FILES)) write(agent, file);
+  const nested = 'src/test/nested/agent-harness-orchestration.test.ts'; write(agent, nested);
+  const manifest = agentTestManifest(agent);
+  for (const [id, file] of Object.entries(AGENT_HARNESS_GROUP_FILES)) {
+    expect(manifest.groups.find(group => group.id === id)?.files).toEqual([file]);
+    expect(agentGroupTestPlans(agent, [`--group=${id}`, `--manifest-sha256=${manifest.sha256}`]))
+      .toEqual([['--cwd', '../../products/agent', `./${file}`]]);
+  }
+  expect(manifest.groups.find(group => group.id === 'remaining')?.files).toContain(nested);
+  expect(manifest.groups.flatMap(group => group.files).sort()).toEqual([...manifest.files]);
 });
 
 test('every new group rejects the old grouping digest even when the file inventory is unchanged', () => {

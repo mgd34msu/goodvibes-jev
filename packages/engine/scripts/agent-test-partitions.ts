@@ -3,7 +3,21 @@ import { readdirSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 
 export const AGENT_TEST_GROUPS = ['e2e', 'headless', 'model-catalog', 'model-readiness', 'remaining'] as const;
-export type AgentTestGroup = typeof AGENT_TEST_GROUPS[number];
+/** Complete native feature suites get independent, unchanged runner deadlines. */
+export const AGENT_HARNESS_GROUP_FILES = {
+  'harness-core': 'src/test/tools/agent-harness-core.test.ts',
+  'harness-orchestration': 'src/test/tools/agent-harness-orchestration.test.ts',
+  'harness-setup': 'src/test/tools/agent-harness-setup.test.ts',
+  'harness-personal-ops': 'src/test/tools/agent-harness-personal-ops.test.ts',
+  'harness-memory': 'src/test/tools/agent-harness-memory.test.ts',
+  'harness-connectors': 'src/test/tools/agent-harness-connectors.test.ts',
+  'harness-autonomy-runtime': 'src/test/tools/agent-harness-autonomy-runtime.test.ts',
+  'harness-knowledge-learning': 'src/test/tools/agent-harness-knowledge-learning.test.ts',
+  'harness-integrations': 'src/test/tools/agent-harness-integrations.test.ts',
+  'harness-workspace-interface': 'src/test/tools/agent-harness-workspace-interface.test.ts',
+  'harness-settings-actions': 'src/test/tools/agent-harness-settings-actions.test.ts',
+} as const;
+export type AgentTestGroup = typeof AGENT_TEST_GROUPS[number] | keyof typeof AGENT_HARNESS_GROUP_FILES;
 const HEADLESS = 'src/test/cli/native-headless-entrypoint.test.ts';
 // Keep the expensive full-source model suites intact on independent hosts.
 // All other/future files remain in the recursively discovered remaining group.
@@ -37,8 +51,16 @@ export function groupAgentTestFiles(files: readonly string[]) {
       throw new Error(`Invalid canonical Agent test path: ${file}`);
     }
   }
-  const groups = AGENT_TEST_GROUPS.map((id) => ({ id, files: [] as string[] }));
+  const groups: Array<{ id: AgentTestGroup; files: string[] }> = AGENT_TEST_GROUPS.map((id) => ({ id, files: [] }));
+  const harness = new Map<string, AgentTestGroup>();
+  for (const [id, file] of Object.entries(AGENT_HARNESS_GROUP_FILES)) {
+    if (!files.includes(file)) continue;
+    harness.set(file, id as keyof typeof AGENT_HARNESS_GROUP_FILES);
+    groups.push({ id: id as keyof typeof AGENT_HARNESS_GROUP_FILES, files: [] });
+  }
   for (const file of [...files].sort()) {
+    const dedicated = harness.get(file);
+    if (dedicated) { groups.find(group => group.id === dedicated)!.files.push(file); continue; }
     const index = file.startsWith('src/test/e2e/') ? 0 : file === HEADLESS ? 1
       : file === MODEL_CATALOG ? 2 : file === MODEL_READINESS ? 3 : 4;
     groups[index]!.files.push(file);
