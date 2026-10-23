@@ -206,6 +206,16 @@ afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previous
         throw new Error(`Unexpected MCP tool call: ${qualifiedName}`);
       };
 
+      // Intake cases inspect one requested connector flow. The other cases
+      // retain the mixed catalog required by their cross-connector assertions.
+      if (surface === 'inboxIntake' || surface === 'draftIntake' || surface === 'calendarIntake') {
+        const serverName = surface === 'calendarIntake' ? 'caldav-agenda' : 'gmail-inbox';
+        const security = mcpApi.listServerSecurity;
+        const tools = mcpApi.listAllTools;
+        mcpApi.listServerSecurity = () => security().filter(server => server !== null && typeof server === 'object' && 'name' in server && server.name === serverName);
+        mcpApi.listAllTools = async () => (await tools()).filter(tool => tool.serverName === serverName);
+      }
+
       // Consumer controls use the declared saved-review contract. The executedRead
       // case separately exercises the actual confirmed MCP call and artifact writer.
       if (['briefing', 'compactBriefing', 'lane', 'queue', 'compactQueue', 'compactQueueOwnerChange'].includes(surface)) {
