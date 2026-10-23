@@ -65,7 +65,7 @@ function runText(wf: Workflow, jobName: string): string {
 type JobResult = 'success' | 'failure' | 'cancelled' | 'skipped';
 
 /** Evaluate the boolean/comparison subset used by the publication guards. */
-function permitsPublication(job: Job, results: Record<string, JobResult>, event: string, mode = 'release'): boolean {
+function permitsPublication(job: Job, results: Record<string, JobResult>, event: string, mode = 'release', publishNpm = true): boolean {
   const condition = String(job.if ?? 'true');
   const status = {
     always: true,
@@ -76,9 +76,9 @@ function permitsPublication(job: Job, results: Record<string, JobResult>, event:
   const hasStatus = /\b(?:always|success|failure|cancelled)\s*\(\)/.test(condition);
   const expression = condition
     .replace(/\b(always|success|failure|cancelled)\s*\(\)/g, (_, name: keyof typeof status) => String(status[name]))
-    .replace(/\b(github\.event_name|github\.event\.inputs\.mode|needs\.([\w-]+)\.result)\s*(==|!=)\s*'([^']*)'/g,
+    .replace(/\b(github\.event_name|github\.event\.inputs\.mode|vars\.PUBLISH_NPM|needs\.([\w-]+)\.result)\s*(==|!=)\s*'([^']*)'/g,
       (_, field: string, dependency: string | undefined, operator: string, expected: string) => {
-        const actual = dependency ? results[dependency] : field === 'github.event_name' ? event : mode;
+        const actual = dependency ? results[dependency] : field === 'github.event_name' ? event : field === 'vars.PUBLISH_NPM' ? String(publishNpm) : mode;
         return String(operator === '==' ? actual === expected : actual !== expected);
       });
   const tokens = expression.match(/true|false|&&|\|\||!|\(|\)/g) ?? [];
@@ -817,7 +817,7 @@ describe('release.yml: by-reference release', () => {
     expect(release.with).toEqual(expect.objectContaining({
       'artifact-name': 'native-release-assets',
       'assets-glob': 'dist/*',
-      'toolchain-spec': '@goodvibes-jev/engine@${{ needs.prepare-native-assets.outputs.version }}',
+      'toolchain-source': 'workspace',
     }));
     const list = steps(preparation);
     const guard = list.findIndex((step) => String(step.name) === 'Require the verified CI producer');
@@ -849,7 +849,7 @@ describe('release.yml: by-reference release', () => {
     for (const [target, prerequisite] of [
       ['publish-npm', 'verify-tag-version'],
       ['publish-npm', 'release-verify'],
-      ['prepare-native-assets', 'publish-npm'],
+      ['prepare-native-assets', 'verify-tag-version'],
       ['prepare-native-assets', 'release-verify'],
       ['github-release', 'publish-npm'],
       ['github-release', 'prepare-native-assets'],
@@ -864,6 +864,21 @@ describe('release.yml: by-reference release', () => {
           expect(permitsPublication(job, results, event), `${target} must block ${prerequisite}=${result}`).toBe(false);
         }
       }
+    }
+  });
+
+  test('native GitHub releases proceed without npm while explicit npm publishing remains gated', () => {
+    const npm = rel.jobs!['publish-npm']!, release = rel.jobs!['github-release']!, preparation = rel.jobs!['prepare-native-assets']!;
+    for (const event of ['push', 'workflow_dispatch']) {
+      expect(permitsPublication(npm, { 'verify-tag-version': 'success', 'release-verify': 'success' }, event, 'release', false)).toBe(false);
+      expect(permitsPublication(preparation, { 'verify-tag-version': 'success', 'release-verify': 'success' }, event, 'release', false)).toBe(true);
+      const results: Record<string, JobResult> = { 'publish-npm': 'skipped', 'prepare-native-assets': 'success' };
+      expect(permitsPublication(release, results, event, 'release', false)).toBe(true);
+      expect(permitsPublication(release, results, event, 'release', true)).toBe(false);
+      results['publish-npm'] = 'failure';
+      expect(permitsPublication(release, results, event, 'release', false)).toBe(false);
+      results['publish-npm'] = 'success'; results['prepare-native-assets'] = 'failure';
+      expect(permitsPublication(release, results, event, 'release', false)).toBe(false);
     }
   });
 

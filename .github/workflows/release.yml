@@ -123,6 +123,8 @@ jobs:
         run: bun run release:dry-run
 
   publish-npm:
+    # Registry publication is an explicit opt-in; native GitHub releases do
+    # not require npm credentials or a previously published engine package.
     # Registry writes and latest-tag alignment share one owner across versions.
     concurrency:
       group: sdk-npm-publish
@@ -132,6 +134,7 @@ jobs:
     needs: [verify-tag-version, release-verify]
     if: >-
       always() &&
+      vars.PUBLISH_NPM == 'true' &&
       (github.event_name == 'push' ||
        (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release')) &&
       needs.verify-tag-version.result == 'success' &&
@@ -234,9 +237,9 @@ jobs:
       always() &&
       (github.event_name == 'push' ||
        (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release')) &&
-      needs.publish-npm.result == 'success' &&
+      needs.verify-tag-version.result == 'success' &&
       needs.release-verify.result == 'success'
-    needs: [publish-npm, release-verify]
+    needs: [verify-tag-version, release-verify]
     runs-on: ubuntu-24.04
     timeout-minutes: 10
     permissions:
@@ -326,7 +329,8 @@ jobs:
       always() &&
       (github.event_name == 'push' ||
        (github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'release')) &&
-      needs.publish-npm.result == 'success' &&
+      (needs.publish-npm.result == 'success' ||
+       (vars.PUBLISH_NPM != 'true' && needs.publish-npm.result == 'skipped')) &&
       needs.prepare-native-assets.result == 'success'
     needs: [publish-npm, prepare-native-assets]
     permissions:
@@ -337,4 +341,4 @@ jobs:
       artifact-name: native-release-assets
       assets-glob: dist/*
       changelog-path: packages/engine/CHANGELOG.md
-      toolchain-spec: '@goodvibes-jev/engine@${{ needs.prepare-native-assets.outputs.version }}'
+      toolchain-source: workspace

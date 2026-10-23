@@ -16,6 +16,9 @@ use POSIX process management and filesystem behavior.
 - `CHANGELOG.md` must contain the release narrative for the package version.
 - Generated contracts and generated docs must match source.
 - Validation must pass before a release is cut.
+- Native releases publish verified binaries and checksums to GitHub without
+  npm access. Registry publishing runs only when the `PUBLISH_NPM` repository
+  variable is explicitly `true`; it requires its own valid npm credential.
 - The automatic release path only fires once the `RELEASE_ARMED` repository
   variable is deliberately set to `true`; leaving it unset holds every green
   push on `main` without tagging or publishing.
@@ -90,23 +93,18 @@ run.
    with **every job green**, using the toolchain `per-job-green` tool with a
    check-suites fallback. It reports the resolved run id and head SHA. This
    replaces the former 45-minute `validate-release` re-run.
-3. `publish-npm` requires both jobs above to be green. It asserts the
-   recorded head SHA equals the tagged SHA (the artifact-integrity handoff),
-   then downloads the push-CI run's build artifact by that run id instead of
-   rebuilding. It checks the registry state for this version, proceeding on
-   empty, complete, or a resumable partial, and refuses only when an
-   already-published package records a different commit than the one being
-   released. It publishes with provenance from the `production` environment,
-   polls propagation, and aligns the `latest` dist-tag across every published
-   package with `scripts/align-dist-tags.ts`, needed because a plain `npm
-   publish` moves `latest` to whatever it just published, which two
-   overlapping releases can leave pointing backward.
-4. `github-release` creates the GitHub release from the tagged
-   `CHANGELOG.md` excerpt once npm publication succeeds.
+3. `prepare-native-assets` restores the exact admitted workspace, TUI and
+   Daemon cohorts from that CI run. Native receipts, file modes, hashes and
+   source identity are checked before staging the GitHub assets.
+4. `github-release` hashes those assets with the checked-out workspace
+   toolchain and creates the release from the tagged changelog excerpt.
+   No published npm package is needed for this path.
+5. When `PUBLISH_NPM=true`, `publish-npm` additionally restores the admitted
+   build, checks registry state, publishes with provenance, verifies propagation
+   and aligns dist-tags. An explicitly enabled npm publication must succeed
+   before the GitHub release is created.
 
-Because tagging is gated on push-CI green either way, the tag-redo dance is
-structurally retired. The SDK release wall drops from ~45-70m to ~15-20m,
-dominated by the publish itself.
+Tagging remains gated on the exact commit's successful push-CI run.
 
 ## Validation scope
 
