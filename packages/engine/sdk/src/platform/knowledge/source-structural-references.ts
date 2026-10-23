@@ -6,6 +6,15 @@ import { captureOwnedJson } from '../gate/judgment-input.js';
 import { captureStrictJudgmentJson } from '../gate/judgment-result.js';
 import { knowledgeJudgmentRepresentation, knowledgeRecordVersion, sameKnowledgeRecord } from './store-record-representation.js';
 
+// Native registry lookups cannot be replaced by a later prototype override.
+const weakMapGet = WeakMap.prototype.get, weakMapSet = WeakMap.prototype.set, applyWeakMap = Reflect.apply;
+function readNativeReference<K extends object, V>(map: WeakMap<K, V>, key: K): V | undefined {
+  return applyWeakMap(weakMapGet, map, [key]) as V | undefined;
+}
+function writeNativeReference<K extends object, V>(map: WeakMap<K, V>, key: K, value: V): void {
+  applyWeakMap(weakMapSet, map, [key, value]);
+}
+
 interface SourceIdentity { readonly id: string; readonly canonicalUri: string; readonly sourceUri?: string | undefined; }
 interface ExtractionIdentity { readonly id: string; readonly sourceId: string; }
 const sourceIdentities = new WeakMap<KnowledgeSourceRecord, SourceIdentity & { readonly store: KnowledgeStore; readonly hash: string }>();
@@ -25,16 +34,16 @@ function fingerprint(value: unknown): string {
 export function registerGeneratedKnowledgeSourceReferences(store: KnowledgeStore, source: KnowledgeSourceRecord, generated: SourceIdentity): void {
   if (store.getSource(source.id) !== source || source.id !== generated.id || source.canonicalUri !== generated.canonicalUri
     || (generated.sourceUri !== undefined && source.sourceUri !== generated.sourceUri)) throw new KnowledgeGeneratedFactSupportHeldError('stale');
-  sourceIdentities.set(source, Object.freeze({ ...generated, store, hash: fingerprint(source) }));
+  writeNativeReference(sourceIdentities, source, Object.freeze({ ...generated, store, hash: fingerprint(source) }));
 }
 /** A derived extraction ID is registered only against an already known generated source identity. */
 export function registerGeneratedKnowledgeExtractionReferences(store: KnowledgeStore, source: KnowledgeSourceRecord, extraction: KnowledgeExtractionRecord, generatedId: string): void {
   if (currentSourceIdentity(source)?.store !== store) return;
   if (store.getSource(source.id) !== source || store.getExtractionBySourceId(source.id) !== extraction || extraction.id !== generatedId || extraction.sourceId !== source.id) throw new KnowledgeGeneratedFactSupportHeldError('stale');
-  extractionIdentities.set(extraction, Object.freeze({ id: generatedId, sourceId: source.id, store, hash: fingerprint(extraction) }));
+  writeNativeReference(extractionIdentities, extraction, Object.freeze({ id: generatedId, sourceId: source.id, store, hash: fingerprint(extraction) }));
 }
 function currentSourceIdentity(source: KnowledgeSourceRecord) {
-  const identity = sourceIdentities.get(source);
+  const identity = readNativeReference(sourceIdentities, source);
   if (identity && (identity.store.getSource(source.id) !== source || fingerprint(source) !== identity.hash)) throw new KnowledgeGeneratedFactSupportHeldError('stale');
   return identity;
 }
@@ -43,12 +52,12 @@ function currentSourceIdentity(source: KnowledgeSourceRecord) {
 export function retainKnowledgeNodeActivationReferences(store: KnowledgeStore, record: KnowledgeNodeRecord,
   evidence: readonly { readonly source: KnowledgeSourceRecord | null; readonly extraction: KnowledgeExtractionRecord | null }[],
   proofs: readonly (object | undefined)[]): void {
-  activationReferences.set(record, { store, original: captureOwnedJson(record),
+  writeNativeReference(activationReferences, record, { store, original: captureOwnedJson(record),
     evidence: evidence.map((entry, index) => ({ ...entry, proof: proofs[index] })) });
 }
 
 export function projectKnowledgeNodeActivationMetadata(store: KnowledgeStore, node: KnowledgeNodeRecord, metadata: unknown): unknown {
-  const known = activationReferences.get(node);
+  const known = readNativeReference(activationReferences, node);
   if (!known) return metadata;
   if (known.store !== store || store.getNode(node.id) !== node || !sameKnowledgeRecord(known.original, node)) throw new KnowledgeGeneratedFactSupportHeldError('stale');
   if (!metadata || typeof metadata !== 'object' || Array.isArray(metadata)) return metadata;
@@ -118,11 +127,11 @@ export function knowledgeSourceJudgmentUris(source: KnowledgeSourceRecord) {
 export function withKnowledgeSourceAnswerAliases(source: KnowledgeSourceRecord): KnowledgeSourceRecord {
   const identity = currentSourceIdentity(source);
   const result = { ...source, sourceId: source.id, url: source.sourceUri ?? source.canonicalUri };
-  if (identity) answerAliases.set(result, { original: source, hash: fingerprint(result) });
+  if (identity) writeNativeReference(answerAliases, result, { original: source, hash: fingerprint(result) });
   return result;
 }
 export function restoreKnowledgeSourceAnswerAliases(store: KnowledgeStore, source: KnowledgeSourceRecord): KnowledgeSourceRecord {
-  const known = answerAliases.get(source);
+  const known = readNativeReference(answerAliases, source);
   if (!known) return source;
   const identity = currentSourceIdentity(known.original);
   if (!identity || identity.store !== store || fingerprint(source) !== known.hash) {
@@ -133,22 +142,22 @@ export function restoreKnowledgeSourceAnswerAliases(store: KnowledgeStore, sourc
 /** Capture from actual current store records. The opaque proof is never serialized or recovered from JSON. */
 export function captureKnowledgeSourceReferences(store: KnowledgeStore, source: KnowledgeSourceRecord | null, extraction: KnowledgeExtractionRecord | null): object | undefined {
   if (!source) return undefined;
-  const identity = sourceIdentities.get(source);
+  const identity = readNativeReference(sourceIdentities, source);
   if (!identity || identity.store !== store || store.getSource(source.id) !== source
     || store.getExtractionBySourceId(source.id) !== extraction) return undefined;
   currentSourceIdentity(source);
   if (extraction && extraction.sourceId !== source.id) throw new KnowledgeGeneratedFactSupportHeldError('stale');
   const proof = Object.freeze({});
-  const extractionIdentity = extraction ? extractionIdentities.get(extraction) : undefined;
+  const extractionIdentity = extraction ? readNativeReference(extractionIdentities, extraction) : undefined;
   if (extractionIdentity && (extractionIdentity.store !== store || fingerprint(extraction) !== extractionIdentity.hash)) throw new KnowledgeGeneratedFactSupportHeldError('stale');
-  projections.set(proof, { store, source: identity, sourceRecord: source, sourceHash: fingerprint(source),
+  writeNativeReference(projections, proof, { store, source: identity, sourceRecord: source, sourceHash: fingerprint(source),
     extractionRecord: extraction, extractionHash: fingerprint(extraction),
     extraction: extractionIdentity?.store === store ? extractionIdentity : undefined });
   return proof;
 }
 /** Read-set guards still bind full records; this proof concerns structural reference fields only. */
 export function projectKnowledgeSourceReferences(source: KnowledgeSourceRecord, extraction: KnowledgeExtractionRecord | null | undefined, proof: object | undefined) {
-  const known = proof ? projections.get(proof) : undefined;
+  const known = proof ? readNativeReference(projections, proof) : undefined;
   if (!known) return undefined;
   if (known.store.getSource(known.source.id) !== known.sourceRecord
     || known.store.getExtractionBySourceId(known.source.id) !== known.extractionRecord
