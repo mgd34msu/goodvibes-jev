@@ -14,6 +14,90 @@ function runGit(cwd: string, args: string[]): string {
 }
 
 describe('AgentWorktree', () => {
+  test('a scoped no-op leaves unrelated staged work pending', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-worktree-scoped-noop-'));
+    runGit(root, ['init']);
+    runGit(root, ['config', 'user.name', 'Native fixture']);
+    runGit(root, ['config', 'user.email', 'native-fixture@example.test']);
+    writeFileSync(join(root, 'target.ts'), 'original\n');
+    runGit(root, ['add', 'target.ts']); runGit(root, ['commit', '-m', 'baseline']);
+    writeFileSync(join(root, 'owner.ts'), 'owner staged\n'); runGit(root, ['add', 'owner.ts']);
+    const head = runGit(root, ['rev-parse', 'HEAD']), entries = runGit(root, ['ls-files', '--stage']);
+    expect((await new AgentWorktree(root).commitWorkingTree('No scoped changes', ['target.ts'])).hash).toBeNull();
+    expect(runGit(root, ['rev-parse', 'HEAD'])).toBe(head);
+    expect(runGit(root, ['ls-files', '--stage'])).toBe(entries);
+  });
+
+  test('a scoped initial commit excludes pre-existing staged owner files', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-worktree-initial-index-'));
+    runGit(root, ['init']);
+    runGit(root, ['config', 'user.name', 'Native fixture']);
+    runGit(root, ['config', 'user.email', 'native-fixture@example.test']);
+    writeFileSync(join(root, 'owner.ts'), 'owner staged\n'); runGit(root, ['add', 'owner.ts']);
+    writeFileSync(join(root, 'target.ts'), 'working result\n');
+    const result = await new AgentWorktree(root).commitWorkingTree('Initial scoped result', ['target.ts']);
+    expect(result.hash).toMatch(/^[0-9a-f]{40}$/);
+    expect(runGit(root, ['ls-tree', '--name-only', 'HEAD'])).toBe('target.ts\n');
+    expect(runGit(root, ['diff', '--cached', '--name-only'])).toBe('owner.ts\n');
+  });
+
+  test('failed commit does not roll back a newer owner index installed during the attempt', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-worktree-newer-index-'));
+    runGit(root, ['init']);
+    runGit(root, ['config', 'user.name', 'Native fixture']);
+    runGit(root, ['config', 'user.email', 'native-fixture@example.test']);
+    writeFileSync(join(root, 'target.ts'), 'original\n');
+    runGit(root, ['add', 'target.ts']); runGit(root, ['commit', '-m', 'baseline']);
+    const head = runGit(root, ['rev-parse', 'HEAD']);
+    const newerPath = join(root, '.git/new-owner-index');
+    writeFileSync(newerPath, readFileSync(join(root, '.git/index')));
+    writeFileSync(join(root, 'target.ts'), 'new owner staging\n');
+    const prepared = Bun.spawnSync(['git', 'add', 'target.ts'], { cwd: root, env: { ...process.env, GIT_INDEX_FILE: newerPath } });
+    if (prepared.exitCode !== 0) throw new Error('Could not prepare newer native index');
+    const newer = readFileSync(newerPath);
+    writeFileSync(join(root, 'target.ts'), 'working result\n');
+    const hook = join(root, '.git/hooks/pre-commit');
+    writeFileSync(hook, '#!/bin/sh\ncp .git/new-owner-index .git/index\nexit 1\n');
+    if (Bun.spawnSync(['chmod', '+x', hook]).exitCode !== 0) throw new Error('Could not set fixture hook mode');
+    await expect(new AgentWorktree(root).commitWorkingTree('Rejected commit with owner drift', ['target.ts'])).rejects.toThrow();
+    expect(readFileSync(join(root, '.git/index'))).toEqual(newer);
+    expect(runGit(root, ['rev-parse', 'HEAD'])).toBe(head);
+    expect(readFileSync(join(root, 'target.ts'), 'utf8')).toBe('working result\n');
+    expect(existsSync(join(root, '.git/index.lock'))).toBe(false);
+  });
+
+  test.each([false, true])('a scoped commit preserves owner staging outside its paths (rejected: %s)', async rejected => {
+    const root = mkdtempSync(join(tmpdir(), 'agent-worktree-owner-index-'));
+    runGit(root, ['init']);
+    runGit(root, ['config', 'user.name', 'Native fixture']);
+    runGit(root, ['config', 'user.email', 'native-fixture@example.test']);
+    for (const file of ['target.ts', 'owner.ts']) writeFileSync(join(root, file), 'original\n');
+    runGit(root, ['add', '.']); runGit(root, ['commit', '-m', 'baseline']);
+    writeFileSync(join(root, 'owner.ts'), 'owner staged\n'); runGit(root, ['add', 'owner.ts']);
+    writeFileSync(join(root, 'owner.ts'), 'owner unstaged\n');
+    writeFileSync(join(root, 'target.ts'), 'target staged\n'); runGit(root, ['add', 'target.ts']);
+    writeFileSync(join(root, 'target.ts'), 'target working\n');
+    const originalHead = runGit(root, ['rev-parse', 'HEAD']);
+    const ownerPatch = runGit(root, ['diff', '--cached', '--binary', '--', 'owner.ts']);
+    const originalEntries = runGit(root, ['ls-files', '--stage']);
+    if (rejected) {
+      const hook = join(root, '.git/hooks/pre-commit');
+      writeFileSync(hook, '#!/bin/sh\nexit 1\n');
+      if (Bun.spawnSync(['chmod', '+x', hook]).exitCode !== 0) throw new Error('Could not set fixture hook mode');
+      await expect(new AgentWorktree(root).commitWorkingTree('Rejected scoped commit', ['target.ts'])).rejects.toThrow();
+      expect(runGit(root, ['rev-parse', 'HEAD'])).toBe(originalHead);
+      expect(runGit(root, ['ls-files', '--stage'])).toBe(originalEntries);
+    } else {
+      const result = await new AgentWorktree(root).commitWorkingTree('Accepted scoped commit', ['target.ts']);
+      expect(result.hash).toMatch(/^[0-9a-f]{40}$/);
+      expect(runGit(root, ['show', 'HEAD:owner.ts'])).toBe('original\n');
+      expect(runGit(root, ['show', 'HEAD:target.ts'])).toBe('target working\n');
+    }
+    expect(runGit(root, ['diff', '--cached', '--binary', '--', 'owner.ts'])).toBe(ownerPatch);
+    expect(readFileSync(join(root, 'owner.ts'), 'utf8')).toBe('owner unstaged\n');
+    expect(readFileSync(join(root, 'target.ts'), 'utf8')).toBe('target working\n');
+  });
+
   for (const ignored of [false, true]) test(`commitWorkingTree commits project changes without staging GoodVibes internal state (ignored=${ignored})`, async () => {
     const root = mkdtempSync(join(tmpdir(), 'agent-worktree-'));
     runGit(root, ['init']);

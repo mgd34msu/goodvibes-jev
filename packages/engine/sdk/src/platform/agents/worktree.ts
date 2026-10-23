@@ -1,10 +1,8 @@
-import { existsSync } from 'fs';
-import { join } from 'path';
+import { closeSync, existsSync, openSync, readFileSync, renameSync, rmSync, writeFileSync } from 'fs';
+import { join, resolve } from 'path';
 // `simple-git` is an optionalDependency and is built through
 // git/optional-simple-git.ts at the call that needs it, never imported at
-// module init. The type import below is erased. See
-// utils/optional-dependency.ts.
-import type { SimpleGit } from 'simple-git';
+// module init. See utils/optional-dependency.ts.
 import { createSimpleGit } from '../git/optional-simple-git.js';
 import { GitService } from '../git/service.js';
 import { logger } from '../utils/logger.js';
@@ -23,6 +21,13 @@ export interface CommitWorkingTreeResult {
   readonly hash: string | null;
   readonly skippedIgnored: readonly string[];
 }
+
+function readIndex(path: string): Buffer | null {
+  try { return readFileSync(path); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return null; throw error; }
+}
+
+const sameIndex = (left: Buffer | null, right: Buffer | null) => left === null ? right === null : right !== null && left.equals(right);
 
 /**
  * AgentWorktree, Manages git worktree lifecycle for spawned agents.
@@ -109,8 +114,8 @@ export class AgentWorktree {
    *    `git add -A -- <ignored>` exits non-zero ("paths are ignored") AFTER staging its valid
    *    siblings, so a single ignored path in the ledger would both fail the whole batch and
    *    leave the real deliverables staged in the user's index.
-   * On any commit failure the staged paths are reset so the caller's index is never left mutated
-   * by a commit that could not complete. Omit (or pass an empty array) to keep the legacy
+   * On commit failure the original index is restored only while it still belongs
+   * to this staging attempt. Omit (or pass an empty array) to keep the legacy
    * `git add --all` sweep for back-compat.
    */
   async commitWorkingTree(message: string, paths?: string[]): Promise<CommitWorkingTreeResult> {
@@ -178,10 +183,17 @@ export class AgentWorktree {
       addFlag = '--all';
     }
 
+    const indexPath = resolve(this.git.getCwd(), (await git.raw(['rev-parse', '--git-path', 'index'])).trim());
+    const originalIndex = readIndex(indexPath), originalHead = await this.currentHead();
+    let stagedIndex: Buffer | undefined;
     try {
       await git.raw(['add', addFlag, '--', ...stagedPathspecs]);
+      const observedIndex = readIndex(indexPath);
+      if (observedIndex === null) throw new Error('Index disappeared after staging');
+      stagedIndex = observedIndex;
       const result = await this.git.commit(message, {
         fallbackIdentity: { name: 'GoodVibes', email: 'goodvibes@local' },
+        paths: stagedPathspecs,
       });
       if (result.hash) {
         logger.debug('AgentWorktree.commitWorkingTree: committed direct working tree changes', {
@@ -194,7 +206,7 @@ export class AgentWorktree {
       // rather than throwing. Distinguish that from a genuine no-op: if changes are still staged,
       // a hook/verification step rejected the commit, throw so the catch below restores the index
       // and the caller can report an honest warning. If nothing is staged, it was a true no-op.
-      const stagedAfter = (await git.raw(['diff', '--cached', '--name-only'])).trim();
+      const stagedAfter = (await git.raw(['diff', '--cached', '--name-only', '--', ...stagedPathspecs])).trim();
       if (stagedAfter.length > 0) {
         throw new Error('git created no commit despite staged changes (a pre-commit hook or verification step likely rejected the commit)');
       }
@@ -208,25 +220,41 @@ export class AgentWorktree {
       }
       // Any other failure (rejected add, rejected commit, hook/identity/disk error) must not leave
       // the caller's staging area mutated by a commit we could not complete, restore what we staged.
-      await this._restoreIndex(git, stagedPathspecs);
+      if (stagedIndex !== undefined) await this._restoreIndex(indexPath, originalIndex, stagedIndex, originalHead);
+      else logger.warn('AgentWorktree.commitWorkingTree: staging did not establish an owned index; preserving its current contents');
       throw error;
     }
   }
 
   /**
-   * Unstage the given pathspecs after a failed commit so the caller's index is returned to its
-   * pre-commit state. `git reset -- <pathspecs>` is safe on a repo with no HEAD yet (a brand-new
-   * repo whose first commit was the one that just failed). Best-effort: a reset failure is logged,
-   * not thrown, so it never masks the original commit error the caller needs to see.
+   * Restore the exact original index, including partial staging and index flags.
+   * A hook, concurrent Git operation or completed commit may retire our source;
+   * never overwrite its newer index. Use Git's native lock before replacing it.
+   * Rollback failure must not mask the original commit error.
    */
-  private async _restoreIndex(git: SimpleGit, pathspecs: string[]): Promise<void> {
+  private async _restoreIndex(path: string, original: Buffer | null, staged: Buffer | null, head: string | null): Promise<void> {
+    let lock: number | undefined;
+    let ownsLock = false;
     try {
-      await git.raw(['reset', '--', ...pathspecs]);
-      logger.debug('AgentWorktree.commitWorkingTree: restored index after failed commit', { pathspecs });
+      if (await this.currentHead() !== head) throw new Error('HEAD changed during the commit attempt');
+      lock = openSync(`${path}.lock`, 'wx', 0o600);
+      ownsLock = true;
+      if (!sameIndex(readIndex(path), staged)) throw new Error('Index changed after this staging attempt');
+      if (original === null) rmSync(path, { force: true });
+      else {
+        writeFileSync(lock, original);
+        closeSync(lock); lock = undefined;
+        renameSync(`${path}.lock`, path);
+        ownsLock = false;
+      }
+      logger.debug('AgentWorktree.commitWorkingTree: restored original index after failed commit');
     } catch (err) {
       logger.warn('AgentWorktree.commitWorkingTree: index restore after failed commit did not complete', {
         error: summarizeError(err),
       });
+    } finally {
+      if (lock !== undefined) closeSync(lock);
+      if (ownsLock) rmSync(`${path}.lock`, { force: true });
     }
   }
 

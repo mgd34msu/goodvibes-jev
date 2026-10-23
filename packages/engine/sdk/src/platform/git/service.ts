@@ -300,6 +300,8 @@ export class GitService {
     options?: {
       amend?: boolean;
       noVerify?: boolean;
+      /** Commit only these working-tree paths, preserving unrelated staging. */
+      paths?: readonly string[];
       fallbackIdentity?: { name: string; email: string } | undefined;
     },
   ): Promise<{ hash: string; summary: string }> {
@@ -308,6 +310,7 @@ export class GitService {
       const flags: string[] = [];
       if (options?.amend) flags.push('--amend');
       if (options?.noVerify) flags.push('--no-verify');
+      if (options?.paths?.length) flags.push('--only', '--', ...options.paths);
 
       let commitGit = await this.git();
       if (options?.fallbackIdentity) {
