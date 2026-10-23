@@ -5,6 +5,7 @@ import conversationRoute from '../fixtures/e2e-judgments/conversation-route.json
 import modelIdentity from '../fixtures/e2e-judgments/model-identity.json';
 import modelTier from '../fixtures/e2e-judgments/model-tier.json';
 import turnQuestions from '../fixtures/e2e-judgments/turn-questions.json';
+import { createHash } from 'node:crypto';
 import unavailableModelRoutes from '../fixtures/e2e-judgments/unavailable-model-routes.json';
 import cancelledTurnTimings from '../fixtures/e2e-judgments/cancelled-turn-timings.json';
 import cancelledTurnPending from '../fixtures/e2e-judgments/cancelled-turn-pending.json';
@@ -19,6 +20,18 @@ const prompts = ['first words in a brand new workspace', 'please answer the e2e 
 export const tuiCompletionNotice = { role: 'system', content: '[Daemon] Web surface ready: http://127.0.0.1:3423, serving this machine only until web.hostMode is widened' };
 const stable = (value: unknown): string => JSON.stringify(value, (_key, entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
   ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a.localeCompare(b))) : entry);
+const nativeDispatchNotices = [
+  { role: 'system', content: 'Native converse decision recorded; original turn dispatch claimed.' },
+  { role: 'system', content: 'requestId 00000000-0000-4000-8000-000000000001 · inputId 00000000-0000-4000-8000-000000000002' },
+];
+function completionShape(value: unknown): string {
+  const identities = new Map<string, string>();
+  const uuid = '[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}';
+  return stable(value).replace(new RegExp(`"requestId ${uuid} · inputId ${uuid}"`, 'g'), text => text.replace(new RegExp(uuid, 'g'), id => {
+    if (!identities.has(id)) identities.set(id, `<native-dispatch-${identities.size}>`);
+    return identities.get(id)!;
+  }));
+}
 
 /**
  * Replace only host-generated SHA-256 protocol identities, retaining their
@@ -151,7 +164,7 @@ export function startE2EJudgments(options: { readonly ownedRoot?: string } = {})
       acceptedDiagnostics.push({ kind: diagnostic.kind, body });
       return Response.json({ model: 'jev-1.13.0', answers: diagnostic.answers, usage: { input_tokens: 10, output_tokens: 3 } });
     }
-    const reading = expectedCompletions.has(stable(body))
+    const reading = expectedCompletions.has(completionShape(body))
       ? { kind: 'headless-completion', answers: completionAnswers }
       : e2eJudgmentAnswers(body, options.ownedRoot);
     if (!reading) {
@@ -172,19 +185,28 @@ export function startE2EJudgments(options: { readonly ownedRoot?: string } = {})
     expectTextOnlyCompletion(request: string, response: string, product: 'agent' | 'tui' = 'agent') {
       const transcript = [{ role: 'user', content: request }];
       const questions = structuredClone(headlessCompletion.questions);
-      // The recorded native target adapter embeds only short answer literals.
-      // Large answers remain complete in state.response, without an embedded
-      // short-answer binding copied from this captured fixture.
-      if (response.length > 4_000) for (const question of Object.values(questions)) {
-        Reflect.deleteProperty(question.instructions.nativeTargets, 'proposedAnswer');
+      // Match the native target adapter for this exact authored task and reply.
+      // Never retain the captured marmot task's targets for a different case.
+      const target = (text: string) => ({ text, digest: createHash('sha256').update(JSON.stringify(text))
+        .digest('hex').replace(/\d/g, digit => 'ghijklmnop'[Number(digit)]!) });
+      for (const question of Object.values(questions)) {
+        const targets = question.instructions.nativeTargets;
+        if (response.length <= 4_000) targets.proposedAnswer = target(response);
+        else Reflect.deleteProperty(targets, 'proposedAnswer');
+        if (request.length <= 4_000) targets.currentUserRequest = target(request);
+        else Reflect.deleteProperty(targets, 'currentUserRequest');
       }
       const completion = { ...headlessCompletion, questions, state: { ...headlessCompletion.state,
         request, response, transcript, tools: product === 'tui' ? tuiCompletionTools : headlessCompletion.state.tools,
         requirements: { ...headlessCompletion.state.requirements, originalTask: request },
         initial: { request, transcript },
       } };
-      expectedCompletions.add(stable(completion));
-      if (product === 'tui') expectedCompletions.add(stable({ ...completion,
+      expectedCompletions.add(completionShape(completion));
+      const nativeTranscript = [...nativeDispatchNotices, ...transcript];
+      expectedCompletions.add(completionShape({ ...completion, state: { ...completion.state,
+        transcript: nativeTranscript, initial: { request, transcript: nativeTranscript },
+      } }));
+      if (product === 'tui') expectedCompletions.add(completionShape({ ...completion,
         state: { ...completion.state, transcript: [...transcript, tuiCompletionNotice] } }));
     },
     rejectRecordedCancellationTimings() { rejectCancellationTimings = true; },

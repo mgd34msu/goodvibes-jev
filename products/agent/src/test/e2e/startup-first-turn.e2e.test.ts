@@ -46,6 +46,7 @@ afterAll(() => model.stop());
 describe('main screen and first turn', () => {
   test('startup draws the main screen, and a typed prompt is answered on it', async () => {
     home = await makeHome(model);
+    home.judgments.expectTextOnlyCompletion(PROMPT, REPLY);
     host = await startE2ENativeHost(home);
     agent = launchAgent(home, { cols: 100, rows: 30, env: host.env });
 

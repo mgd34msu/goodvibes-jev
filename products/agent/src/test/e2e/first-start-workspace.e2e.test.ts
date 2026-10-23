@@ -44,6 +44,7 @@ afterAll(async () => { await agent?.stop(); try { await host?.stop(); } finally 
 describe('first start in a new workspace', () => {
   test('the workspace question is drawn, and the first typed prompt reaches the conversation whole', async () => {
     home = await makeHome(model);
+    home.judgments.expectTextOnlyCompletion(PROMPT, REPLY);
     host = await startE2ENativeHost(home);
     agent = launchAgent(home, { cols: 100, rows: 30, env: host.env });
     await agent.waitForScreen('the main screen', inputAreaVisible, 45_000);

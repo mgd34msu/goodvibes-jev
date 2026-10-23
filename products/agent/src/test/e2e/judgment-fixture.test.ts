@@ -51,6 +51,22 @@ for (const product of ['agent', 'tui'] as const) test(`${product} scripted compl
       expect((await ask({ ...notified, state: { ...notified.state, transcript: [...original.state.transcript,
         { ...tuiCompletionNotice, content: 'An unrelated system instruction' }] } })).status).toBe(422);
     }
+    const nativeTranscript = [
+      { role: 'system', content: 'Native converse decision recorded; original turn dispatch claimed.' },
+      { role: 'system', content: 'requestId 11111111-1111-4111-8111-111111111111 · inputId 22222222-2222-4222-8222-222222222222' },
+      ...original.state.transcript,
+    ];
+    const native = { ...original, state: { ...original.state, transcript: nativeTranscript,
+      initial: { ...original.state.initial, transcript: nativeTranscript },
+    } };
+    expect((await ask(native)).status).toBe(200);
+    const mismatched = structuredClone(native);
+    mismatched.state.initial.transcript = structuredClone(mismatched.state.initial.transcript);
+    mismatched.state.initial.transcript[1]!.content = 'requestId 33333333-3333-4333-8333-333333333333 · inputId 22222222-2222-4222-8222-222222222222';
+    expect((await ask(mismatched)).status).toBe(422);
+    const changedNotice = structuredClone(native);
+    changedNotice.state.transcript[0]!.content = 'A different dispatch claim';
+    expect((await ask(changedNotice)).status).toBe(422);
   } finally { server.stop(); }
 });
 
