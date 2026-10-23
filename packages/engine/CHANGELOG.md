@@ -4,6 +4,12 @@
 
 ### Fixed
 
+- Recover bounded private SQLite allocation collisions without treating a healthy persisted database as corrupt.
+
+- Cancel and drain Home Graph ingest enrichment before foreground publication, reset, or shutdown, retaining pending work for later enrichment.
+
+- Preserve compiler output and termination diagnostics when native builds fail. Check consumer API compatibility without pinning private implementation fields.
+
 - Keep amendment and repair planners in the host's checked proposal path,
   reject circular or inseparable derived unit criteria before execution, and
   explain that the host invokes acceptance automatically. Retain held review

@@ -4,6 +4,10 @@ Product-facing release notes for GoodVibes Agent.
 
 ## Unreleased
 
+- Require validated runtime evidence for advertised process capabilities; method names alone no longer establish PTY or stdin contracts.
+
+- Interpret ambiguous privilege-command text through the protected Jev reader, so printing a program name does not block an ordinary background command. Literal privileged programs and independent execution admission retain their existing restrictions.
+
 - Route remote owner conversation through durable original-source native intake
   and identity-only hosted delivery. Preserve daemon-owned continuation context,
   exact recovery and Stop targets, and fail closed on unknown outcomes without
