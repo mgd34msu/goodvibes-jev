@@ -197,12 +197,16 @@ describe('cost quote provenance', () => {
     expect(tracker.agents()[0]).toMatchObject({ cost: 1, priced: true, pricingSource: 'user', pricingAsOf: undefined });
   });
 
-  test('real free pricing differs from unknown and preserves the explicit free-tier convention', () => {
+  test('a published free quote differs from unknown and an owner price overrides it', () => {
     setModelPricingResolver(() => ({ status: 'unknown' }));
     expect(resolveSessionCost(1_000_000, 0, 0, 0, 'cost-tracker-terminal:absent')).toMatchObject({ cost: 0, priced: false });
-    setModelPricingResolver(() => ({ status: 'priced', source: 'user', rates: { inputPerMTok: 9, outputPerMTok: 9 } }));
+    setModelPricingResolver(model => model === 'fixture:free'
+      ? { status: 'priced', source: 'catalog', rates: { inputPerMTok: 0, outputPerMTok: 0 } }
+      : { status: 'unknown' });
     expect(resolveSessionCost(1_000_000, 0, 0, 0, 'fixture:free')).toEqual({ cost: 0, priced: true, source: 'catalog' });
     expect(calcSessionCost(1_000_000, 0, 0, 0, 'fixture:free')).toBe(0);
+    setModelPricingResolver(() => ({ status: 'priced', source: 'user', rates: { inputPerMTok: 9, outputPerMTok: 9 } }));
+    expect(resolveSessionCost(1_000_000, 0, 0, 0, 'fixture:free')).toEqual({ cost: 9, priced: true, source: 'user' });
   });
 
   test('unpriced lifetime usage remains visible after its detail row is evicted', () => {
@@ -213,6 +217,9 @@ describe('cost quote provenance', () => {
     expect(tracker.agents()).toHaveLength(0);
     expect(tracker.agentsCost()).toBe(0);
     expect(tracker.hasUnpricedAgentUsage()).toBe(true);
+    setModelPricingResolver(model => model === 'fixture:free'
+      ? { status: 'priced', source: 'catalog', rates: { inputPerMTok: 0, outputPerMTok: 0 } }
+      : { status: 'unknown' });
     const free = new CostTracker({ maxAgents: 0, getAgentStatus: (id) => ({ ...record(id), model: 'fixture:free' }) });
     free.agentSpawned('free', 'Free price');
     free.agentCompleted('free');
