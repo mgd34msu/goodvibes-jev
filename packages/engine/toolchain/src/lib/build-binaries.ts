@@ -9,7 +9,7 @@
  * cross-target miss triggers an `npm pack` + `tar` fetch.
  */
 
-import type { Exec, Logger } from './effects.js';
+import type { Exec, ExecResult, Logger } from './effects.js';
 import { realExec, consoleLogger } from './effects.js';
 import type { BinaryTarget, BuildConfig } from '../config.js';
 import { describeMissingRequired, resolveOptionalExternals, type DependencyManifest } from './optional-externals.js';
@@ -89,6 +89,11 @@ export interface RunBuildOptions {
   readonly logger?: Logger;
 }
 
+function compileFailure(leg: string, result: ExecResult): string {
+  const output = [result.stderr, result.stdout].map(text => text.trim()).filter(Boolean).join('\n');
+  return `${leg} compile failed (${result.status})${output ? `\n${output}` : ''}`;
+}
+
 /** Compile the selected targets. Returns one outcome per target. */
 export function runBuildBinaries(options: RunBuildOptions): BuildOutcome[] {
   const exec = options.exec ?? realExec;
@@ -143,7 +148,7 @@ export function runBuildBinaries(options: RunBuildOptions): BuildOutcome[] {
       const outfile = `${config.outDir}/${target.appArtifact}`;
       const args = buildCompileArgs(config.appEntrypoint, target.bunTarget, outfile, externals);
       const res = exec(compiler, config.compileDriver ? [config.compileDriver, ...args.slice(1)] : args, { cwd });
-      if (res.status !== 0) { ok = false; detail = `app compile failed (${res.status})`; }
+      if (res.status !== 0) { ok = false; detail = compileFailure('app', res); }
       else artifacts.push(target.appArtifact);
     }
 
@@ -151,7 +156,7 @@ export function runBuildBinaries(options: RunBuildOptions): BuildOutcome[] {
       const outfile = `${config.outDir}/${target.daemonArtifact}`;
       const args = buildCompileArgs(config.daemonEntrypoint, target.bunTarget, outfile, externals);
       const res = exec(compiler, config.compileDriver ? [config.compileDriver, ...args.slice(1)] : args, { cwd });
-      if (res.status !== 0) { ok = false; detail = `daemon compile failed (${res.status})`; }
+      if (res.status !== 0) { ok = false; detail = compileFailure('daemon', res); }
       else artifacts.push(target.daemonArtifact);
     }
 

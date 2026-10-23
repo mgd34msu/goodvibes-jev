@@ -59,9 +59,11 @@ export const realExec: Exec = (command, args, options = {}) => {
       timeout: options.timeoutMs,
       killSignal: 'SIGKILL',
     });
-    return { status: result.error ? 1 : result.status ?? 1, stdout: result.stdout ?? '', stderr: result.stderr ?? '' };
-  } catch {
-    return { status: 1, stdout: '', stderr: '' };
+    const stderr = [result.stderr ?? '', result.error?.message ?? '',
+      result.signal ? `Process terminated by ${result.signal}.` : ''].filter(Boolean).join('\n');
+    return { status: result.error ? 1 : result.status ?? 1, stdout: result.stdout ?? '', stderr };
+  } catch (error) {
+    return { status: 1, stdout: '', stderr: error instanceof Error ? error.message : 'The process could not be launched.' };
   }
 };
 

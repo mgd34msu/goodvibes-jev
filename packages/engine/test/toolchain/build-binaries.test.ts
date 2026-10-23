@@ -333,3 +333,33 @@ describe('the screened compile survives a genuinely absent optional package', ()
     expect(`${built.stderr}${built.stdout}`).toContain('Could not resolve');
   });
 });
+
+for (const failure of ['app', 'daemon', 'signal'] as const) {
+  test(`a real ${failure} compiler failure retains diagnostics and stops artifact preparation`, () => {
+    const root = mkdtempSync(join(tmpdir(), 'gv-compiler-failure-'));
+    const failEntry = failure === 'daemon' ? 'daemon.ts' : 'app.ts';
+    const driver = join(root, 'compile.ts');
+    writeFileSync(driver, `import { writeSync } from 'node:fs';
+      if (process.argv[2] !== ${JSON.stringify(failEntry)}) process.exit(0);
+      writeSync(1, 'compiler stdout diagnostic\\n');
+      writeSync(2, 'compiler stderr diagnostic\\n');
+      ${failure === 'signal' ? "process.kill(process.pid, 'SIGTERM');" : 'process.exit(7);'}
+    `);
+    let prepared = false;
+    const logger = captureLogger();
+    try {
+      const outcomes = runBuildBinaries({
+        cwd: root, config: { ...build, appEntrypoint: 'app.ts', daemonEntrypoint: 'daemon.ts', compileDriver: driver, prebuild: [] },
+        selection: { targets: [build.targets[0]!], daemonOnly: false }, nativeKey: 'linux-x64', logger,
+        provideAddon: () => { prepared = true; return true; },
+      });
+      expect(outcomes[0]?.ok).toBe(false);
+      expect(prepared).toBe(false);
+      expect(logger.lines.join('\n')).toContain('compiler stdout diagnostic');
+      expect(logger.lines.join('\n')).toContain('compiler stderr diagnostic');
+      expect(outcomes[0]?.detail).toContain(`${failure === 'daemon' ? 'daemon' : 'app'} compile failed`);
+      if (failure === 'signal') expect(outcomes[0]?.detail).toContain('SIGTERM');
+      else expect(outcomes[0]?.detail).toContain('(7)');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+}
