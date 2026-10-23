@@ -172,10 +172,10 @@ function buildSettingContext(modal: SettingsModal, entry: SettingEntry): string[
   else if (entry.locked) lines.push(`Locked: ${entry.lockReason ?? 'This setting is locked by a higher-priority layer.'}`);
   if (entry.conflict) lines.push(`Conflict: inspect with /settings and resolve host-owned sync state in the owning host.`);
 
-  lines.push('', entry.setting.description);
   if (entry.setting.key === 'permissions.mode') {
-    lines.push('', 'These preset summaries assume behavior.autoApprove is off. When enabled, it takes precedence; boundary checks still apply.');
-  }
+    lines.push('', 'Choose the configured action policy. Permitted actions run automatically; Plan mode restricts work to reads, and Custom rules can deny specific tools.',
+      'behavior.autoApprove does not override configured denials, read-only modes or surface authority.');
+  } else lines.push('', entry.setting.description);
 
   if (
     entry.setting.key === 'ui.systemMessages'

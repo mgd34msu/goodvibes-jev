@@ -1,6 +1,5 @@
 import { isAutoApproveEnabled } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
-import { presetForMode } from '@goodvibes-jev/engine/sdk/platform/gate';
 
 /** Configuration descriptions shared by status, doctor, policy explanation and the footer.
  * Ordinary permitted calls proceed automatically; configured denials, read-only
@@ -53,7 +52,6 @@ function normalizeMode(mode: unknown): 'prompt' | 'allow-all' | 'custom' | 'plan
  */
 export function computeApprovalPosture(input: ApprovalPostureInput): ApprovalPosture {
   const mode = normalizeMode(input.mode);
-  const preset = presetForMode(mode);
   const configuredDenial = mode === 'custom' && Object.values(input.customTools ?? {}).some(value => value === 'deny');
   const labels = {
     prompt: 'Automatic configured actions',
@@ -68,7 +66,7 @@ export function computeApprovalPosture(input: ApprovalPostureInput): ApprovalPos
     automaticApprovals: mode !== 'plan' && !configuredDenial,
     bypassesPrompts: false,
     label: `${input.autoApprove ? 'Auto-approve ON, ' : ''}${labels[mode]}`,
-    detail: `permissions.mode is ${mode}: ${preset.summary} Configured denials, read-only modes and surface authority still apply. Calls require current invocation authority.`,
+    detail: `permissions.mode is ${mode}: ${labels[mode]}. Configured denials, read-only modes and surface authority still apply. Calls require current invocation authority.`,
   };
 }
 

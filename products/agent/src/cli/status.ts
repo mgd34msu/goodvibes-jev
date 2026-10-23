@@ -301,7 +301,7 @@ export function buildCliDoctorFindings(options: CliStatusOptions): readonly CliD
       severity: 'risk',
       summary: 'Auto-approve is on; boundary checks still apply.',
       cause: 'behavior.autoApprove is true.',
-      impact: 'Calls that pass the boundary, including powerful write, edit, network, and execution actions, are approved automatically regardless of permissions.mode or custom per-tool rules. Boundary checks can still refuse a call or require approval.',
+      impact: 'Configured actions can run automatically. Configured denials, read-only modes and surface authority still apply; auto-approve cannot override them.',
       action: 'Disable behavior.autoApprove unless this is an intentionally trusted environment.',
     });
   }
@@ -311,10 +311,10 @@ export function buildCliDoctorFindings(options: CliStatusOptions): readonly CliD
       id: 'allow-all-permissions',
       area: 'security',
       severity: 'risk',
-      summary: 'Automatic permission mode is active; critical calls still ask.',
+      summary: 'Allow-all permission mode is active; configured actions run automatically.',
       cause: 'permissions.mode is allow-all.',
       impact: 'Powerful write, edit, network, and execution tools can run without a Human-in-the-Loop (HITL) approval prompt.',
-      action: 'Use Ask before powerful actions or Custom rules unless this is an intentionally trusted environment.',
+      action: 'Use Plan mode for read-only work or Custom rules to deny specific tools unless this is an intentionally trusted environment.',
     });
   }
 

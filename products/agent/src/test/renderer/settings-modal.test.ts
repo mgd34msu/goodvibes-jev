@@ -1,4 +1,4 @@
-import { presetForMode } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { computeApprovalPosture } from '../../permissions/approval-posture.ts';
 import { settingContextLines } from '../../renderer/settings-modal-context.ts';
 /**
  * Tests for renderSettingsModal renderer.
@@ -140,15 +140,15 @@ describe('renderSettingsModal', () => {
     expect(modal.editingMode).toBe(false);
   });
 
-  test('permission-mode help retains public preset summaries, critical prompts and boundaries', () => {
+  test('permission-mode help describes native action policies and retained constraints', () => {
     modal.selectTarget('permissions.mode');
     try {
       const context=settingContextLines(modal).join('\n');
       for (const mode of ['prompt','allow-all','plan','accept-edits','custom']) {
-        expect(context).toContain(presetForMode(mode).summary);
+        expect(context).toContain(computeApprovalPosture({ mode, autoApprove: false }).detail);
       }
-      expect(context).toContain('Boundary checks still apply');
-      expect(context).toContain('These preset summaries assume behavior.autoApprove is off. When enabled, it takes precedence; boundary checks still apply.');
+      expect(context).toContain('Configured denials, read-only modes and surface authority still apply');
+      expect(context).toContain('behavior.autoApprove does not override configured denials, read-only modes or surface authority.');
       expect(context).toContain('Read-only local shell calls may run');
       expect(context).not.toContain('removes an important safety gate');
       expect(context).not.toContain('every write, execute, or delegate');
@@ -161,9 +161,9 @@ describe('renderSettingsModal', () => {
         rendered.push(...frameText(frameFromLayer(renderSettingsModal(modal,120,40),120,40)).map(row=>row.slice(rightX).trim()));
       }
       const text=rendered.join(' ').replace(/\s+/g,' ');
-      expect(text.includes('critical calls still ask')).toBe(true);
-      expect(text.includes('behavior.autoApprove is off. When enabled, it takes precedence; boundary checks still apply.')).toBe(true);
-      expect(text.includes('Boundary checks still apply')).toBe(true);
+      expect(text.includes('Configured denials, read-only modes and surface authority still apply')).toBe(true);
+      expect(text.includes('critical calls still ask')).toBe(false);
+      expect(text.includes('behavior.autoApprove does not override configured denials, read-only modes or surface authority.')).toBe(true);
       expect(text.includes('Read-only local shell calls may run')).toBe(true);
     } finally {modal.close();}
   });
