@@ -43,6 +43,7 @@ import { SandboxSessionRegistry } from '../sdk/src/platform/runtime/sandbox/sess
 import { OverflowHandler } from '../sdk/src/platform/tools/shared/overflow.js';
 import type { ToolRegistry } from '../sdk/src/platform/tools/registry.js';
 import type { ConfigManager } from '../sdk/src/platform/config/manager.js';
+import type { ContractRunner } from '../sdk/src/platform/contract/runner.js';
 
 type PrivateOrchestrator = {
   toolDeps: Record<string, unknown>;
@@ -87,14 +88,7 @@ function makeRealToolDeps(defaultDir: string, scratchRoot: string): Record<strin
     fileCache: new FileStateCache(),
     // ProjectIndex debounces its writes behind a scheduleFlush() timeout;
     // dispose() flushes and clears it.
-    //
-    // KNOWN SURVIVOR, and not this one: the override-cwd write below goes
-    // through a registry that getFullRegistry(cwd) deliberately built with
-    // `projectIndex: undefined`, and registerAllTools then makes its own
-    // (tools/index.ts). That instance is held only in tool closures, no
-    // caller, this test included, can reach it to dispose it, so its 5s
-    // debounce timeout survives the file. Closing it needs a disposal seam on
-    // ToolRegistry in product code, not a change here.
+    // The orchestrator owns and disposes indexes created for override cwds.
     projectIndex: disposables.add(new ProjectIndex(defaultDir)),
     workingDirectory: defaultDir,
     surfaceRoot: 'test-surface',
@@ -109,6 +103,11 @@ function makeRealToolDeps(defaultDir: string, scratchRoot: string): Record<strin
     ),
     sandboxSessionRegistry: new SandboxSessionRegistry(scratchRoot),
     workflowServices: createWorkflowServices(),
+    contractRunner: {
+      start() { throw new Error('The cwd registry fixture does not delegate work.'); },
+      list: () => [],
+      get: () => null,
+    } satisfies Pick<ContractRunner, 'start' | 'list' | 'get'>,
     overflowHandler: new OverflowHandler({ baseDir: scratchRoot }),
     // registerAllTools resolves agentManager from either deps.agentManager or
     // deps.remoteRunnerRegistry.agentManager, a real AgentManager is cheap
@@ -135,7 +134,7 @@ describe('AgentOrchestrator: getFullRegistry(cwd) against REAL tool deps', () =>
     const otherDir = mkdtempSync(join(tmpdir(), 'agent-cwd-other-'));
     const scratchRoot = mkdtempSync(join(tmpdir(), 'agent-cwd-scratch-'));
     try {
-      const orchestrator = new AgentOrchestrator({ messageBus: new AgentMessageBus() }) as unknown as PrivateOrchestrator;
+      const orchestrator = disposables.add(new AgentOrchestrator({ messageBus: new AgentMessageBus() })) as unknown as PrivateOrchestrator;
       orchestrator.toolDeps = makeRealToolDeps(defaultDir, scratchRoot);
 
       const defaultRegistry = orchestrator.getFullRegistry();
@@ -161,7 +160,7 @@ describe('AgentOrchestrator: getFullRegistry(cwd) against REAL tool deps', () =>
     const worktreeDir = mkdtempSync(join(tmpdir(), 'agent-cwd-write-worktree-'));
     const scratchRoot = mkdtempSync(join(tmpdir(), 'agent-cwd-write-scratch-'));
     try {
-      const orchestrator = new AgentOrchestrator({ messageBus: new AgentMessageBus() }) as unknown as PrivateOrchestrator;
+      const orchestrator = disposables.add(new AgentOrchestrator({ messageBus: new AgentMessageBus() })) as unknown as PrivateOrchestrator;
       orchestrator.toolDeps = makeRealToolDeps(defaultDir, scratchRoot);
 
       // Exactly what runAgent(record) does internally when

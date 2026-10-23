@@ -413,7 +413,7 @@ export async function handleFinalResponseOutcome(args: FinalResponseOutcomeArgs)
 async function handleFinalPlanOutcome(args: FinalResponseOutcomeArgs): Promise<false> {
   if (isNativeConversationTurn()) return false;
   const planManager = args.planManager;
-  if (args.preTurnPlan && args.preTurnPlan.awaitingPlan === true && args.response.content.includes('## Phase') && planManager) {
+  if (args.preTurnPlan && args.preTurnPlan.awaitingPlan === true && planManager) {
     const sessionId = args.sessionId;
     const source = args.response.content;
     const preTurn = JSON.stringify(args.preTurnPlan);

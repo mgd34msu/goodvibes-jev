@@ -77,6 +77,17 @@ describe('canonical plan status boundary', () => {
     f.planManager.replaceItems(f.plan.id, [{ description: 'Proposal', phase: 'Phase 1', status: 'complete' }]);
     expect(f.planManager.load(f.plan.id)?.items[0]?.status).toBe('pending');
   });
+  test('the real caller reads a supported section name without requiring the word Phase', async () => {
+    const fake = reading('failed'); installJudgmentPort(fake.port);
+    const f = caller('# Plan\n## Build\n- [x] Compile -- All done');
+    await handleFinalResponseOutcome(f.args);
+    const saved = f.planManager.getActive('session');
+    expect(saved?.awaitingPlan).toBe(false);
+    expect(saved?.items.map(item => ({ phase: item.phase, description: item.description, status: item.status })))
+      .toEqual([{ phase: 'Build', description: 'Compile', status: 'failed' }]);
+    expect(fake.requests).toHaveLength(1);
+    expect(f.spawned).toEqual([]); expect(f.timers).toBe(0);
+  });
   test('plan save ABA and replacement cannot be overwritten by a late reading', async () => {
     for (const mutation of ['aba', 'replace', 'dismiss'] as const) {
       const read = delayed(), f = caller(), pending = handleFinalResponseOutcome(f.args); await read.start.promise;
