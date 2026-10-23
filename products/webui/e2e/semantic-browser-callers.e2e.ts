@@ -5,7 +5,6 @@ import { installMockDaemon } from "./support/mock-daemon";
 import { nextFrames, openSettings } from "./support/app";
 
 type CredentialRequest = BrowserJudgmentRequest<"webui.credentials.provider-key">;
-type PlatformRequest = BrowserJudgmentRequest<"webui.pwa.install-platform">;
 const evidence = (index = 0) => ({
   decisionId: `browser-fixture-${index}`,
   model: "synthetic-browser",
@@ -13,7 +12,7 @@ const evidence = (index = 0) => ({
   usage: { inputTokens: 1, outputTokens: 1 },
   latencyMs: 1,
 });
-const envelope = (request: CredentialRequest | PlatformRequest) => ({
+const envelope = (request: CredentialRequest) => ({
   protocolVersion: 1,
   batteryVersion: 1,
   battery: request.battery,
@@ -37,22 +36,6 @@ function credentialReply(request: CredentialRequest, matches: boolean[]) {
       ])
     ),
     evidence: matches.map((_, index) => evidence(index)),
-  };
-}
-function platformReply(request: PlatformRequest) {
-  return {
-    ...envelope(request),
-    value: { platform: "ios-share-menu" },
-    readings: {
-      platform: {
-        kind: "choice",
-        choice: "ios-share-menu",
-        confidence: 0.99,
-        probabilities: { "ios-share-menu": 0.99, other: 0.01 },
-        outcome: "act",
-      },
-    },
-    evidence: [evidence()],
   };
 }
 async function credentials(page: Page) {
@@ -149,55 +132,48 @@ test("leaving a pending provider detail discards its reply before another provid
 });
 
 for (const captured of ["prompt", "installed"] as const) {
-  test(`late platform interpretation cannot override actual browser ${captured} state`, async ({
+  test(`actual browser ${captured} state determines installation without a platform judgment`, async ({
     page,
   }) => {
     await installMockDaemon(page);
-    const requests: PlatformRequest[] = [];
-    const release = Promise.withResolvers<undefined>();
+    const requests: BrowserJudgmentRequest[] = [];
     await page.route("**/api/judgment/batteries/run", async (route) => {
       const request = route.request().postDataJSON() as BrowserJudgmentRequest;
       if (request.battery !== "webui.pwa.install-platform") return route.fallback();
       requests.push(request);
-      await release.promise;
-      await route.fulfill({ json: platformReply(request) });
+      await route.abort();
     });
-    try {
-      await openSettings(page, "notifications");
-      await expect.poll(() => requests.length).toBe(1);
-      if (captured === "prompt")
-        await page.evaluate(() => {
-          let executions = 0;
-          const event = Object.assign(new Event("beforeinstallprompt", { cancelable: true }), {
-            prompt: async () => {
-              document.documentElement.dataset.syntheticPromptExecutions = String(++executions);
-            },
-            userChoice: Promise.resolve({ outcome: "accepted" }),
-          });
-          window.dispatchEvent(event);
+    await openSettings(page, "notifications");
+    if (captured === "prompt")
+      await page.evaluate(() => {
+        let executions = 0;
+        const event = Object.assign(new Event("beforeinstallprompt", { cancelable: true }), {
+          prompt: async () => {
+            document.documentElement.dataset.syntheticPromptExecutions = String(++executions);
+          },
+          userChoice: Promise.resolve({ outcome: "accepted" }),
         });
-      else await page.evaluate(() => window.dispatchEvent(new Event("appinstalled")));
-      release.resolve(undefined);
-      await nextFrames(page);
-      const install = page.locator(".notifications-install");
-      await expect(install).not.toContainText("To install on iOS");
-      if (captured === "prompt") {
-        await expect(
-          install.getByRole("button", { name: "Add to Home Screen", exact: true })
-        ).toBeVisible();
-        await install.getByRole("button", { name: "Add to Home Screen", exact: true }).click();
-        await expect(page.locator("html")).toHaveAttribute("data-synthetic-prompt-executions", "1");
-      } else {
-        await expect(install).toContainText(
-          "This app is installed and running from your Home Screen."
-        );
-        await expect(
-          install.getByRole("button", { name: "Add to Home Screen", exact: true })
-        ).toHaveCount(0);
-      }
-    } finally {
-      release.resolve(undefined);
+        window.dispatchEvent(event);
+      });
+    else await page.evaluate(() => window.dispatchEvent(new Event("appinstalled")));
+    await nextFrames(page);
+    const install = page.locator(".notifications-install");
+    await expect(install).not.toContainText("To install on iOS");
+    if (captured === "prompt") {
+      await expect(
+        install.getByRole("button", { name: "Add to Home Screen", exact: true })
+      ).toBeVisible();
+      await install.getByRole("button", { name: "Add to Home Screen", exact: true }).click();
+      await expect(page.locator("html")).toHaveAttribute("data-synthetic-prompt-executions", "1");
+    } else {
+      await expect(install).toContainText(
+        "This app is installed and running from your Home Screen."
+      );
+      await expect(
+        install.getByRole("button", { name: "Add to Home Screen", exact: true })
+      ).toHaveCount(0);
     }
+    expect(requests).toHaveLength(0);
   });
 }
 
