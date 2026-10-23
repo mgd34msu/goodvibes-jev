@@ -75,9 +75,14 @@ const parityReadings = fakePort((name, question, state) => {
 });
 const TEST_TOKEN = 'server-parity-synthetic-token';
 const CALLBACK_FIXTURE_URL = 'https://203.0.113.10/callback';
+const KNOWLEDGE_ROUTE_SOURCE_URL = 'https://example.com/knowledge-route-page';
+const KNOWLEDGE_ROUTE_SOURCE_HTML = '<html><head><title>Knowledge Route Page</title></head><body><h1>Knowledge Route Page</h1><p>Daemon route coverage.</p></body></html>';
 
-/** Queued fixture agents can send cancellation notices while their graph drains. */
-function cancellationDeliveryFixture(request: { readonly url: string; readonly method: string }): Response | undefined {
+/** Authored page transport and cancellation notices remain available until the graph drains. */
+function externalTransportFixture(request: { readonly url: string; readonly method: string }): Response | undefined {
+  if (request.url === KNOWLEDGE_ROUTE_SOURCE_URL || request.url === `${KNOWLEDGE_ROUTE_SOURCE_URL}?connector=1`) {
+    return new Response(KNOWLEDGE_ROUTE_SOURCE_HTML, { headers: { 'content-type': 'text/html; charset=utf-8' } });
+  }
   const url = new URL(request.url);
   const knownNotice = request.method === 'POST' && (
     url.href === `https://ntfy.sh/${GOODVIBES_NTFY_AGENT_TOPIC}`
@@ -251,7 +256,7 @@ describe('daemon server source parity: restored source assertions', () => {
     for (const spy of [spyOn(ProviderRegistry.prototype, 'refreshLiveModelDiscovery').mockResolvedValue([]),
       spyOn(BenchmarkStore.prototype, 'refreshBenchmarks').mockResolvedValue(undefined),
       spyOn(BenchmarkStore.prototype, 'readBenchmarks').mockResolvedValue(undefined)]) restores.push(() => spy.mockRestore());
-    restores.push(installProviderPricingFixture(cancellationDeliveryFixture));
+    restores.push(installProviderPricingFixture(externalTransportFixture));
     daemon = await createTestDaemon();
   });
   afterEach(async () => {
@@ -561,26 +566,11 @@ async function proveAutonomousRead(): Promise<void> {
 
   // Original server case 16, source line 453.
   test('knowledge routes ingest and query structured knowledge', async () => {
-    const sourceUrl = 'https://example.com/knowledge-route-page';
+    const sourceUrl = KNOWLEDGE_ROUTE_SOURCE_URL;
     const sourceUrlList = `${sourceUrl}?connector=1`;
-    const sourceHtml = '<html><head><title>Knowledge Route Page</title></head><body><h1>Knowledge Route Page</h1><p>Daemon route coverage.</p></body></html>';
-    const originalFetch = globalThis.fetch;
-    const mockFetch = async (input: URL | RequestInfo, init?: RequestInit | BunFetchRequestInit) => {
-      const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
-      if (url === sourceUrl || url === sourceUrlList) {
-        return new Response(sourceHtml, {
-          headers: { 'content-type': 'text/html; charset=utf-8' },
-        });
-      }
-      return originalFetch(input, init);
-    };
-    globalThis.fetch = Object.assign(mockFetch, {
-      preconnect: originalFetch.preconnect,
-    }) as typeof fetch;
     daemon.enable({ daemon: true }, TEST_TOKEN);
     await daemon.start();
-    try {
-      const ingest = await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/ingest/url`, {
+    const ingest = await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/ingest/url`, {
       method: 'POST',
       headers: {
         Authorization: `Bearer ${TEST_TOKEN}`,
@@ -828,9 +818,6 @@ async function proveAutonomousRead(): Promise<void> {
     expect(graphqlJson.data.status.sourceCount).toBeGreaterThan(0);
     expect(graphqlJson.data.projection.target.kind).toBe('SOURCE');
     expect(graphqlJson.data.projection.pageCount).toBe(1);
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
   });
 
   for (const change of ['session-revocation', 'request-abort'] as const) {
