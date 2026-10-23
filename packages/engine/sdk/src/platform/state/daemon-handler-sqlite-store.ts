@@ -1,3 +1,4 @@
+import { createSqlJsDatabase, SqlJsDatabaseAllocationError } from './sqljs-database.js';
 import { mkdir, rename, rm, writeFile } from 'node:fs/promises';
 import { readFileSync, readdirSync, renameSync, rmSync, statSync } from 'node:fs';
 import { existsSync } from 'node:fs';
@@ -172,7 +173,7 @@ export class HandlerSqliteStore {
   private async initialize(): Promise<void> {
     await mkdir(dirname(this.resolvedPath), { recursive: true });
     const SQL = await loadSqlJsEngine();
-    this.databaseFactory = (data) => new SQL.Database(data);
+    this.databaseFactory = (data) => createSqlJsDatabase(SQL.Database, data);
     this.persistenceBlocked = false;
 
     // Validate the file by its CONTENT, not by existsSync. `save()` writes
@@ -210,12 +211,13 @@ export class HandlerSqliteStore {
       // first statement touches a bad page. Validate the image independently
       // of the caller's schema: a schema typo must never quarantine good data.
       try {
-        candidate = new SQL.Database(existing);
+        candidate = createSqlJsDatabase(SQL.Database, existing);
         const check = candidate.exec('PRAGMA quick_check');
         if (check.length !== 1 || check[0]?.values.length !== 1 || check[0].values[0]?.[0] !== 'ok') {
           throw new Error('SQLite quick_check rejected the database image');
         }
       } catch (error) {
+        if (error instanceof SqlJsDatabaseAllocationError) throw error;
         // Header present but the body does not hold up: a truncated or damaged
         // database. Same treatment, set aside, disclose, start clean.
         quarantineReason = `database would not open: ${error instanceof Error ? error.message : String(error)}`;
@@ -227,7 +229,7 @@ export class HandlerSqliteStore {
 
     // A failed move is not permission to overwrite the operator's only copy.
     this.persistenceBlocked = Boolean(quarantineReason && !quarantined);
-    candidate ??= new SQL.Database();
+    candidate ??= createSqlJsDatabase(SQL.Database);
     try {
       for (const statement of this.options.schema) candidate.run(statement);
       this.db = candidate;

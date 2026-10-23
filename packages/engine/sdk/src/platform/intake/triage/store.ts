@@ -1,3 +1,4 @@
+import { createSqlJsDatabase } from '../../state/sqljs-database.js';
 import { randomUUID } from 'node:crypto';
 import { types } from 'node:util';
 import {
@@ -217,7 +218,7 @@ export class SqliteTriageStore implements TriageStore {
       const SQL = await loadSqlJsEngine();
       const image = readImage(this.path);
       if (!image) return new Map<string, TriageStoredRecord>();
-      const db = new SQL.Database(image);
+      const db = createSqlJsDatabase(SQL.Database, image);
       try {
         const records = readRecords(db);
         return new Map([...records].filter(([id]) => requested.has(id)));
@@ -247,7 +248,7 @@ export class SqliteTriageStore implements TriageStore {
       const SQL = await loadSqlJsEngine();
       abortIfRequested(signal);
       const image = readImage(this.path);
-      const db = new SQL.Database(image);
+      const db = createSqlJsDatabase(SQL.Database, image);
       try {
         if (!image) initializeSchema(db);
         const records = readRecords(db);

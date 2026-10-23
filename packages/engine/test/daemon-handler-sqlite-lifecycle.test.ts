@@ -1,9 +1,10 @@
+import { SqlJsDatabaseAllocationError } from '../sdk/src/platform/state/sqljs-database.ts';
 import { afterEach, beforeEach, describe, expect, spyOn, test } from 'bun:test';
 import * as fs from 'node:fs';
 import * as fsPromises from 'node:fs/promises';
 import { dirname, join } from 'node:path';
 import { HandlerSqliteStore } from '../sdk/src/platform/state/daemon-handler-sqlite-store.ts';
-import { SQLiteStore } from '../sdk/src/platform/state/sqlite-store.ts';
+import { loadSqlJsEngine, SQLiteStore } from '../sdk/src/platform/state/sqlite-store.ts';
 import { makeProjectTempDir } from './_helpers/project-temp.ts';
 
 const SCHEMA = ['CREATE TABLE IF NOT EXISTS probe (id TEXT PRIMARY KEY, value TEXT)'];
@@ -181,4 +182,58 @@ test('concurrent handler and SDK store initialization shares the WASM loader', a
     expect(handler.get<{ value: string }>('SELECT value FROM probe')).toEqual({ value: 'ready' });
     expect(sdk.exec('SELECT value FROM probe')[0]?.values).toEqual([['ready']]);
   } finally { sdk.close(); }
+});
+
+test('separate database writes and reopens remain isolated when random values repeat', async () => {
+  await loadSqlJsEngine();
+  const allocations = [0.5, 0.5, 0.6, 0.7, 0.7, 0.8];
+  let allocation = 0;
+  const random = spyOn(Math, 'random').mockImplementation(() => allocations[allocation++] ?? 0.9);
+  const open = async (fileName: string) => {
+    const store = new HandlerSqliteStore({ workingDirectory: directory, fileName, schema: SCHEMA });
+    stores.push(store);
+    await store.init();
+    return store;
+  };
+  try {
+    const first = await open('first.sqlite');
+    const second = await open('second.sqlite');
+    first.run('INSERT INTO probe VALUES (?, ?)', ['first', 'first database only']);
+    second.run('INSERT INTO probe VALUES (?, ?)', ['second', 'second database only']);
+    await first.save();
+    await second.save();
+    expect(first.all('SELECT * FROM probe')).toEqual([{ id: 'first', value: 'first database only' }]);
+    expect(second.all('SELECT * FROM probe')).toEqual([{ id: 'second', value: 'second database only' }]);
+    first.close();
+    second.close();
+    const reopenedFirst = await open('first.sqlite');
+    const reopenedSecond = await open('second.sqlite');
+    expect(reopenedFirst.all('SELECT * FROM probe')).toEqual([{ id: 'first', value: 'first database only' }]);
+    expect(reopenedSecond.all('SELECT * FROM probe')).toEqual([{ id: 'second', value: 'second database only' }]);
+  } finally { random.mockRestore(); }
+});
+
+
+test('exhausted allocation collisions preserve a healthy image and permit a later open', async () => {
+  await loadSqlJsEngine();
+  const healthy = makeStore();
+  await healthy.init();
+  healthy.run('INSERT INTO probe VALUES (?, ?)', ['saved', 'original data']);
+  await healthy.save();
+  const bytes = fs.readFileSync(healthy.dbPath);
+  healthy.close();
+  const random = spyOn(Math, 'random').mockReturnValue(0.12573);
+  try {
+    const held = new HandlerSqliteStore({ workingDirectory: directory, fileName: 'held.sqlite', schema: SCHEMA });
+    stores.push(held);
+    await held.init();
+    const reopening = makeStore();
+    await expect(reopening.init()).rejects.toBeInstanceOf(SqlJsDatabaseAllocationError);
+    expect(random.mock.calls.length).toBeLessThanOrEqual(4);
+    expect(fs.readFileSync(healthy.dbPath)).toEqual(bytes);
+    expect(fs.readdirSync(dirname(healthy.dbPath)).some(name => name.includes('.corrupt-'))).toBe(false);
+    random.mockReturnValue(0.24681);
+    await reopening.init();
+    expect(reopening.all('SELECT * FROM probe')).toEqual([{ id: 'saved', value: 'original data' }]);
+  } finally { random.mockRestore(); }
 });

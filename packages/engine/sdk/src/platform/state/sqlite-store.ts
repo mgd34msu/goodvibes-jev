@@ -1,3 +1,4 @@
+import { createSqlJsDatabase } from './sqljs-database.js';
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname } from 'node:path';
 import { createHash } from 'node:crypto';
@@ -248,7 +249,7 @@ interface NativeStatementIdentity {
   readonly bigint: Readonly<PropertyDescriptor>;
 }
 function captureNativeStatementIdentity(Database: SqlJsStatic['Database']): NativeStatementIdentity | undefined {
-  const raw = new Database();
+  const raw = createSqlJsDatabase(Database);
   let statement: NativeSqlStatement | undefined, original: NativeStatementIdentity | undefined;
   try {
     statement = raw.prepare('SELECT 1');
@@ -591,7 +592,7 @@ function constructOwnedDatabase(engine: SqlJsStatic, data?: Uint8Array | Buffer,
     && nativeGetDescriptor(engine, 'Database')?.value === Constructor
     && nativeGetDescriptor(Constructor, 'prototype')?.value === originalPrototype
     && !!origin && nativeOwnerPrototypeFactsMatch(origin) && !!runtime && nativeScalarRuntimeMatches(runtime);
-  const raw = new Constructor(data), facade = ownDatabase(raw), state = privateMapGet(ownedDatabases, facade);
+  const raw = createSqlJsDatabase(Constructor, data), facade = ownDatabase(raw), state = privateMapGet(ownedDatabases, facade);
   if (genuine && original && origin && runtime && state && !nativeIsProxy(raw) && nativePrepareMatch(engine, raw)
     && nativeExecutionDependenciesMatch(origin, raw) && nativeScalarRuntimeMatches(runtime)) {
     const descriptor = nativeGetDescriptor(raw, 'gb'), registry: unknown = descriptor?.value;
