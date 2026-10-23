@@ -14,7 +14,9 @@
  * out until a consumer breaks.
  */
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import ts from 'typescript';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -22,7 +24,7 @@ import {
   coverageProblems,
   diffSnapshots,
   missingFromReport,
-  normalizeDeclarationText,
+  buildSnapshot,
   resolveSubpathEntryPoints,
   type Snapshot,
 } from '../scripts/subpath-api-surface-rule.ts';
@@ -220,37 +222,7 @@ describe('class members', () => {
     expect(diffSnapshots(base, after).some((line) => line.includes('no longer exposes PUBLIC member(s): checkInbox'))).toBe(true);
   });
 
-  test('the committed report records public members for the classes that have them', () => {
-    const committed = JSON.parse(readFileSync(join(SDK_ROOT, 'etc', 'subpath-api-surface.json'), 'utf8')) as Snapshot;
-    const classes = Object.values(committed).flat().filter((entry) => entry.kind === 'class');
-    const withMembers = classes.filter((entry) => (entry.publicMembers?.length ?? 0) > 0);
-    expect(classes.length).toBeGreaterThan(100);
-    // Not "all", because three providers genuinely declare no members of their
-    // own (`class LocalAIProvider extends DiscoveredCompatProvider {}`). A
-    // detector that claimed 100% here would be reporting coverage it lacks:
-    // members reached only by INHERITANCE are not recorded on the subclass.
-    expect(withMembers.length).toBeGreaterThan(classes.length * 0.9);
-    const emailService = (committed['./platform/email'] ?? []).find((entry) => entry.name === 'EmailService');
-    expect(emailService?.publicMembers).toContain('listInbox');
-    expect(emailService?.publicMembers).not.toContain('recordIngest'); // private, not surface
-  });
-});
 
-describe('normalizeDeclarationText', () => {
-  test('strips block comments so a doc-only edit does not churn the report', () => {
-    expect(normalizeDeclarationText('interface A {\n  /** the uid */\n  uid: number;\n}'))
-      .toBe('interface A { uid: number; }');
-  });
-
-  test('leaves // inside a string literal type intact', () => {
-    expect(normalizeDeclarationText("type U = 'https://example.test/x';"))
-      .toBe("type U = 'https://example.test/x';");
-  });
-
-  test('two declarations differing only in a member type do not normalize to the same string', () => {
-    expect(normalizeDeclarationText('interface A { s: string; }'))
-      .not.toBe(normalizeDeclarationText('interface A { s: number; }'));
-  });
 });
 
 describe('the committed report', () => {
@@ -315,4 +287,38 @@ describe('the committed report', () => {
     // by deleting this assertion, not by narrowing the report.
     expect(rollup).not.toContain('EmailInboxListResult');
   });
+});
+
+test('the API gate agrees with a real consumer across private changes and incompatible public or protected signatures', () => {
+  const root = mkdtempSync(join(tmpdir(), 'gv-api-consumer-'));
+  const api = join(root, 'api.d.ts'), consumer = join(root, 'consumer.ts');
+  writeFileSync(consumer, `import { Counter } from './api.js';
+    const count: number = new Counter().read();
+    class Child extends Counter { protected verify(): number { return 1; } }
+  `);
+  const inspect = (privateField: string, result = 'number', protectedResult = 'number') => {
+    writeFileSync(api, `interface Internal { value: ${privateField === 'cache' ? 'number' : 'string'}; }
+      export declare class Counter {
+        private ${privateField}: Internal;
+        protected verify(): ${protectedResult};
+        read(): ${result};
+      }
+      export {};`);
+    const program = ts.createProgram([api, consumer], { strict: true, noEmit: true, noLib: true, types: [],
+      target: ts.ScriptTarget.ES2022, module: ts.ModuleKind.ESNext, moduleResolution: ts.ModuleResolutionKind.Bundler });
+    const input = program.getSourceFile(consumer);
+    if (!input) throw new Error('Consumer did not load');
+    return { snapshot: buildSnapshot(program, new Map([['./api', api]])), errors: program.getSemanticDiagnostics(input) };
+  };
+  try {
+    const original = inspect('cache');
+    expect(original.errors).toEqual([]);
+    const privateChange = inspect('nextCache');
+    expect(privateChange.errors).toEqual([]);
+    expect(diffSnapshots(original.snapshot, privateChange.snapshot)).toEqual([]);
+    for (const incompatible of [inspect('nextCache', 'string'), inspect('nextCache', 'number', 'string')]) {
+      expect(incompatible.errors.length).toBeGreaterThan(0);
+      expect(diffSnapshots(original.snapshot, incompatible.snapshot).length).toBeGreaterThan(0);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

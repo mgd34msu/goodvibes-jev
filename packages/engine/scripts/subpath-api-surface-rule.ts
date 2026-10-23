@@ -136,9 +136,9 @@ export function requiredMembers(symbol: ts.Symbol): string[] | undefined {
 /**
  * The public members an exported class exposes.
  *
- * `private`/`protected` members and `#name` private fields are excluded, they
- * are not surface. The constructor is included as `constructor`, because its
- * parameter list is what a consumer calls.
+ * This directly callable member list excludes private/protected members and
+ * # fields. The declaration fingerprint still checks protected signatures for
+ * subclass compatibility. Constructor parameters remain part of the surface.
  */
 export function publicClassMembers(symbol: ts.Symbol): string[] | undefined {
   const declarations = symbol.getDeclarations() ?? [];
@@ -183,6 +183,22 @@ export function normalizeDeclarationText(text: string): string {
   return text.replace(/\/\*[\s\S]*?\*\//g, ' ').replace(/\s+/g, ' ').trim();
 }
 
+function privateClassMember(node: ts.Node): boolean {
+  if (!node.parent || !ts.isClassDeclaration(node.parent)) return false;
+  const modifiers = ts.canHaveModifiers(node) ? ts.getModifiers(node) ?? [] : [];
+  const name = (node as ts.NamedDeclaration).name;
+  return modifiers.some(modifier => modifier.kind === ts.SyntaxKind.PrivateKeyword)
+    || (name !== undefined && ts.isPrivateIdentifier(name));
+}
+
+function surfaceDeclarationText(declaration: ts.Declaration): string {
+  if (!ts.isClassDeclaration(declaration)) return normalizeDeclarationText(declaration.getText());
+  const surface = ts.factory.updateClassDeclaration(declaration, declaration.modifiers, declaration.name,
+    declaration.typeParameters, declaration.heritageClauses, declaration.members.filter(member => !privateClassMember(member)));
+  return normalizeDeclarationText(ts.createPrinter({ removeComments: true })
+    .printNode(ts.EmitHint.Unspecified, surface, declaration.getSourceFile()));
+}
+
 /**
  * Definitions of types an export REFERENCES but that are not themselves
  * exported from that subpath, one level deep.
@@ -208,6 +224,7 @@ function referencedLocalDefinitions(
 ): string[] {
   const seen = new Map<string, string>();
   const visit = (node: ts.Node): void => {
+    if (privateClassMember(node)) return;
     if (ts.isTypeReferenceNode(node)) {
       const referenced = checker.getSymbolAtLocation(node.typeName);
       if (referenced) {
@@ -254,7 +271,7 @@ export function buildSnapshot(program: ts.Program, entryPoints: ReadonlyMap<stri
       const required = requiredMembers(resolved);
       const publicMembers = publicClassMembers(resolved);
       const declarations = resolved.getDeclarations() ?? [];
-      const ownText = declarations.map((declaration) => normalizeDeclarationText(declaration.getText())).join(' ;; ');
+      const ownText = declarations.map(surfaceDeclarationText).join(' ;; ');
       const referenced = referencedLocalDefinitions(checker, resolved, exportedNames);
       const text = referenced.length > 0 ? `${ownText} ;; via ${referenced.join(' ;; ')}` : ownText;
       entries.push({

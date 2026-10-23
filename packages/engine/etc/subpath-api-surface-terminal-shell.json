@@ -41,7 +41,7 @@
         "setVisibleRows",
         "visibleRows"
       ],
-      "text": "export declare class BookmarkModal { private readonly bookmarkManager; static readonly DEFAULT_VISIBLE_ROWS = 8; static readonly VISIBLE_ROWS = 8; active: boolean; entries: BookmarkEntry[]; selectedIndex: number; scrollOffset: number; visibleRows: number; constructor(bookmarkManager: BookmarkManager); open(): void; close(): void; setVisibleRows(rows: number): void; moveUp(): void; moveDown(): void; getSelected(): BookmarkEntry | null; removeSelected(): BookmarkEntry | null; openSelectedFile(): string | null; private _clampScroll; } ;; via BookmarkEntry = export interface BookmarkEntry { key: string; label: string; timestamp: number; }"
+      "text": "export declare class BookmarkModal { static readonly DEFAULT_VISIBLE_ROWS = 8; static readonly VISIBLE_ROWS = 8; active: boolean; entries: BookmarkEntry[]; selectedIndex: number; scrollOffset: number; visibleRows: number; constructor(bookmarkManager: BookmarkManager); open(): void; close(): void; setVisibleRows(rows: number): void; moveUp(): void; moveDown(): void; getSelected(): BookmarkEntry | null; removeSelected(): BookmarkEntry | null; openSelectedFile(): string | null; } ;; via BookmarkEntry = export interface BookmarkEntry { key: string; label: string; timestamp: number; }"
     },
     {
       "name": "BottomBarStyle",
@@ -340,7 +340,7 @@
         "getSnapshot",
         "truncateToLine"
       ],
-      "text": "export declare class InfiniteBuffer { private lines; addLine(line: Line): void; addLines(lines: Line[]): void; getLineCount(): number; getAllLines(): Line[]; getSnapshot(startLine: number, height: number, width: number): Line[]; clear(): void; truncateToLine(lineIndex: number): void; } ;; via Line = export type Line = Cell[];"
+      "text": "export declare class InfiniteBuffer { addLine(line: Line): void; addLines(lines: Line[]): void; getLineCount(): number; getAllLines(): Line[]; getSnapshot(startLine: number, height: number, width: number): Line[]; clear(): void; truncateToLine(lineIndex: number): void; } ;; via Line = export type Line = Cell[];"
     },
     {
       "name": "JoinKeyRendering",
@@ -640,7 +640,7 @@
         "isDragging",
         "startSelection"
       ],
-      "text": "export declare class SelectionManager { anchor: SelectionPoint | null; focus: SelectionPoint | null; isDragging: boolean; private screenToAbsoluteRow; startSelection(col: number, viewportRow: number, scrollTop: number, vHeight: number, lineCount: number): void; extendSelection(col: number, viewportRow: number, scrollTop: number, vHeight: number, lineCount: number): void; endSelection(): void; clearSelection(): void; hasSelection(): boolean; getSelectedText(history: InfiniteBuffer): string; private findLineNumberGutterEnd; private stripDecorativePrefix; isCellSelected(col: number, absoluteRow: number): boolean; }"
+      "text": "export declare class SelectionManager { anchor: SelectionPoint | null; focus: SelectionPoint | null; isDragging: boolean; startSelection(col: number, viewportRow: number, scrollTop: number, vHeight: number, lineCount: number): void; extendSelection(col: number, viewportRow: number, scrollTop: number, vHeight: number, lineCount: number): void; endSelection(): void; clearSelection(): void; hasSelection(): boolean; getSelectedText(history: InfiniteBuffer): string; isCellSelected(col: number, absoluteRow: number): boolean; }"
     },
     {
       "name": "SelectionPoint",
@@ -1439,7 +1439,7 @@
         "recordDecision",
         "reserve"
       ],
-      "text": "export declare class LegacyImportJournal { private readonly db; constructor(path: string, directorySync?: (path: string) => void); close(): void; read(binding: LegacyImportBinding): LegacyImportEntry | null; reserve(binding: LegacyImportBinding, makeCommand: () => LegacyImportCommand, replaceRequestId?: string): LegacyImportEntry; private readExpected; cancel(binding: LegacyImportBinding, command: LegacyImportCommand): LegacyImportEntry | null; dispatch(binding: LegacyImportBinding, command: LegacyImportCommand, expected?: Pick<LegacyImportEntry, 'state' | 'attempts'>): LegacyImportEntry; recordDecision(binding: LegacyImportBinding, command: LegacyImportCommand, raw: unknown, settledAttempt?: number): LegacyImportEntry; record(binding: LegacyImportBinding, command: LegacyImportCommand, raw: WorkLedgerResult, settledAttempt?: number): LegacyImportEntry; } ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; WorkLedgerResult = export type WorkLedgerResult = { readonly kind: 'accepted'; readonly replayed: boolean; readonly event: WorkLedgerEvent; } | { readonly kind: 'rejected'; readonly code: WorkLedgerRejection; readonly reason: string; readonly revision: number | null; } | { readonly kind: 'indeterminate'; readonly requestId: string; readonly actorId: string; readonly reason: string; };"
+      "text": "export declare class LegacyImportJournal { constructor(path: string, directorySync?: (path: string) => void); close(): void; read(binding: LegacyImportBinding): LegacyImportEntry | null; reserve(binding: LegacyImportBinding, makeCommand: () => LegacyImportCommand, replaceRequestId?: string): LegacyImportEntry; cancel(binding: LegacyImportBinding, command: LegacyImportCommand): LegacyImportEntry | null; dispatch(binding: LegacyImportBinding, command: LegacyImportCommand, expected?: Pick<LegacyImportEntry, 'state' | 'attempts'>): LegacyImportEntry; recordDecision(binding: LegacyImportBinding, command: LegacyImportCommand, raw: unknown, settledAttempt?: number): LegacyImportEntry; record(binding: LegacyImportBinding, command: LegacyImportCommand, raw: WorkLedgerResult, settledAttempt?: number): LegacyImportEntry; } ;; via Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; }; ;; WorkLedgerResult = export type WorkLedgerResult = { readonly kind: 'accepted'; readonly replayed: boolean; readonly event: WorkLedgerEvent; } | { readonly kind: 'rejected'; readonly code: WorkLedgerRejection; readonly reason: string; readonly revision: number | null; } | { readonly kind: 'indeterminate'; readonly requestId: string; readonly actorId: string; readonly reason: string; };"
     },
     {
       "name": "LegacyImportOperatorClient",
