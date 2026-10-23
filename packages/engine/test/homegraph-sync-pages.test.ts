@@ -217,25 +217,27 @@ describe('Home Graph sync and generated pages', () => {
 
   test('completes automatic page generation for large spaces', async () => {
     const { service } = createHomeGraphService();
-    const devices = Array.from({ length: 48 }, (_, index) => ({
+    // One past the former 32-page cap is sufficient to detect truncation.
+    const deviceCount = 33;
+    const devices = Array.from({ length: deviceCount }, (_, index) => ({
       id: `device-${index}`,
-      name: index === 47 ? 'LG webOS Smart TV' : `Generic Device ${index}`,
-      manufacturer: index === 47 ? 'LG' : 'Vendor',
-      model: index === 47 ? '86NANO90UNA' : `M${index}`,
+      name: index === deviceCount - 1 ? 'LG webOS Smart TV' : `Generic Device ${index}`,
+      manufacturer: index === deviceCount - 1 ? 'LG' : 'Vendor',
+      model: index === deviceCount - 1 ? '86NANO90UNA' : `M${index}`,
     }));
 
     const synced = await service.syncSnapshot({
       installationId: 'house-1',
       devices,
     });
-    const pages = await service.listPages({ installationId: 'house-1', limit: 80 });
-    const priorityPages = await service.listPages({ installationId: 'house-1', limit: 5 });
+    const pages = await service.listPages({ installationId: 'house-1', limit: deviceCount + 1, includeMarkdown: false });
+    const priorityPages = await service.listPages({ installationId: 'house-1', limit: 5, includeMarkdown: false });
 
-    expect(synced.generated.devicePassports).toBeGreaterThan(0);
-    expect(synced.generated.devicePassports).toBe(48);
-    expect(synced.generated.devicePassports + (synced.generated.deferredDevicePassports ?? 0)).toBe(48);
+    expect(synced.generated.devicePassports).toBe(deviceCount);
+    expect(synced.generated.devicePassports + (synced.generated.deferredDevicePassports ?? 0)).toBe(deviceCount);
     expect(synced.generated.truncated).toBe(false);
     expect(pages.pages).toHaveLength(synced.generated.devicePassports); // Every supplied device receives a page.
+    expect(new Set(pages.pages.map(page => page.source.id)).size).toBe(deviceCount);
     expect(priorityPages.pages).toHaveLength(5);
     expect(priorityPages.pages.map(page => page.source.id)).toEqual(pages.pages.slice(0, 5).map(page => page.source.id));
   });
