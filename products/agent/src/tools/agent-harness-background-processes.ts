@@ -1,7 +1,8 @@
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { realpathSync } from 'node:fs';
-import { resolveAndValidatePath } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { mapLimit } from '@goodvibes-jev/judgment';
+import { redactSensitiveDataAsync, resolveAndValidatePath } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { harnessCatalogInvocationAuthority } from './agent-harness-catalog-ingress.ts';
 import { captureCatalogData, rankHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
 import { snapshotJudgmentInput } from '@goodvibes-jev/engine/sdk/platform/gate';
@@ -31,12 +32,6 @@ const DEFAULT_WAIT_TIMEOUT_MS = 30_000;
 const PROCESS_PARITY_METHODS = ['terminal(background=true)', 'process(list)', 'process(poll)', 'process(wait)', 'process(log)', 'process(kill)', 'process(write)', 'pty', 'sudo'] as const;
 const STDIN_WRITE_METHOD_NAMES = ['writeInput'] as const;
 const PTY_METHOD_NAMES = ['spawnPty', 'openPty', 'createPty', 'pty'] as const;
-const SENSITIVE_TEXT_PATTERNS: readonly [RegExp, string][] = [
-  [/\b([A-Z0-9_]*(?:API[_-]?KEY|TOKEN|SECRET|PASSWORD|PASSWD|CREDENTIAL|AUTHORIZATION|BEARER)[A-Z0-9_]*)=("[^"]*"|'[^']*'|[^\s]+)/gi, '$1=<redacted>'],
-  [/(\b(?:token|secret|password|passwd|api[-_]?key|authorization|credential)\s*[:=]\s*)("[^"]*"|'[^']*'|[^\s]+)/gi, '$1<redacted>'],
-  [/(Authorization:\s*Bearer\s+)[A-Za-z0-9._~+/=-]+/gi, '$1<redacted>'],
-  [/(\s--(?:token|password|secret|api-key|api_key)\s+)("[^"]*"|'[^']*'|[^\s]+)/gi, '$1<redacted>'],
-];
 
 function readString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
@@ -164,14 +159,6 @@ function processSubstrateReport(context?: CommandContext): Record<string, unknow
   };
 }
 
-function redactText(value: string): string {
-  return SENSITIVE_TEXT_PATTERNS.reduce((text, [pattern, replacement]) => text.replace(pattern, replacement), value);
-}
-
-function compactText(value: string, max: number): string {
-  return tailText(redactText(value), max);
-}
-
 function tailText(value: string, max: number): string {
   if (value.length <= max) return value;
   return value.slice(Math.max(0, value.length - max)).trimStart();
@@ -184,13 +171,12 @@ function outputTail(value: string, max: number): {
   readonly truncated: boolean;
   readonly omittedChars: number;
 } {
-  const redacted = redactText(value);
-  const text = tailText(redacted, max);
-  const omittedChars = Math.max(0, redacted.length - text.length);
+  const text = tailText(value, max);
+  const omittedChars = Math.max(0, value.length - text.length);
   return {
     text,
-    chars: redacted.length,
-    bytes: Buffer.byteLength(redacted),
+    chars: value.length,
+    bytes: Buffer.byteLength(value),
     truncated: omittedChars > 0,
     omittedChars,
   };
@@ -214,15 +200,24 @@ function readProcessSessionId(args: AgentHarnessBackgroundProcessArgs): { readon
   return null;
 }
 
-function describeProcessEntry(
+async function describeProcessEntry(
+  context: CommandContext,
   manager: ProcessManager,
   entry: BackgroundProcess,
-  options: { readonly includeParameters?: boolean; readonly lookup?: Record<string, unknown> } = {},
-): Record<string, unknown> {
+  options: CatalogRankingOptions & { readonly includeParameters?: boolean; readonly lookup?: Record<string, unknown> } = {},
+): Promise<Record<string, unknown>> {
+  const assertSource = retainProcessSources(context, manager, captureCatalogData([processCatalogEntry(entry)]), options, entry.id);
+  const assertCurrent = () => { options.assertCurrent?.(); assertSource(); };
+  assertCurrent();
   const output = manager.getOutput(entry.id) ?? { stdout: '', stderr: '' };
+  // Read complete captured strings before preview limits. Secret-bearing
+  // spans stay local; only canonical protected projections reach Jev.
+  const [command, protectedStdout, protectedStderr] = await Promise.all([entry.cmd, output.stdout, output.stderr]
+    .map(text => redactSensitiveDataAsync(text, { signal: options.signal, assertCurrent })));
+  assertCurrent();
   const maxOutputChars = options.includeParameters ? MAX_LOG_PREVIEW_CHARS : MAX_COMPACT_LOG_PREVIEW_CHARS;
-  const stdout = outputTail(output.stdout, maxOutputChars);
-  const stderr = outputTail(output.stderr, maxOutputChars);
+  const stdout = outputTail(protectedStdout!, maxOutputChars);
+  const stderr = outputTail(protectedStderr!, maxOutputChars);
   const includeOutput = options.includeParameters === true || Boolean(stdout.text || stderr.text);
   return {
     processId: entry.id,
@@ -235,7 +230,7 @@ function describeProcessEntry(
     exitCode: entry.exitCode,
     ...(entry.timedOut === true ? { timedOut: true } : {}),
     ...(entry.signal ? { signal: entry.signal } : {}),
-    command: options.includeParameters ? redactText(entry.cmd) : previewHarnessText(redactText(entry.cmd), 120),
+    command: options.includeParameters ? command : previewHarnessText(command!, 120),
     startedAt: new Date(entry.startTime).toISOString(),
     ageMs: processAgeMs(entry),
     routes: {
@@ -261,7 +256,7 @@ function describeProcessEntry(
         omittedStderrChars: stderr.omittedChars,
         maxOutputChars,
         fullOutputIncluded: !stdout.truncated && !stderr.truncated,
-        policy: 'Output is bounded; counts are computed after secret-looking text is redacted before model display.',
+        policy: 'Complete captured output is screened and redacted before preview limits; counts describe the protected output.',
       },
     } : {}),
     ...(options.lookup ? { lookup: options.lookup } : {}),
@@ -485,10 +480,10 @@ export async function backgroundProcessSummary(context: CommandContext, args: Ag
   const entries = selected.matches;
   const all = selected.all;
   const limit = readLimit(args.limit, 100);
-  const processes = entries.slice(0, limit).map(({ entry, judgment }) => {
+  const processes = await mapLimit<(typeof entries)[number], Record<string, unknown>>(entries.slice(0, limit), 4, async ({ entry, judgment }) => {
     const current = manager.getStatus(entry.id);
     if (!current) throw new ToolInputProjectionError('stale');
-    return { ...describeProcessEntry(manager, current, { includeParameters: args.includeParameters === true }), ...(judgment ? { judgment } : {}) };
+    return { ...await describeProcessEntry(context, manager, current, { ...options, includeParameters: args.includeParameters === true }), ...(judgment ? { judgment } : {}) };
   });
   const processCapabilities = await capabilities(context, { ...options, assertCurrent: selected.assertCurrent });
   selected.assertCurrent();
@@ -531,7 +526,8 @@ export async function describeBackgroundProcess(context: CommandContext, args: A
     retainProcessSources(context, manager, captureCatalogData([processCatalogEntry(exact)]), options, exact.id)();
     return {
       status: 'found',
-      process: describeProcessEntry(manager, exact, {
+      process: await describeProcessEntry(context, manager, exact, {
+        ...options,
         includeParameters: true,
         lookup: { ...lookup, resolvedBy: 'id' },
       }),
@@ -546,7 +542,8 @@ export async function describeBackgroundProcess(context: CommandContext, args: A
     if (!current) throw new ToolInputProjectionError('stale');
     return {
       status: 'found',
-      process: { ...describeProcessEntry(manager, current, {
+      process: { ...await describeProcessEntry(context, manager, current, {
+        ...options,
         includeParameters: true,
         lookup: { ...lookup, resolvedBy: 'search' },
       }), judgment: matches[0]!.judgment },
@@ -556,9 +553,9 @@ export async function describeBackgroundProcess(context: CommandContext, args: A
     return {
       status: 'ambiguous',
       input: lookup.input,
-      candidates: matches.slice(0, 8).map(({ entry, judgment }) => ({ processId: entry.id, processSessionId: entry.id,
+      candidates: await Promise.all(matches.slice(0, 8).map(async ({ entry, judgment }) => ({ processId: entry.id, processSessionId: entry.id,
         sessionId: entry.id, session_id: entry.id, pid: entry.pid, status: entry.status,
-        command: previewHarnessText(redactText(entry.cmd), 96), judgment })),
+        command: previewHarnessText(await redactSensitiveDataAsync(entry.cmd, options), 96), judgment }))),
     };
   }
   return {
@@ -702,7 +699,7 @@ export async function runBackgroundProcessAction(context: CommandContext, args: 
       sessionId: result.process_id,
       session_id: result.process_id,
       pid: result.pid,
-      command: redactText(command),
+      command: await redactSensitiveDataAsync(command, launchOptions),
       cwd,
       timeoutMs,
       routes: {
@@ -753,7 +750,7 @@ export async function runBackgroundProcessAction(context: CommandContext, args: 
       sessionId: processId,
       session_id: processId,
       timeoutMs,
-      ...(entry ? { process: describeProcessEntry(manager, entry, { includeParameters: true }) } : {}),
+      ...(entry ? { process: await describeProcessEntry(context, manager, entry, { ...waiting, includeParameters: true }) } : {}),
       policy: 'Wait observes the tracked process and does not send input or signals.',
     };
   }

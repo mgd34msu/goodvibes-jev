@@ -8512,7 +8512,7 @@ describe('agent_harness tool', () => {
       expect(waited.status).toBe('completed');
       expect(waited.process?.processId).toBe(started.processId);
       expect(waited.process?.output?.stdoutTail).toContain('hello');
-      expect(waited.process?.output?.stderrTail).toContain('secret=<redacted>');
+      expect(waited.process?.output?.stderrTail).toContain('secret=[REDACTED]');
       expect(waited.process?.output?.stderrTail).not.toContain('abc123456');
       expect(waited.process?.output?.stdoutTruncated).toBe(false);
       expect(waited.process?.output?.stderrTruncated).toBe(false);
