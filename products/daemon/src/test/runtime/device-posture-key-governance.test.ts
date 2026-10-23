@@ -291,6 +291,7 @@ function harness(configManager: ConfigManager, stateDirectory: string): Harness 
 
 /** Readable one-liner for an outcome, so a failure says what actually happened. */
 function label(outcome: DeviceCapabilityOutcome): string {
+  if (!outcome.ok && outcome.refusal === 'denied-by-jev') return `refused:${outcome.refusal}: ${outcome.detail}`;
   return outcome.ok ? `ok:${outcome.authority}` : `refused:${outcome.refusal}`;
 }
 
@@ -733,8 +734,8 @@ describe('device.* posture: behaviour in this daemon', () => {
     shortConfig.set('device.grants.auditRetentionDays', 1);
     const short = harness(shortConfig, join(root, 'state-audit-1d'));
     short.answer('always');
-    await short.run(NOTIFY);
-    await short.run(NOTIFY);
+    expect(label(await short.run(NOTIFY))).toBe('ok:confirmed-always');
+    expect(label(await short.run(NOTIFY))).toBe('ok:existing-grant');
     expect((await short.service.grants.listAudit()).length).toBeGreaterThanOrEqual(2);
 
     advanceClock(2 * DAY);
@@ -748,8 +749,8 @@ describe('device.* posture: behaviour in this daemon', () => {
     // Stock 30 days: the same records are still readable after the same two days.
     const stock = harness(freshConfig(), join(root, 'state-audit-30d'));
     stock.answer('always');
-    await stock.run(NOTIFY);
-    await stock.run(NOTIFY);
+    expect(label(await stock.run(NOTIFY))).toBe('ok:confirmed-always');
+    expect(label(await stock.run(NOTIFY))).toBe('ok:existing-grant');
     const stockBefore = await stock.service.grants.listAudit();
     advanceClock(2 * DAY);
     const stockSweep = await stock.service.housekeeper.sweep('manual');
