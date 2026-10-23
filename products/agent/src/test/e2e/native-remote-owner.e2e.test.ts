@@ -19,6 +19,7 @@ const SECOND = 'Continue that native conversation.';
 const ANSWER = 'The native hosted owner answer is forty-two.';
 const FOLLOWUP = 'The native continuation retained the first answer.';
 const HELD = 'Wait in this native owner turn until I stop it.';
+const COMPLETION_FINDINGS = new Set(['false_blocker', 'unfinished', 'unsupported', 'unanswered', 'unnecessary_permission']);
 
 for (const loseStartReply of [false, true]) test(`compiled owner conversation preserves native source and continuation${loseStartReply ? ' after a lost dispatch reply' : ''}`, async () => {
   const localModel = startStubModel(() => ({ text: 'UNEXPECTED LOCAL FALLBACK' }));
@@ -44,6 +45,7 @@ for (const loseStartReply of [false, true]) test(`compiled owner conversation pr
     inboxFactory: (context, _routing, options) => registerInboxSurface(context, { ...options, adapters: new Map() }),
   });
   const fake = fakePort((name, question) => {
+    if (COMPLETION_FINDINGS.has(name)) return noulAnswer(0.01);
     if (name === 'route') return choiceAnswer(question, 'converse', 0.99);
     if (name === 'relation') return choiceAnswer(question, 'supports', 0.99);
     if (name.startsWith('part_')) return noulAnswer(0.01);
@@ -124,6 +126,12 @@ for (const loseStartReply of [false, true]) test(`compiled owner conversation pr
     expect(record().command).toEqual(secondRecord.command); expect(remoteModel.requests).toHaveLength(count);
     expect(calls.filter(call => call.method === 'workLedger.intake.capture')).toHaveLength(2);
     expect(calls.filter(call => call.method === 'workLedger.turn.startAgent')).toHaveLength(2);
+    const completions = fake.requests.filter(request => Object.hasOwn(request.questions, 'unfinished'));
+    expect(completions).toHaveLength(2);
+    expect(completions.map(request => request.state)).toEqual([
+      expect.objectContaining({ request: FIRST, response: ANSWER }),
+      expect.objectContaining({ request: SECOND, response: FOLLOWUP }),
+    ]);
     expect(calls.some(call => call.method === 'sessions.hosted.create' || call.method === 'sessions.steer')).toBe(false);
     if (!loseStartReply) {
       stage = 'native-stop';
@@ -147,7 +155,7 @@ for (const loseStartReply of [false, true]) test(`compiled owner conversation pr
     }
     expect(output).not.toContain(paired); expect(output).not.toContain(daemon.token); expect(output).not.toContain('UNEXPECTED LOCAL FALLBACK');
     expect(daemon.services.contractRunner.list({ includeTerminal: true })).toHaveLength(0); expect(daemon.services.agentManager.list()).toHaveLength(0);
-  } catch (error) { throw new Error(`Native owner PTY failed at ${stage}: ${String(error)}\nMethods: ${calls.map(call => call.method).join(', ')}`); } finally {
+  } catch (error) { throw new Error(`Native owner PTY failed at ${stage}: ${String(error)}\nMethods: ${calls.map(call => call.method).join(', ')}\nJev question batches: ${JSON.stringify(fake.requests.map(request => Object.keys(request.questions)))}`); } finally {
     releaseHeld();
     if (child) { if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL'); await child.exited; child.terminal?.close(); }
     try { await daemon.stop(); } finally { read.mockRestore(); transport.mockRestore(); localModel.stop(); remoteModel.stop(); removeHome(home); }

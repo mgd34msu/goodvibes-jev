@@ -310,6 +310,9 @@ export type ClientOnlyServiceMember =
 export type ClientRuntimeServicesFromHost = Omit<ClientRuntimeServices, ClientOnlyServiceMember>;
 
 export interface ClientRuntimeServicesOptions {
+  /** A nested workspace borrows its host's recorded owner for the host lifetime.
+   * Closing this workspace must neither replace that port nor close its log. */
+  readonly judgment?: JudgmentServices | undefined;
   readonly workspaceTrust?: Pick<import('./workspace-trust.js').WorkspaceTrustManager, 'prepareAutonomousConstraint'> | null | undefined;
   /** Explicit absolute ordinary-Bun runtime for contained captured evaluation. */
   readonly capturedBunRuntimeExecutable?: string | undefined;
@@ -439,7 +442,7 @@ export function createClientRuntimeServices(options: ClientRuntimeServicesOption
   // pre-shared-tier per-surface store this surface used to own; the manager
   // folds any newer records it finds there into the shared store once, at
   // construction, and never writes to or deletes it.
-  const judgment = composeJudgment({ config: configManager, secrets: secretsManager, env: process.env, stateRoot: shellPaths.resolveProjectPath(surfaceRoot), disposal: disposalScope.registry });
+  const judgment = options.judgment ?? composeJudgment({ config: configManager, secrets: secretsManager, env: process.env, stateRoot: shellPaths.resolveProjectPath(surfaceRoot), disposal: disposalScope.registry });
   const subscriptionManager = new SubscriptionManager(sharedSubscriptionsPath(shellPaths), {
     legacyPath: shellPaths.resolveUserPath(surfaceRoot, 'subscriptions.json'),
   });

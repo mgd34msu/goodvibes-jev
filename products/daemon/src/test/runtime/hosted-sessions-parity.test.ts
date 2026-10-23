@@ -32,6 +32,7 @@ import { createDaemonWorkspaceTrustResolver } from '../../runtime/workspace-trus
 import { createProductionDaemonInboxFactory } from '../../runtime/production-inbox-composition.js';
 import { useGatewayFixture } from '../helpers/gateway-fixture.js';
 import { makeOwnedTempDir } from '../helpers/owned-temp.js';
+import { captureJudgmentPort, judgmentPort } from '@goodvibes-jev/engine/errors';
 const fixture = useGatewayFixture({ hostSessions: false, inboxFactory: createProductionDaemonInboxFactory() });
 const getTestRuntimeServices = () => fixture().services;
 
@@ -92,6 +93,20 @@ afterEach(async () => {
 });
 
 describe('the composition states a trust posture, and it is the session\'s workspace', () => {
+  it('a hosted floor borrows the daemon Jev owner and cannot retire it when the floor closes', async () => {
+    const services = getTestRuntimeServices();
+    const original = judgmentPort('daemon-hosted-owner-control');
+    const authority = captureJudgmentPort('daemon-hosted-owner-control');
+    const floor = await createHostedSessionOptions(services).floorFactory({ workspaceRoot: workspaceA });
+    try {
+      expect(floor.services.judgment).toBe(services.judgment);
+      expect(judgmentPort('daemon-hosted-owner-control')).toBe(original);
+      expect(() => authority.assertCurrent()).not.toThrow();
+    } finally { await floor.dispose(); }
+    expect(judgmentPort('daemon-hosted-owner-control')).toBe(original);
+    expect(() => authority.assertCurrent()).not.toThrow();
+  });
+
   it('autonomous hosted actions use session-workspace trust without a human wait or implicit grant', async () => {
     const services = getTestRuntimeServices();
     const trustFor = createDaemonWorkspaceTrustResolver(services);

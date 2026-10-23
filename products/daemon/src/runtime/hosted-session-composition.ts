@@ -133,6 +133,7 @@ export function createHostedSessionOptions(services: RuntimeServices): DaemonHos
     nativeConversation: nativeHostedConversationOwner(services.gatewayMethods),
     floorFactory: async ({ workspaceRoot }): Promise<HostedWorkspaceFloor> => {
       const floor = createClientRuntimeServices({
+        judgment: services.judgment,
         configManager: services.configManager,
         // The daemon's own bus: a hosted turn's stream events reach the
         // control-plane SSE subscribers through the same path every other
