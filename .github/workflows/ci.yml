@@ -445,7 +445,7 @@ jobs:
       - name: Build exact native target
         env:
           NATIVE_TARGET: ${{ matrix.target }}
-        run: bun run --cwd products/daemon build:binary --target "$NATIVE_TARGET"
+        run: bun products/daemon/scripts/build-native-ci.ts "$NATIVE_TARGET"
       - name: Record retained Linux ARM cohort
         if: matrix.platform == 'linux'
         env:
