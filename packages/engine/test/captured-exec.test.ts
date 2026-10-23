@@ -31,8 +31,8 @@ function git(root: string, ...args: string[]): void {
   const result = spawnSync('git', ['-C', root, ...args]);
   if (result.status !== 0) throw new Error(result.stderr.toString());
 }
-async function fixture(filter: (path: string) => boolean | Promise<boolean> = () => true): Promise<CapturedExecAuthority & { owner: string }> {
-  const owner = mkdtempSync(join(tmpdir(), 'captured-exec-test-')); roots.push(owner);
+async function fixture(filter: (path: string) => boolean | Promise<boolean> = () => true, prefix = 'captured-exec-test-'): Promise<CapturedExecAuthority & { owner: string }> {
+  const owner = mkdtempSync(join(tmpdir(), prefix)); roots.push(owner);
   git(owner, 'init', '-q'); git(owner, 'config', 'user.name', 'Fixture'); git(owner, 'config', 'user.email', 'fixture@example.invalid');
   writeFileSync(join(owner, 'input.txt'), 'captured-fixture\n');
   writeFileSync(join(owner, 'private.txt'), 'SYNTHETIC_DENIED_MARKER');
@@ -265,7 +265,7 @@ test.skipIf(!supported)('dependency permission revocation stops output and futur
 });
 
 async function workspaceFixture(filter: (path: string) => Promise<boolean> = async () => true) {
-  const binding = await fixture(filter);
+  const binding = await fixture(filter, 'captured-exec-test-999-');
   const originalPackage = join(binding.owner, 'packages/math');
   const capturedPackage = join(binding.root, 'packages/math');
   for (const directory of [originalPackage, capturedPackage]) {
@@ -305,7 +305,7 @@ for (const deniedSide of ['original-alias', 'captured-alias', 'original-target']
     const result = await run(binding, 'bun -e "import {answer} from \'workspace-math\'; console.log(answer)"');
     expect(result.success).toBe(false);
     expect(result.stdout).toBe('');
-    expect(JSON.stringify(result)).not.toContain('999');
+    expect(result.stderr).not.toContain('LIVE_OWNER_TARGET_MUST_NOT_RUN');
   });
 
 test.skipIf(!supported)('workspace remapping refuses an owner target absent from captured input', async () => {
