@@ -36,6 +36,19 @@ export function registerGeneratedKnowledgeSourceReferences(store: KnowledgeStore
     || (generated.sourceUri !== undefined && source.sourceUri !== generated.sourceUri)) throw new KnowledgeGeneratedFactSupportHeldError('stale');
   writeNativeReference(sourceIdentities, source, Object.freeze({ ...generated, store, hash: fingerprint(source) }));
 }
+
+/** Retain native reference facts through the producer's own record update.
+ * The original observation retires; the updated row still gets full preflight. */
+export function captureGeneratedKnowledgeSourceUpdate(store: KnowledgeStore, source: KnowledgeSourceRecord): ((updated: KnowledgeSourceRecord) => void) | undefined {
+  const known = currentSourceIdentity(source);
+  if (!known || known.store !== store) return undefined;
+  let published = false;
+  return updated => {
+    if (published || fingerprint(source) !== known.hash) throw new KnowledgeGeneratedFactSupportHeldError('stale');
+    published = true;
+    registerGeneratedKnowledgeSourceReferences(store, updated, known);
+  };
+}
 /** A derived extraction ID is registered only against an already known generated source identity. */
 export function registerGeneratedKnowledgeExtractionReferences(store: KnowledgeStore, source: KnowledgeSourceRecord, extraction: KnowledgeExtractionRecord, generatedId: string): void {
   if (currentSourceIdentity(source)?.store !== store) return;

@@ -1,5 +1,5 @@
 import { knowledgeClockIso, knowledgeRawRepresentation, retainKnowledgeRepresentation } from '../store-record-representation.js';
-import { registerGeneratedKnowledgeSourceReferences } from '../source-structural-references.js';
+import { captureGeneratedKnowledgeSourceUpdate, registerGeneratedKnowledgeSourceReferences } from '../source-structural-references.js';
 import { upsertObservedKnowledgeNode } from '../store-node-observation.js';
 import { snapshotNodeInput } from '../activation/projection.js';
 import type { ArtifactStore } from '../../artifacts/index.js';
@@ -331,6 +331,7 @@ async function markSourceStale(
   staleAt: number,
 ): Promise<void> {
   const raw = knowledgeRawRepresentation(source);
+  const retainReferences = captureGeneratedKnowledgeSourceUpdate(store, source);
   const input = {
     id: source.id,
     connectorId: source.connectorId,
@@ -354,10 +355,11 @@ async function markSourceStale(
       staleAt: knowledgeClockIso(staleAt),
     }),
   };
-  await store.upsertSource(retainKnowledgeRepresentation(input, {
+  const updated = await store.upsertSource(retainKnowledgeRepresentation(input, {
     ...knowledgeRawRepresentation(input),
     lastCrawledAt: raw.lastCrawledAt,
   }));
+  retainReferences?.(updated);
 }
 
 function snapshotRetirementObjectKinds(input: HomeGraphSnapshotInput): ReadonlySet<string> {

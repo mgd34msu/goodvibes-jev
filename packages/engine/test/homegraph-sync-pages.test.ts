@@ -174,23 +174,28 @@ describe('Home Graph sync and generated pages', () => {
   });
 
   test('does not retire object groups omitted from a partial snapshot', async () => {
-    const { service } = createHomeGraphService();
-    await service.syncSnapshot({
-      installationId: 'house-1',
-      areas: [{ id: 'office', name: 'Office' }],
-      devices: [{ id: 'desk-display', name: 'Desk Display', areaId: 'office', manufacturer: 'Vendor', model: 'DSP-1' }],
-    });
+    // The first native snapshot id contains a Luhn-valid digit sequence.
+    const clock = spyOn(Date, 'now').mockReturnValue(1791890001510);
+    try {
+      const { service } = createHomeGraphService();
+      await service.syncSnapshot({
+        installationId: 'house-1',
+        areas: [{ id: 'office', name: 'Office' }],
+        devices: [{ id: 'desk-display', name: 'Desk Display', areaId: 'office', manufacturer: 'Vendor', model: 'DSP-1' }],
+      });
 
-    await service.syncSnapshot({
-      installationId: 'house-1',
-      areas: [{ id: 'office', name: 'Office' }],
-    });
+      clock.mockReturnValue(1791890001511);
+      await service.syncSnapshot({
+        installationId: 'house-1',
+        areas: [{ id: 'office', name: 'Office' }],
+      });
 
-    const browse = await service.browse({ installationId: 'house-1' });
-    const pages = await service.listPages({ installationId: 'house-1', limit: 20 });
+      const browse = await service.browse({ installationId: 'house-1' });
+      const pages = await service.listPages({ installationId: 'house-1', limit: 20 });
 
-    expect(browse.nodes.some((node) => node.title === 'Desk Display')).toBe(true);
-    expect(pages.pages.some((page) => page.source.title === 'Desk Display passport')).toBe(true);
+      expect(browse.nodes.some((node) => node.title === 'Desk Display')).toBe(true);
+      expect(pages.pages.some((page) => page.source.title === 'Desk Display passport')).toBe(true);
+    } finally { clock.mockRestore(); }
   });
 
   test('reactivates retired snapshot objects when they reappear', async () => {
