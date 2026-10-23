@@ -1,3 +1,4 @@
+import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import { seedBenchmarkCacheFixture } from '../helpers/benchmark-cache-fixture.ts';
 import { beforeAll, beforeEach, describe, expect, test } from 'bun:test';
 import { tmpdir } from 'node:os';
@@ -76,16 +77,17 @@ describe('operator surfaces gate', () => {
   // cancel test builds its own AgentManager), and composing it per test was
   // the bulk of this file's run time.
   beforeAll(() => {
-    configManager = new ConfigManager({ surfaceRoot: 'tui',  configDir: join(tmpdir(), `gv-operator-surfaces-${Date.now()}-${Math.random().toString(36).slice(2)}`) });
+    const workingDirectory = makeProjectTempDir('gv-operator-surfaces');
+    configManager = new ConfigManager({ surfaceRoot: 'tui', configDir: join(workingDirectory, '.goodvibes', 'tui'), workingDir: workingDirectory, homeDir: tmpdir() });
     configManager.set('fleet.maxSize', 8);
     configManager.set('orchestration.maxDepth', 1);
     configManager.set('orchestration.recursionEnabled', true);
-    seedBenchmarkCacheFixture({ homeDirectory: tmpdir(), workingDirectory: configManager.getControlPlaneConfigDir(), surfaceRoot: 'tui' });
+    seedBenchmarkCacheFixture({ homeDirectory: tmpdir(), workingDirectory, surfaceRoot: 'tui' });
     runtimeServices = disposables.add(createRuntimeServices({
       runtimeBus: new RuntimeEventBus(),
       runtimeStore: createRuntimeStore(),
       configManager,
-      workingDir: configManager.getControlPlaneConfigDir(),
+      workingDir: workingDirectory,
       homeDirectory: tmpdir(),
       getConversationTitle: () => 'operator-surfaces',
     }));
