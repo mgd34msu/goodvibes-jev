@@ -10,6 +10,7 @@ import { buildAgentWorkspaceRuntimeSnapshot } from '../input/agent-workspace-sna
 import { previewHarnessText } from './agent-harness-text.ts';
 import { personalOpsRecordCertification } from './agent-harness-personal-ops-certification.ts';
 import type { PersonalOpsConnectorSignal, PersonalOpsConnectorTool, PersonalOpsLane, PersonalOpsLaneId, PersonalOpsLiveRecord, PersonalOpsRecordFreshness, PersonalOpsStatus, PersonalOpsWorkflow, PersonalOpsWorkflowStatus } from './agent-harness-personal-ops-types.ts';
+import { PERSONAL_OPS_EFFECT_RECEIPT_PURPOSES, PERSONAL_OPS_REVIEW_PURPOSE } from './agent-personal-ops-native-fields.ts';
 
 type PersonalOpsEffectReceiptLaneId = Extract<PersonalOpsLaneId, 'inbox' | 'calendar' | 'tasks' | 'reminders'>;
 
@@ -296,14 +297,6 @@ export function artifactMetadataStringArray(artifact: ArtifactDescriptor, key: s
   return [];
 }
 
-const PERSONAL_OPS_EFFECT_RECEIPT_PURPOSES = new Set([
-  'personal-ops-provider-effect-receipt',
-  'personal-ops-effect-receipt',
-  'personal-ops-connector-effect-receipt',
-  'agent-personal-ops-effect-receipt',
-  'connected-host-personal-ops-effect-receipt',
-]);
-
 export function safeRecordIdPart(value: string): string {
   return value
     .toLowerCase()
@@ -332,7 +325,8 @@ function metadataCreatedAtIso(artifact: ArtifactDescriptor): string {
 
 interface PersonalOpsArtifactSource { readonly artifact: ArtifactDescriptor; readonly reading: unknown; readonly assertCurrent: () => void }
 
-async function personalOpsArtifacts(context: CommandContext, options: CatalogRankingOptions): Promise<readonly PersonalOpsArtifactSource[]> {
+async function personalOpsArtifacts(context: CommandContext, options: CatalogRankingOptions,
+  purposes: ReadonlySet<string>, laneId: PersonalOpsLaneId): Promise<readonly PersonalOpsArtifactSource[]> {
   options.signal?.throwIfAborted(); options.assertCurrent?.();
   const contextCurrent = captureCatalogMethods(context, ['platform']);
   const platform = context.platform;
@@ -350,10 +344,15 @@ async function personalOpsArtifacts(context: CommandContext, options: CatalogRan
     assertPersonalOpsDataCurrent(list.call(store, 100), originalSnapshot);
   };
   const assertCurrent = () => { options.assertCurrent?.(); assertSource(); };
-  const protectedValues = await protectPersonalOpsData(originals, { signal: options.signal, assertCurrent });
+  // The owning store's complete acquisition remains guarded. Only records of
+  // the requested native schema/lane enter this reader's semantic egress.
   assertCurrent();
-  if (!Array.isArray(protectedValues) || protectedValues.length !== originals.length) throw new ToolInputProjectionError('held');
-  const result = originals.map((artifact, index) => {
+  const selected = originals.filter(artifact => purposes.has(artifactMetadataString(artifact, 'purpose'))
+    && artifactMetadataString(artifact, 'laneId') === laneId);
+  const protectedValues = await protectPersonalOpsData(selected, { signal: options.signal, assertCurrent });
+  assertCurrent();
+  if (!Array.isArray(protectedValues) || protectedValues.length !== selected.length) throw new ToolInputProjectionError('held');
+  const result = selected.map((artifact, index) => {
     const safe = readRecord(protectedValues[index]);
     // Native identities, clocks and schema discriminants are authorities. Masking
     // one holds the record instead of silently changing its dispatch provenance.
@@ -375,15 +374,15 @@ async function personalOpsArtifacts(context: CommandContext, options: CatalogRan
 }
 
 export async function savedReviewArtifacts(context: CommandContext, laneId: 'inbox' | 'calendar', options: CatalogRankingOptions = {}): Promise<readonly ArtifactDescriptor[]> {
-  return (await personalOpsArtifacts(context, options))
+  return (await personalOpsArtifacts(context, options, new Set([PERSONAL_OPS_REVIEW_PURPOSE]), laneId))
     .map(source => source.artifact)
-    .filter(artifact => artifactMetadataString(artifact, 'purpose') === 'personal-ops-review-cards')
+    .filter(artifact => artifactMetadataString(artifact, 'purpose') === PERSONAL_OPS_REVIEW_PURPOSE)
     .filter(artifact => artifactMetadataString(artifact, 'laneId') === laneId)
     .sort((left, right) => right.createdAt - left.createdAt).slice(0, 5);
 }
 
 async function savedProviderEffectReceiptArtifacts(context: CommandContext, laneId: PersonalOpsEffectReceiptLaneId, options: CatalogRankingOptions): Promise<readonly PersonalOpsArtifactSource[]> {
-  return (await personalOpsArtifacts(context, options))
+  return (await personalOpsArtifacts(context, options, PERSONAL_OPS_EFFECT_RECEIPT_PURPOSES, laneId))
     .filter(({ artifact }) => PERSONAL_OPS_EFFECT_RECEIPT_PURPOSES.has(artifactMetadataString(artifact, 'purpose')))
     .filter(({ artifact }) => artifactMetadataString(artifact, 'laneId') === laneId)
     .sort((left, right) => right.artifact.createdAt - left.artifact.createdAt).slice(0, 10);

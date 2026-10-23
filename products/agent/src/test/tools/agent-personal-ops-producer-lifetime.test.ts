@@ -57,7 +57,7 @@ describe('Personal Ops actual producer privacy and lifetimes', () => {
     metadata: { purpose: 'personal-ops-provider-effect-receipt', laneId: 'inbox', status: 'succeeded', publicationGuarantee: 'Committed receipt. password=[REDACTED]' } });
   test('native receipt clocks reach Jev as ISO with complete protected evidence and original ownership', async () => {
     const fake = privacyFixture(); installJudgmentPort(fake.port);
-    const artifact = Object.defineProperty(nativeReceipt(), 'hiddenEvidence', { value: 'Complete retained receipt tail', writable: true });
+    const artifact = Object.defineProperty(nativeReceipt(), 'description', { value: 'Complete retained receipt tail', writable: true });
     const guards: Array<() => void> = [];
     const result = await savedProviderEffectReceiptRecords(context({ artifactStore: { list: () => [artifact] } }), 'inbox', { sourceOwner: ordinaryResearchOwner(), retainCurrent: guard => { guards.push(guard); } });
     expect(result[0]?.status).toBe('succeeded');
@@ -66,7 +66,7 @@ describe('Personal Ops actual producer privacy and lifetimes', () => {
     expect(requests).toContain('Complete retained receipt tail');
     expect(requests).not.toContain('1791684509006');
     for (const guard of guards) guard();
-    Object.defineProperty(artifact, 'hiddenEvidence', { value: 'Changed retained receipt tail' });
+    Object.defineProperty(artifact, 'description', { value: 'Changed retained receipt tail' });
     expect(() => guards.forEach(guard => guard())).toThrow();
   });
   test('native clock projection cannot admit fractional clocks, nested cards or generic receipt clocks', async () => {
@@ -111,10 +111,28 @@ describe('Personal Ops actual producer privacy and lifetimes', () => {
     Object.defineProperty(original, 'accessToken', { value: 'changed-hidden-private' });
     expect(() => guards.forEach(guard => guard())).toThrow();
   });
-  test('uncertain field roles cannot silently replace a numeric producer fact', async () => {
-    const fake = fakePort((name, question) => { if (name !== 'kind') throw new Error(name); return choiceAnswer(question, 'other', 0.2); });
+  test('undeclared field roles cannot silently replace a numeric producer fact or request field inference', async () => {
+    const fake = fakePort(() => { throw new Error('Undeclared native field must stay withheld'); });
     installJudgmentPort(fake.port);
-    await expect(protectPersonalOpsData({ createdAt: 4001 })).rejects.toThrow();
+    await expect(protectPersonalOpsData({ undeclaredClock: 4001 })).rejects.toThrow();
+    expect(fake.requests).toHaveLength(0);
+  });
+  test('unregistered metadata does not inherit native receipt field declarations', async () => {
+    const fake = privacyFixture(); installJudgmentPort(fake.port);
+    const material = 'synthetic violet lantern recovery material';
+    const result = await protectPersonalOpsData({ metadata: { purpose: material, accountRecoveryPhrase: material } });
+    expect(result).toEqual({ metadata: { purpose: '[REDACTED]', accountRecoveryPhrase: '[REDACTED]' } });
+    expect(JSON.stringify(fake.requests)).not.toContain(material);
+    expect(fake.requests.some(request => request.context?.battery === 'engine.redaction.field-kind')).toBe(false);
+  });
+  test('a receipt read selects its native schema before screening unrelated artifact metadata', async () => {
+    const fake = privacyFixture(); installJudgmentPort(fake.port);
+    const material = 'synthetic violet lantern recovery material';
+    const receipt = nativeReceipt(), unrelated = { ...nativeReceipt(), id: 'private-unrelated-artifact', metadata: { purpose: material, laneId: 'inbox' } };
+    const result = await savedProviderEffectReceiptRecords(context({ artifactStore: { list: () => [unrelated, receipt] } }), 'inbox', { sourceOwner: ordinaryResearchOwner() });
+    expect(result).toHaveLength(1);
+    expect(result[0]?.status).toBe('succeeded');
+    expect(JSON.stringify(fake.requests)).not.toContain(material);
   });
   test('a source edit during a privacy reply holds the whole producer DTO', async () => {
     const original = { enabled: true, description: 'Original synthetic producer' }, ordinary = privacyFixture();

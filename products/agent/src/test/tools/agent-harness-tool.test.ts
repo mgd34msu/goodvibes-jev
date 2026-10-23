@@ -3459,7 +3459,7 @@ describe('agent_harness tool', () => {
       let entered = false, touched = 0, retired = false, ranked = false;
       installJudgmentPort({ ...original, async ask(request) {
         ranked ||= request.context?.battery === 'engine.tools.registry-rank';
-        if (!entered && request.context?.battery === 'engine.redaction.field-kind') {
+        if (!entered && request.context?.battery === 'engine.redaction.credential') {
           entered = true;
           if (kind === 'mutation') f.outcome.summary = 'Changed native private source';
           if (kind === 'accessor') Object.defineProperty(f.outcome, 'summary', { get() { touched++; return 'Changed source'; }, configurable: true });
