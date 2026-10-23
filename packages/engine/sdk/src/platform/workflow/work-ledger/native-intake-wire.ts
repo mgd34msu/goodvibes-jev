@@ -8,7 +8,9 @@ export const NATIVE_CONVERSATION_INTAKE_MAX_RESPONSE_BYTES = Infinity;
 const id = string().min(1).max(200);
 const revision = number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
 // Count UTF-16 units and preserve the exact submitted string.
-const text = string().min(1).max(20_000).regex(/\S/, 'Must contain non-whitespace text');
+const text = string().min(1).max(20_000)
+  .refine(value => value.length <= 20_000, 'Must contain at most 20000 UTF-16 code units')
+  .regex(/\S/, 'Must contain non-whitespace text');
 const bounded = (value: unknown, limit: number): boolean => {
   try { const json = JSON.stringify(value); return typeof json === 'string' && new TextEncoder().encode(json).byteLength <= limit; }
   catch { return false; }

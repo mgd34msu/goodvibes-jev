@@ -68,6 +68,9 @@ async function mutate(file: string, callback: (db: SqlDatabase) => void) {
 
 test('capture parser preserves exact input and bounded proposal occurrences; rejects malformed data without invoking accessors', () => {
   const value = capture(), parsed = parseNativeConversationCapture(value); expect(parsed).toEqual(value);
+  const unicodeBoundary = '🧭'.repeat(10_000);
+  expect(capture({ text: unicodeBoundary }).text).toBe(unicodeBoundary);
+  for (const text of [`${unicodeBoundary}x`, '🧭'.repeat(10_001)]) expect(() => capture({ text })).toThrow();
   const first = value.text.indexOf('Same'), second = value.text.lastIndexOf('Same');
   const proposal = { sourceRevision: value.sourceRevision, spans: [{ partId: 'input', start: first, end: first + 4 }, { partId: 'input', start: second, end: second + 4 }] };
   expect(validateNativeConversationProposal(proposal, value.text, value.sourceRevision).spans).toHaveLength(2);

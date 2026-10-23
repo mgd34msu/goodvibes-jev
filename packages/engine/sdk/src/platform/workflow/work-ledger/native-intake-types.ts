@@ -101,7 +101,9 @@ export function validateNativeConversationProposal(value: unknown, text: string,
 }
 const captureSchema = strictObject({
   version: literal(1), projectId: id, principalId: id, inputId: id, requestId: id,
-  text: string().min(1).max(20_000).refine(value => value.trim().length > 0),
+  text: string().min(1).max(20_000)
+    .refine(value => value.length <= 20_000, 'Must contain at most 20000 UTF-16 code units')
+    .refine(value => value.trim().length > 0),
   continuation: nativeConversationContinuationSchema.optional(),
   unsupportedSources: array(strictObject({ kind: enumSchema(['image', 'file', 'context']), label: string().min(1).max(200) })).max(100),
   sourceId: id, sourceRevision: id, sessionId: id,
