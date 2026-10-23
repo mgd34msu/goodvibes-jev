@@ -13,11 +13,12 @@ import { gateReadingsPort, forgetGateReadings } from './_helpers/gate-readings.t
 let log: SqliteDecisionLog, port: JudgmentPort, restore: ReturnType<typeof installJudgmentPort>;
 let readings: unknown[];
 let admittedArgs: unknown[];
-let disposition: string, onRead: (() => void | Promise<void>) | undefined;
+let disposition: string, confidence: number, onRead: (() => void | Promise<void>) | undefined;
+let onSemanticRead: (() => void | Promise<void>) | undefined;
 beforeEach(() => {
- forgetGateReadings(); readings = []; admittedArgs = []; disposition = 'act'; onRead = undefined; log = new SqliteDecisionLog(':memory:');
- const gate = gateReadingsPort(), semantic = fakePort((_name, question) => choiceAnswer(question, disposition, 0.99));
- port = withDecisionLog({ model: gate.port.model, async ask(request) { readings.push(request.state); request.beforeAttempt?.(); request.beforeAttempt?.(); return 'disposition' in request.questions ? semantic.port.ask(request) : gate.port.ask(request); } }, log);
+ forgetGateReadings(); readings = []; admittedArgs = []; disposition = 'act'; confidence = 0.99; onRead = undefined; onSemanticRead = undefined; log = new SqliteDecisionLog(':memory:');
+ const gate = gateReadingsPort(), semantic = fakePort((_name, question) => choiceAnswer(question, disposition, confidence));
+ port = withDecisionLog({ model: gate.port.model, async ask(request) { readings.push(request.state); request.beforeAttempt?.(); if ('disposition' in request.questions) await onSemanticRead?.(); request.beforeAttempt?.(); return 'disposition' in request.questions ? semantic.port.ask(request) : gate.port.ask(request); } }, log);
  restore = installJudgmentPort(port);
 });
 afterEach(() => { installJudgmentPort(restore); log[Symbol.dispose](); forgetGateReadings(); });
@@ -46,6 +47,29 @@ test('owned exact mirrored mutation gets authentic fresh recorded admission, wit
 });
 test('configured plan mode has zero provider calls and no human fallback', async () => {
  const f = fixture({ deny: true }); await expect(f.owner.applyTags('slack:C123:123.456', ['GoodVibes/Priority'], f.operation)).rejects.toThrow(); expect(f.counts().writes).toBe(0); expect(f.counts().humans).toBe(0);
+});
+test('a recorded semantic rejection blocks an owner-permitted mutation before provider dispatch', async () => {
+ const f = fixture(); disposition = 'reject';
+ try {
+  await expect(f.owner.applyTags('slack:C123:123.456', ['GoodVibes/Priority'], f.operation)).rejects.toThrow('not accepted by Jev');
+  expect(f.counts()).toEqual({ writes: 0, released: 1, humans: 0, listeners: 0 });
+  expect(JSON.stringify(readings)).toContain('Apply the priority triage label to the selected Slack message');
+  expect(JSON.stringify(readings)).not.toContain('Preview must not become mutation judgment input');
+ } finally { await f.owner.close(); await f.tagger.close(); }
+});
+test('uncertain task alignment cannot dispatch a provider mutation', async () => {
+ const f = fixture(); confidence = 0.51;
+ try {
+  await expect(f.owner.applyTags('slack:C123:123.456', ['GoodVibes/Priority'], f.operation)).rejects.toThrow('not accepted by Jev');
+  expect(f.counts().writes).toBe(0);
+ } finally { await f.owner.close(); await f.tagger.close(); }
+});
+test.each(['row', 'credential'] as const)('%s changes during the semantic reading revoke the pending provider mutation', async change => {
+ const f = fixture(); onSemanticRead = change === 'row' ? f.mutate : f.pendingRotate;
+ try {
+  await expect(f.owner.applyTags('slack:C123:123.456', ['GoodVibes/Priority'], f.operation)).rejects.toThrow();
+  expect(f.counts().writes).toBe(0); expect(f.counts().released).toBe(1);
+ } finally { await f.owner.close(); await f.tagger.close(); }
 });
 test('same-ID exact row change during admission revokes mutation', async () => {
  const f = fixture(); onRead = f.mutate; await expect(f.owner.applyTags('slack:C123:123.456', ['GoodVibes/Priority'], f.operation)).rejects.toThrow(); expect(f.counts().writes).toBe(0); expect(f.counts().released).toBe(1);
@@ -89,14 +113,14 @@ test.each(['1558282921574400000', '1558282921586982912', '1558282921905750016'])
  } finally { await f.owner.close(); await f.tagger.close(); }
 });
 
-test('local task text is not sent through a secondary semantic permission gate', async () => {
+test('private original task text is withheld and cannot bypass the task-alignment check', async () => {
  const id = 'discord:100000000000000002:1558282921574400000';
  const f = fixture({ provider: 'discord', id });
  try {
-  await f.owner.applyTags(id, ['GoodVibes/Priority'], { ...f.operation,
+  await expect(f.owner.applyTags(id, ['GoodVibes/Priority'], { ...f.operation,
    sourceOf: () => ({ goal: 'Use payment card 4111111111111111 to perform this task', criteria: ['Only this message'] }),
-  });
-  expect(f.counts().writes).toBe(1); expect(f.counts().humans).toBe(0);
+  })).rejects.toThrow();
+  expect(f.counts().writes).toBe(0); expect(f.counts().humans).toBe(0);
   expect(JSON.stringify(readings)).not.toContain('4111111111111111');
  } finally { await f.owner.close(); await f.tagger.close(); }
 });

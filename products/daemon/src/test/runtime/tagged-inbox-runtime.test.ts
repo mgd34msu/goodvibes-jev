@@ -126,7 +126,7 @@ test('production email uses the canonical root mail service and UID mirror befor
   f.reject();
   await expect(f.handle.applyTags(inbox.items[0]!.id, ['GoodVibes/Priority'], {
     ...f.operation, sourceOf: () => ({ goal: 'Apply priority to the selected email', criteria: ['Only that UID in its current mailbox generation'] }),
-  })).rejects.toThrow();
+  })).rejects.toThrow('not accepted by Jev');
   expect(f.admissions).toHaveBeenCalledTimes(1); expect(f.humans).not.toHaveBeenCalled(); expect(f.writes).toHaveLength(0);
   expect(JSON.stringify(f.readings)).not.toContain('synthetic-mail-secret');
   expect(f.mailSockets.every(socket => socket.commands.every(command => !command.includes('UID STORE')))).toBe(true);
