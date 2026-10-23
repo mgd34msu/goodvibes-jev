@@ -15,6 +15,7 @@ export const AGENT_HARNESS_GROUP_FILES = {
   'harness-knowledge-learning': 'src/test/tools/agent-harness-knowledge-learning.test.ts',
   'harness-integrations': 'src/test/tools/agent-harness-integrations.test.ts',
   'harness-workspace-interface': 'src/test/tools/agent-harness-workspace-interface.test.ts',
+  'harness-workspace-surfaces': 'src/test/tools/agent-harness-workspace-surfaces.test.ts',
   'harness-settings-actions': 'src/test/tools/agent-harness-settings-actions.test.ts',
   'harness-stateful-catalogs': 'src/test/tools/agent-harness-stateful-catalogs.test.ts',
   'routing-engine-integration': 'src/test/tools/agent-route-engine-integration.test.ts',

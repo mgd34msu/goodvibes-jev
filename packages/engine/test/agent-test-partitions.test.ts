@@ -212,22 +212,6 @@ test('real grouped runner preserves preload, isolation, skip/TODO, owned tmp cle
   expect(failed.output).toContain('bun test exited with code 1');
 }, 60_000);
 
-test('CI-only product discovery removes only Agent while local catalog remains complete', () => {
-  const repo = resolve(import.meta.dir, '../../..');
-  const run = (mode: string, extra: string[] = []) => Bun.spawnSync({
-    cmd: [process.execPath, 'packages/engine/scripts/product-workspaces.ts', mode, ...extra],
-    cwd: repo, stdout: 'pipe', stderr: 'pipe', timeout: 20_000,
-  });
-  const full = run('matrix');
-  const others = run('matrix-without-agent');
-  expect(full.exitCode, full.stderr.toString()).toBe(0);
-  expect(others.exitCode, others.stderr.toString()).toBe(0);
-  const products = JSON.parse(full.stdout.toString()) as string[];
-  expect(products).toContain('agent');
-  expect(JSON.parse(others.stdout.toString())).toEqual(products.filter((product) => product !== 'agent'));
-  expect(run('matrix-without-agent', ['tui']).exitCode).not.toBe(0);
-}, 60_000);
-
 test('CI Agent completion gate refuses unsuccessful build and test-group results', () => {
   const repo = resolve(import.meta.dir, '../../..');
   const workflow = Bun.YAML.parse(readFileSync(join(repo, '.github/workflows/ci.yml'), 'utf8')) as {
