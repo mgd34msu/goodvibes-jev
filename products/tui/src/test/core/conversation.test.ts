@@ -58,10 +58,11 @@ describe('ConversationManager', () => {
     });
 
     test('addToolResults adds tool result messages', () => {
+      cm.addAssistantMessage('', { toolCalls: [{ id: 'c1', name: 'read', arguments: {} }] });
       cm.addToolResults([{ callId: 'c1', success: true, output: 'file content' }]);
       const msgs = cm.getMessagesForLLM();
-      expect(msgs).toHaveLength(1);
-      expect(msgs[0]).toMatchObject({ role: 'tool', callId: 'c1', content: 'file content' });
+      expect(msgs).toHaveLength(2);
+      expect(msgs[1]).toMatchObject({ role: 'tool', callId: 'c1', content: 'file content' });
     });
 
     test('addToolResults carries through the matching tool name when a prior assistant tool call exists', () => {
@@ -74,16 +75,18 @@ describe('ConversationManager', () => {
     });
 
     test('addToolResults with failure includes error message', () => {
+      cm.addAssistantMessage('', { toolCalls: [{ id: 'c2', name: 'read', arguments: {} }] });
       cm.addToolResults([{ callId: 'c2', success: false, error: 'permission denied' }]);
       const msgs = cm.getMessagesForLLM();
-      expect(msgs[0]).toMatchObject({ role: 'tool', callId: 'c2' });
-      expect((msgs[0] as { content: string }).content).toContain('Error: permission denied');
+      expect(msgs[1]).toMatchObject({ role: 'tool', callId: 'c2' });
+      expect((msgs[1] as { content: string }).content).toContain('Error: permission denied');
     });
 
     test('addToolResults with no output uses default message', () => {
+      cm.addAssistantMessage('', { toolCalls: [{ id: 'c3', name: 'exec', arguments: {} }] });
       cm.addToolResults([{ callId: 'c3', success: true }]);
       const msgs = cm.getMessagesForLLM();
-      expect((msgs[0] as { content: string }).content).toBe('Tool completed successfully.');
+      expect((msgs[1] as { content: string }).content).toBe('Tool completed successfully.');
     });
 
     test('system messages are excluded from LLM messages', () => {

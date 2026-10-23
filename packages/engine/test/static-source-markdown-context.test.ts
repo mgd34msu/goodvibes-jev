@@ -65,7 +65,9 @@ test('fenced quote boundaries and real enclosing heading survive fake headings i
   expect(containing?.source).toContain(`${closing}| \`\`\``);
 });
 
-test('complete oversized defining context fails before dispatch instead of being clipped', () => {
-  const text = table('A'.repeat(200_000), 1);
-  expect(() => captureStaticInputs('internal-identifier', 'docs/table.md', text)).toThrow('complete source unit and context exceed the canonical request budget');
+test('long defining prose remains complete in captured source input', () => {
+  const prose = 'A'.repeat(200_000), text = table(prose, 1);
+  const inputs = captureStaticInputs('internal-identifier', 'docs/table.md', text);
+  expect(inputs.flatMap(input => input.anchors)).toEqual(internalSourceAnchors('docs/table.md', text));
+  expect(inputs.every(input => input.source.includes(prose))).toBe(true);
 });
