@@ -178,9 +178,7 @@ describe('Agent adopts the shared permission gate without alternate authority', 
     const args = Object.freeze({ path: 'fixture.txt' });
     expect((await gate.run('read', args))[0]?.success).toBe(true);
     expect(gate.executed).toEqual([args]);
-    expect(answers.requests.length).toBeGreaterThan(0);
-    expect(answers.requests.every(request => !Object.hasOwn(request.questions, 'disposition'))).toBe(true);
-    expect(answers.requests.every(request => request.context?.battery === 'engine.redaction.field-kind')).toBe(true);
+    expect(answers.requests).toHaveLength(0);
     expect(log.query({ site: 'engine.gate.autonomous-tool' })).toHaveLength(0);
   });
 });

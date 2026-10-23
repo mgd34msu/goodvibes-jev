@@ -1,12 +1,27 @@
+import { execFileSync } from 'node:child_process';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
 /** Exact synthetic metadata fixtures for the support-bundle containment test.
  * Unknown destinations/methods and connection prewarms fail closed. This does
  * not replace the ordinary runner's network guard or authorize live requests.
  */
 export async function withOfflineProviderMetadata<T>(run: () => Promise<T>): Promise<{ result: T; requests: readonly string[] }> {
+  const archiveRoot = mkdtempSync(join(tmpdir(), 'agent-offline-catalog-'));
+  let repositoryArchive: ArrayBuffer;
+  try {
+    const providerPath = 'models-dev-fixture/providers/offline/provider.toml';
+    mkdirSync(join(archiveRoot, 'models-dev-fixture/providers/offline'), { recursive: true });
+    writeFileSync(join(archiveRoot, providerPath), 'name="Offline fixture"\nenv=[]\n');
+    const archive = execFileSync('tar', ['-czf', '-', '-C', archiveRoot, providerPath], { timeout: 30_000, maxBuffer: 256 * 1024 });
+    repositoryArchive = Uint8Array.from(archive).buffer;
+  } finally { rmSync(archiveRoot, { recursive: true, force: true }); }
+  const repositoryUrl = 'https://codeload.github.com/anomalyco/models.dev/tar.gz/refs/heads/dev';
   const fixtures = new Map<string, unknown>([
     ['https://openrouter.ai/api/v1/models', { data: [] }],
     ['https://api.zeroeval.com/leaderboard/models/full?justCanonicals=true', []],
-    ['https://models.dev/api.json', {}],
+    [repositoryUrl, repositoryArchive],
     ['https://aihubmix.com/api/v1/models', { data: [] }],
     ['https://ai-gateway.vercel.sh/v1/models', { data: [] }],
   ]);
@@ -32,6 +47,7 @@ export async function withOfflineProviderMetadata<T>(run: () => Promise<T>): Pro
     }
     requests.push(request.url);
     if (unavailable.has(request.url)) return new Response('Synthetic local provider unavailable', { status: 503 });
+    if (request.url === repositoryUrl) return new Response(repositoryArchive, { headers: { 'content-type': 'application/gzip' } });
     return Response.json(fixtures.get(request.url));
   }, { preconnect: (..._args: Parameters<typeof fetch.preconnect>) => {
     rejected.push('preconnect');

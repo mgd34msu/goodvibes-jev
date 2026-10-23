@@ -59,6 +59,7 @@ describe('runtime turn substrate', () => {
     previousJudgmentPort = installJudgmentPort(fakePort((name, question) => {
       if (name === 'intent') return choiceAnswer(question, 'chat', 0.97);
       if (name === 'needs_plan') return noulAnswer(0.03);
+      if (['false_blocker', 'unfinished', 'unsupported', 'unanswered', 'unnecessary_permission'].includes(name)) return noulAnswer(0.001);
       if (name === 'risk') return scoreAnswer(question, 0, 0.97);
       throw new Error(`Unexpected turn reading: ${name}`);
     }).port);

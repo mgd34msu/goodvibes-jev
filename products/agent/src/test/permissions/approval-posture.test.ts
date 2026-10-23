@@ -13,7 +13,7 @@ import { resetSettingsControlPlaneStore } from '../helpers/settings-control-plan
 import { computeApprovalPosture, readApprovalPostureFromConfig } from '../../permissions/approval-posture.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { forgetCatastrophicReadings, presetForMode } from '@goodvibes-jev/engine/sdk/platform/gate';
+import { forgetCatastrophicReadings } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { buildShellFooter } from '../../renderer/shell-surface.ts';
 import { approvalPostureReadings, POSTURE_CALLS } from '../helpers/approval-posture-readings.ts';
 
@@ -196,10 +196,11 @@ describe('approval posture: shared helper agrees with the real permission gate',
     }
   });
 
-  test('mode details retain the public preset summary and the boundary caveat', () => {
+  test('mode details describe the native policy and retained authority boundaries', () => {
     for (const mode of ['prompt', 'allow-all', 'custom', 'plan', 'accept-edits'] as const) {
       const posture = computeApprovalPosture({ autoApprove: false, mode });
-      expect(posture.detail).toContain(presetForMode(mode).summary);
+      expect(posture.detail).toContain(`permissions.mode is ${mode}`);
+      expect(posture.detail).toContain('Calls require current invocation authority');
       expect(posture.detail).toContain('Configured denials');
       expect(posture.bypassesPrompts).toBe(false);
     }

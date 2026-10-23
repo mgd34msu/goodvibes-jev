@@ -3,7 +3,7 @@ import { writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import type { JudgmentPort, JudgmentRequest, JudgmentResult, Questions } from '@goodvibes-jev/judgment';
-import { choiceAnswer, fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import { ConfigManager } from '@goodvibes-jev/engine/sdk/platform/config';
 import type { CommandContext } from '../../input/command-registry.ts';
@@ -145,20 +145,15 @@ describe('knowledgeCommand', () => {
   let memoryRegistry: MemoryRegistry;
   let configManager: ConfigManager;
   let restoreJudgment: (() => void) | undefined;
+  let previousJudgment: JudgmentPort | undefined;
 
-  function installArtifactKindReadings(filename: string, title: string) {
+  function installKnowledgeSourceReadings(title: string) {
     const rejected: string[] = [];
     const readings = fakePort((name, question, state) => {
       if (!object(state)) throw new Error('Missing artifact fixture state');
       const input = state;
-      if (name === 'kind' && input.filename === filename && input.mimeType === 'text/markdown') {
-        return choiceAnswer(question, 'document', 0.99);
-      }
       if (name === 'included' && object(input.candidate) && input.candidate.kind === 'source'
         && object(input.candidate.content) && input.candidate.content.title === title) return noulAnswer(0.99);
-      // Diagnostic field roles are outside this extraction fixture. Uncertainty
-      // withholds their values rather than inventing a safe classification.
-      if (name === 'kind' && typeof input.field === 'string') return choiceAnswer(question, 'other', 0.5);
       rejected.push(name);
       throw new Error(`Unexpected knowledge command reading: ${name}`);
     });
@@ -168,6 +163,7 @@ describe('knowledgeCommand', () => {
   }
 
   beforeEach(() => {
+    previousJudgment = installJudgmentPort(undefined);
     printed = [];
     root = makeProjectTempDir('gv-knowledge-command');
     configManager = new ConfigManager({ surfaceRoot: 'tui',  configDir: join(root, '.goodvibes', 'tui'), workingDir: root });
@@ -180,6 +176,7 @@ describe('knowledgeCommand', () => {
   afterEach(() => {
     restoreJudgment?.();
     restoreJudgment = undefined;
+    installJudgmentPort(previousJudgment);
     memoryStore.close();
   });
 
@@ -407,7 +404,7 @@ describe('knowledgeCommand', () => {
     const knowledgeService = new KnowledgeService(knowledgeStore, artifactStore, undefined, { memoryRegistry });
     const filePath = join(root, 'agent-guide.md');
     const text = '# Agent Guide\n\nUse Agent Knowledge for product-owned references.\n';
-    const readings = installArtifactKindReadings('agent-guide.md', 'Agent Guide');
+    const readings = installKnowledgeSourceReadings('Agent Guide');
     writeFileSync(filePath, text);
 
     await knowledgeCommand.handler(
@@ -435,7 +432,7 @@ describe('knowledgeCommand', () => {
     // Optional semantic enrichment is outside this extraction fixture and
     // remains fail-closed rather than inventing facts for the document.
     expect(readings.rejected.filter(name => name !== 'wanted')).toEqual([]);
-    expect(readings.requests.some(request => Object.hasOwn(request.questions, 'kind'))).toBe(true);
+    expect(readings.requests.some(request => Object.hasOwn(request.questions, 'kind'))).toBe(false);
   });
 
   test('ingests a saved artifact id into Agent Knowledge only after confirmation', async () => {
@@ -452,13 +449,12 @@ describe('knowledgeCommand', () => {
     await memoryStore.init();
     const knowledgeService = new KnowledgeService(knowledgeStore, artifactStore, undefined, { memoryRegistry });
     const text = '# Reviewed Export\n\nPromote this artifact into Agent Knowledge.\n';
-    const readings = installArtifactKindReadings('reviewed-export.md', 'Reviewed Export');
+    const readings = installKnowledgeSourceReadings('Reviewed Export');
     const artifact = await artifactStore.create({
       filename: 'reviewed-export.md',
       text,
     });
-    expect(readings.requests).toHaveLength(1);
-    expect(Object.keys(readings.requests[0]!.questions)).toEqual(['kind']);
+    expect(readings.requests).toHaveLength(0);
 
     await knowledgeCommand.handler(
       ['ingest-artifact', artifact.id, '--title', 'Reviewed Export', '--tags', 'artifact,reviewed'],
@@ -467,7 +463,7 @@ describe('knowledgeCommand', () => {
 
     expect(printed.join('\n')).toContain('Refusing to ingest artifact into Agent Knowledge');
     expect(knowledgeStore.listSources()).toHaveLength(0);
-    expect(readings.requests).toHaveLength(1);
+    expect(readings.requests).toHaveLength(0);
 
     printed = [];
     await knowledgeCommand.handler(

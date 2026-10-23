@@ -105,7 +105,7 @@ describe('TelemetryApiService', () => {
     expect(snapshot.aggregates.totalEvents).toBe(3);
     expect(snapshot.aggregates.totalErrors).toBeGreaterThanOrEqual(2);
     const submitted = snapshot.recent.events.items.find((record) => record.type === 'TURN_SUBMITTED');
-    expect((submitted?.payload as { prompt?: string } | undefined)?.prompt).toBe('[REDACTED]');
+    expect((submitted?.payload as { prompt?: string } | undefined)?.prompt).toBe('[REDACTED_TEXT]');
     expect(JSON.stringify(snapshot.recent.events.items)).not.toContain('hello');
 
     const errors = telemetry.listErrors({ limit: 5 });

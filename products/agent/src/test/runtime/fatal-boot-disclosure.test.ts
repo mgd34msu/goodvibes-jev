@@ -197,7 +197,7 @@ describe('the shape that shipped writes NOTHING once the output guard is on', ()
     expect(activity).toContain('Intercepted terminal output while TUI renderer was active');
     expect(activity).toContain('goodvibes-agent failed to launch');
     expect(activity).toContain('[ERROR] Fatal error');
-    expect(activity).toContain('"text": "[REDACTED]"');
+    expect(activity).toContain('"text": "[REDACTED_TEXT]"');
   });
 });
 

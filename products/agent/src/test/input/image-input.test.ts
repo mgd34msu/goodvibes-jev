@@ -359,6 +359,9 @@ describe('Orchestrator capability check for non-multimodal models', () => {
       if (name === 'intent') return choiceAnswer(question, 'chat', 0.97);
       if (name === 'needs_plan') return noulAnswer(0.03);
       if (name === 'risk') return scoreAnswer(question, 0, 0.97);
+      if (['false_blocker', 'unfinished', 'unsupported', 'unanswered', 'unnecessary_permission'].includes(name)) {
+        return noulAnswer(0.001);
+      }
       throw new Error(`Unexpected image-input turn reading: ${name}`);
     }).port);
     const providerRequests: ChatRequest[] = [];

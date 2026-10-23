@@ -253,28 +253,30 @@ describe('runtime substrate gate', () => {
     collector.dispose();
   });
 
-  test('repeated all-failed tool turns trip the circuit breaker with typed terminal evidence', async () => {
+  test('repeated failed tool rounds request recovery and complete only after a checked repair', async () => {
     configManager.set('display.stream', false);
-    const { orchestrator, store, registry, collector } = buildHarness();
-    // Random UUID digits can resemble card material and trip the unchanged privacy guard.
-    // This fixture exercises repeated tool failure, so use short, distinct call IDs.
+    const { orchestrator, store, collector } = buildHarness();
     let callSequence = 0;
+    const recoveryRequests: ChatRequest[] = [];
     const provider: LLMProvider = {
-      name: 'mock',
-      models: ['mock-model'],
-      chat: mock(async (): Promise<ChatResponse> => ({
-        content: '',
-        toolCalls: [{ id: `call-fixture-${++callSequence}`, name: 'missing_tool', arguments: {} }],
-        usage: { inputTokens: 5, outputTokens: 1 },
-        stopReason: 'tool_call',
-      })),
+      name: 'mock', models: ['mock-model'],
+      chat: mock(async (request: ChatRequest): Promise<ChatResponse> => {
+        recoveryRequests.push(request);
+        const recovered = ++callSequence > 10;
+        return {
+          content: recovered ? 'Recovered after inspecting the failed tool calls.' : '',
+          toolCalls: recovered ? [] : [{ id: `call-fixture-${callSequence}`, name: 'missing_tool', arguments: {} }],
+          usage: { inputTokens: 5, outputTokens: 1 },
+          stopReason: recovered ? 'completed' : 'tool_call',
+        };
+      }),
     };
-
-    await withMockProvider(provider, () => orchestrator.handleUserInput('loop forever'));
-
-    expect(store.getState().conversation.turnState).toBe('failed');
-    expect(store.getState().conversation.lastTurnStopReason).toBe('tool_loop_circuit_breaker');
-    expect((await waitForReport(registry)).classification).toBe('tool_failure');
+    await withMockProvider(provider, () => orchestrator.handleUserInput('Exercise recovery from repeated tool failures.'));
+    expect(callSequence).toBe(11);
+    expect(recoveryRequests.at(-1)?.systemPrompt).toContain('[Tool recovery] 10 consecutive tool rounds failed.');
+    expect(store.getState().conversation.turnState).toBe('completed');
+    expect(store.getState().conversation.lastTurnStopReason).toBe('completed');
+    expect(judgmentLog.query({ site: 'engine.core.response-completion' }).length).toBeGreaterThan(0);
     collector.dispose();
   });
 });

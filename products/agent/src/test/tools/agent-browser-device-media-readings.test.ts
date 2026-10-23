@@ -291,7 +291,8 @@ describe('original catalog query semantics', () => {
     const fitInstruction = 'Does this existing candidate actually represent the record requested by the complete query, including its purpose, state, and supplied evidence? A shared word or a suggested action is insufficient.';
     const fake = fakePort((name, question, state) => {
       if (!state || typeof state !== 'object' || Array.isArray(state) || !('context' in state)
-        || !isDeepStrictEqual(state.context, { query }) || !('candidates' in state) || !Array.isArray(state.candidates)
+        || !isDeepStrictEqual(state.context, { query }) || !('selectionFitInstructions' in state)
+        || state.selectionFitInstructions !== fitInstruction || !('candidates' in state) || !Array.isArray(state.candidates)
         || state.candidates.length !== 2) throw new Error('Unexpected complete selection state.');
       const [first, second] = state.candidates;
       if (!first || typeof first !== 'object' || Array.isArray(first) || !('id' in first) || first.id !== '0'
@@ -304,8 +305,8 @@ describe('original catalog query semantics', () => {
         && isDeepStrictEqual(question.criteria, { '0': null, '1': null, none: 'None of the candidates does what is needed.' })) {
         return choiceAnswer(question, kind === 'none' ? 'none' : '1', kind === 'uncertain' ? .5 : .999);
       }
-      if (name === 'fits_0' && isDeepStrictEqual(question, noul({ question: fitInstruction, candidate: '`candidates[0]` (id "0")' }))) return noulAnswer(.001);
-      if (name === 'fits_1' && isDeepStrictEqual(question, noul({ question: fitInstruction, candidate: '`candidates[1]` (id "1")' }))) return noulAnswer(kind === 'none' ? .001 : .999);
+      if (name === 'fits_0' && isDeepStrictEqual(question, noul({ question: 'Apply the complete selectionFitInstructions in state to this exact candidate.', candidate: '`candidates[0]` (id "0")' }))) return noulAnswer(.001);
+      if (name === 'fits_1' && isDeepStrictEqual(question, noul({ question: 'Apply the complete selectionFitInstructions in state to this exact candidate.', candidate: '`candidates[1]` (id "1")' }))) return noulAnswer(kind === 'none' ? .001 : .999);
       throw new Error('Unexpected selection question.');
     });
     installJudgmentPort(fake.port); let published = 0;
