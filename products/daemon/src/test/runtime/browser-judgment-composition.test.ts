@@ -383,7 +383,7 @@ test.each(['config', 'credentials', 'registry'] as const)('catalog browser compo
   let generation = 0; let changed: (key: string) => void = () => {};
   const registry = { captureProviderCatalogIds() {
     const epoch = generation;
-    return { providerIds: ['inception'], catalogProviderIds: ['inceptionlabs'], assertCurrent() { if (epoch !== generation) throw new Error('Changed source'); } };
+    return { providerIds: ['fixture-runtime-provider'], catalogProviderIds: ['fixture-catalog-provider'], assertCurrent() { if (epoch !== generation) throw new Error('Changed source'); } };
   } };
   const inner: JudgmentPort = { model: 'jev-1.13.0', async ask(input) {
     calls.push(input.state); entered.resolve(); await release.promise;
@@ -395,7 +395,7 @@ test.each(['config', 'credentials', 'registry'] as const)('catalog browser compo
     secrets: { onDidChange(listener) { changed = listener; return () => {}; } },
     disposal: { add(_label, dispose) { cleanup.push(dispose); } },
   });
-  const request = () => ({ protocolVersion: 1, batteryVersion: 1, requestId: crypto.randomUUID(), battery: 'webui.models.catalog-provider-match', input: { providerId: 'inception', keys: ['inceptionlabs'] } });
+  const request = () => ({ protocolVersion: 1, batteryVersion: 1, requestId: crypto.randomUUID(), battery: 'webui.models.catalog-provider-match', input: { providerId: 'fixture-runtime-provider', keys: ['fixture-catalog-provider'] } });
   try {
     const result = service.execute(request(), principal, new AbortController().signal, () => principal).then(() => 'published', () => 'held');
     await entered.promise;
@@ -404,6 +404,6 @@ test.each(['config', 'credentials', 'registry'] as const)('catalog browser compo
     if (kind === 'registry') generation++;
     release.resolve(); expect(await result).toBe('held'); expect(log.query()).toEqual([]);
     expect(await service.execute(request(), principal, new AbortController().signal, () => principal)).toMatchObject({ status: 'settled', value: { matches: [true] } });
-    expect(calls).toEqual([{ providerId: 'inception', key: 'inceptionlabs' }, { providerId: 'inception', key: 'inceptionlabs' }]);
+    expect(calls).toEqual([{ providerId: 'fixture-runtime-provider', key: 'fixture-catalog-provider' }, { providerId: 'fixture-runtime-provider', key: 'fixture-catalog-provider' }]);
   } finally { release.resolve(); for (const dispose of cleanup.reverse()) await dispose(); }
 });

@@ -26,7 +26,7 @@ import { choiceAnswer, fakePort, noulAnswer, scoreAnswer } from '@goodvibes-jev/
 import { startDaemonFixture, type DaemonFixture } from '../../testing/daemon-fixture.ts';
 import { makeOwnedTempDir } from '../helpers/owned-temp.js';
 
-/** Only the two readings this synthetic text-only turn requires are supplied. */
+/** Scoped offline readings for this synthetic text-only turn and its completion. */
 function installWireReadings() {
   const core = fakePort((name, question) => {
     if (name === 'intent') return choiceAnswer(question, 'chat', 0.97);
@@ -38,12 +38,15 @@ function installWireReadings() {
     if (name === 'route') return choiceAnswer(question, 'converse', 0.97);
     throw new Error(`Unexpected wire intake fixture question: ${name}`);
   });
+  const completion = fakePort(() => noulAnswer(0.01));
   const port: JudgmentPort = {
     model: core.port.model,
     ask(request) {
       const battery = request.context?.battery;
       if (battery === 'engine.core.turn-shape') return core.port.ask(request);
       if (battery === 'contract.request-route') return intake.port.ask(request);
+      if (['engine.core.response-completion', 'engine.core.execution-assurance', 'engine.core.delegation-consolidation']
+        .includes(String(battery))) return completion.port.ask(request);
       return Promise.reject(new Error(`Unexpected wire fixture battery: ${battery ?? '(unnamed)'}`));
     },
   };
@@ -69,7 +72,7 @@ function startScriptedModel(): ReturnType<typeof Bun.serve> {
       if (request.method !== 'POST' || url.pathname !== '/v1/chat/completions') return new Response('Unexpected fixture request', { status: 404 });
       const body = await request.json() as { messages?: unknown[]; stream?: boolean; model?: string };
       modelRequests.push({ messages: JSON.stringify(body.messages ?? []), stream: body.stream === true, model: body.model });
-      const content = `${REPLY_MARKER} answered`;
+      const content = `${REPLY_MARKER} Hello from the wire test.`;
       if (body.stream === true) {
         const chunk = (delta: Record<string, unknown>, finish: string | null): string => `data: ${JSON.stringify({
           id: 'chatcmpl-wire',
@@ -374,6 +377,7 @@ describe('a hosted session over the HTTP control plane', () => {
       });
 
       expect(modelRequests.some((request) => request.stream && request.model === 'wire-model')).toBe(true);
+      expect(modelRequests.filter(request => request.messages.includes('say hello from the wire test'))).toHaveLength(1);
 
       const detached = await invokeOverHttp<{ session: HostedSession }>('sessions.hosted.detach', { sessionId, clientId: 'wire-client' });
       expect(detached.session.status).toBe('idle');
@@ -391,6 +395,11 @@ describe('a hosted session over the HTTP control plane', () => {
       readings.restore(); restored = true;
       const killed = await invokeOverHttp<{ session: HostedSession }>('sessions.hosted.kill', { sessionId });
       expect(killed.session.terminatedReason).toBe('killed');
-    } finally { if (!restored) readings.restore(); }
+    } finally {
+      if (!restored) {
+        try { await invokeOverHttp('sessions.hosted.kill', { sessionId }); }
+        finally { readings.restore(); }
+      }
+    }
   });
 });
