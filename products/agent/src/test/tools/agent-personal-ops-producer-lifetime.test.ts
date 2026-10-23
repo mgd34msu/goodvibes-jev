@@ -125,6 +125,19 @@ describe('Personal Ops actual producer privacy and lifetimes', () => {
     expect(JSON.stringify(fake.requests)).not.toContain(material);
     expect(fake.requests.some(request => request.context?.battery === 'engine.redaction.field-kind')).toBe(false);
   });
+  test('only the native embedding provider metadata path preserves provider flags', async () => {
+    const fake = privacyFixture(); installJudgmentPort(fake.port);
+    const material = 'synthetic violet lantern recovery material';
+    const original = { embeddings: { providers: [{ id: 'native-local', metadata: {
+      local: true, hasSyncEmbed: true, accountRecoveryPhrase: material,
+    } }] } };
+    expect(await protectPersonalOpsData(original)).toEqual({ embeddings: { providers: [{ id: 'native-local', metadata: {
+      local: true, hasSyncEmbed: true, accountRecoveryPhrase: '[REDACTED]',
+    } }] } });
+    await expect(protectPersonalOpsData({ metadata: { local: true, hasSyncEmbed: true } })).rejects.toThrow();
+    expect(JSON.stringify(fake.requests)).not.toContain(material);
+    expect(fake.requests.some(request => request.context?.battery === 'engine.redaction.field-kind')).toBe(false);
+  });
   test('a receipt read selects its native schema before screening unrelated artifact metadata', async () => {
     const fake = privacyFixture(); installJudgmentPort(fake.port);
     const material = 'synthetic violet lantern recovery material';

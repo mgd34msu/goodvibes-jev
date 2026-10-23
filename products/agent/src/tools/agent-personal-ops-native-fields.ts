@@ -72,6 +72,21 @@ const NATIVE_FIELDS = new Set([
   'lastUpdatedAt', 'transport', 'connectedAt', 'runnerContract', 'knowledgeInjections',
   'linked', 'notes', 'activePlan', 'workPlan', 'updatedBy',
   'researchFile',
+  'sourceRecordId', 'reviewRecordCount', 'reviewLabels', 'reviewKinds', 'reviewRecordIds', 'fullRawConnectorOutputStored',
+  'threads', 'messages', 'events', 'items', 'results', 'effectReceiptIds', 'threadId', 'messageId', 'eventId',
+  'calendarId', 'taskId', 'reminderId', 'subject', 'from', 'labels', 'receivedAt', 'snippet', 'preview',
+  'start', 'end', 'startsAt', 'endsAt', 'conflicts', 'attendees', 'organizer', 'location',
+  'threadRoute', 'messageRoute', 'getThreadRoute', 'replyRoute', 'sendReplyRoute', 'draftReplyRoute',
+  'sendRoute', 'sendMessageRoute', 'archiveRoute', 'labelRoute', 'applyLabelRoute',
+  'eventRoute', 'getEventRoute', 'editRoute', 'updateRoute', 'rsvpRoute', 'deleteRoute',
+  'getTaskRoute', 'getReminderRoute', 'getScheduleRoute', 'completeRoute', 'doneRoute', 'dismissRoute',
+  'deferRoute', 'snoozeRoute', 'rescheduleRoute', 'dueAt', 'dueDate', 'scheduledAt', 'priority',
+  'respondRoute', 'patchRoute', 'finishRoute',
+  'backend', 'available', 'indexedRecords', 'embeddingProviderId', 'embeddingProviderLabel', 'platformLimitReason',
+  'checkedAt', 'embeddings', 'activeProviderId', 'asyncProviders', 'syncProviders', 'warnings', 'local', 'hasSyncEmbed',
+  'promptEligible', 'correlationId', 'capabilities', 'read', 'write', 'sync', 'forget', 'receipts',
+  'promptPolicy', 'eligible', 'receiptStreamStatus', 'supermemory', 'mem0', 'zep',
+  'reminders', 'project', 'remindAt', 'cadence', 'deliveryTarget',
 ]);
 
 export function personalOpsNativeFields(value: unknown): NonNullable<StructuredRedactionOptions['declaredFields']> {
@@ -81,10 +96,12 @@ export function personalOpsNativeFields(value: unknown): NonNullable<StructuredR
     if (Array.isArray(entry)) { for (const child of entry) visit(child, [...path, '*']); return; }
     if (entry === null || typeof entry !== 'object') return;
     // An arbitrary artifact's metadata cannot adopt native DTO declarations.
-    // Only the native receipt/review discriminants select these schemas.
+    // Receipt/review discriminants and the exact native embedding-provider
+    // metadata path select these schemas.
     if (path.at(-1) === 'metadata') {
       const purpose = (entry as Record<string, unknown>).purpose;
-      if (typeof purpose !== 'string' || !NATIVE_METADATA_PURPOSES.has(purpose.trim())) return;
+      const embeddingProvider = path.slice(-4).join('.') === 'embeddings.providers.*.metadata';
+      if (!embeddingProvider && (typeof purpose !== 'string' || !NATIVE_METADATA_PURPOSES.has(purpose.trim()))) return;
     }
     for (const [key, child] of Object.entries(entry)) {
       const childPath = [...path, key], identity = JSON.stringify(childPath);
