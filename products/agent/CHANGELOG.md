@@ -4,6 +4,8 @@ Product-facing release notes for GoodVibes Agent.
 
 ## Unreleased
 
+- Validate independent Personal Ops sources at publication instead of repeatedly joining earlier catalogs into every later reading. Preserve cancellation, current permissions, complete candidate discovery, and final source checks.
+
 - Require validated runtime evidence for advertised process capabilities; method names alone no longer establish PTY or stdin contracts.
 
 - Interpret ambiguous privilege-command text through the protected Jev reader, so printing a program name does not block an ordinary background command. Literal privileged programs and independent execution admission retain their existing restrictions.

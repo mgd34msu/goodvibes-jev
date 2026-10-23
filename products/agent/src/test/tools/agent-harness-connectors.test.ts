@@ -1,5 +1,6 @@
 import { cleanupResearchScreeningFixtures } from '../helpers/research-screening.ts';
-import { afterAll, afterEach, beforeEach, describe, expect, setSystemTime, test } from 'bun:test';
+import { afterAll, afterEach, beforeEach, describe, expect, setSystemTime, spyOn, test } from 'bun:test';
+import * as operatorContracts from '@goodvibes-jev/engine/sdk/contracts';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { installAgentMcpCallRoute, resetAgentMcpCallRouteForTests } from '../../tools/agent-mcp-call-route.ts';
 import { SqliteDecisionLog, withDecisionLog, type JudgmentPort } from '@goodvibes-jev/judgment';
@@ -13,12 +14,20 @@ afterAll(cleanupResearchScreeningFixtures);
 describe('agent_harness tool', () => {
 let previousPort: JudgmentPort | undefined;
 let fixtureLog: SqliteDecisionLog;
+let contractGetter: ReturnType<typeof spyOn<typeof operatorContracts, 'getOperatorContract'>>;
 beforeEach(() => {
     resetAgentMcpCallRouteForTests();
+    // These cases exercise MCP discovery and effects when no daemon-native
+    // operations are available. Full native-contract enumeration has its own
+    // functional controls in agent-harness-catalog-ranking.test.ts.
+    const native = operatorContracts.OPERATOR_CONTRACT;
+    contractGetter = spyOn(operatorContracts, 'getOperatorContract').mockReturnValue({
+      ...native, operator: { ...native.operator, methods: [] },
+    });
     fixtureLog = new SqliteDecisionLog(':memory:');
     previousPort = installJudgmentPort(withDecisionLog(createHarnessFixtureReadings(), fixtureLog));
   });
-afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previousPort); fixtureLog[Symbol.dispose](); });
+afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previousPort); fixtureLog[Symbol.dispose](); contractGetter.mockRestore(); });
 
 
   test.each(['ops', 'inboxIntake', 'draftIntake', 'calendarIntake', 'missingRead', 'unavailableRead', 'executedRead', 'briefing', 'compactBriefing', 'blockedWrite', 'lane', 'queue', 'compactQueue', 'compactQueueOwnerChange'] as const)('surfaces email and calendar MCP connectors as Personal Ops setup routes: %s', async surface => {

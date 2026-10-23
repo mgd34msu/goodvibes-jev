@@ -578,11 +578,13 @@ async function consumeProtectedCatalog<T>(entries: readonly T[], ids: readonly s
     if (ranked.length !== entries.length || new Set(ranked.map(({ id }) => id)).size !== ranked.length
       || ranked.some(({ id }) => !/^(0|[1-9][0-9]*)$/.test(id) || Number(id) >= entries.length)) throw new ToolInputProjectionError('held');
     for (const judgment of ranked) {
-      options.assertCurrent();
-      if (judgment.decisionId) guardedPort.recorder?.recordAction(judgment.decisionId,
+      // The recording wrapper checks currentness immediately before and after
+      // its borrowed callback. Avoid repeating that whole proof before entry.
+      if (judgment.decisionId && guardedPort.recorder) guardedPort.recorder.recordAction(judgment.decisionId,
         judgment.reading.outcome !== 'act' ? 'catalog candidate held: unresolved reading'
           : judgment.reading.verdict === 'yes' ? 'catalog candidate matched'
           : judgment.reading.verdict === 'no' ? 'catalog candidate rejected' : 'catalog candidate held: uncertain');
+      else options.assertCurrent();
     }
     const judgments = ranked.map((judgment) => ({ ...judgment, id: ids[Number(judgment.id)]! }));
     return {

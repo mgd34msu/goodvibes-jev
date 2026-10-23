@@ -217,6 +217,10 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         || dispatchMode === 'workspace_actions'
         || dispatchMode === 'ui_surfaces'
         || dispatchMode === 'ui_surface'
+        || dispatchMode === 'personal_ops'
+        || dispatchMode === 'personal_ops_briefing'
+        || dispatchMode === 'personal_ops_intake'
+        || dispatchMode === 'personal_ops_lane'
         || dispatchMode === 'personal_ops_queue'
         || dispatchMode === 'setup_item'
         || dispatchMode === 'learning_curator'
@@ -272,13 +276,13 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
         assertCatalogExecution();
         return output(queue);
       }
-      if (dispatchMode === 'personal_ops_intake') return output(await personalOpsIntakeSummary(deps.commandContext, args, catalogOptions));
+      if (dispatchMode === 'personal_ops_intake') return publishCatalog(output(await personalOpsIntakeSummary(deps.commandContext, args, catalogOptions)));
       if (dispatchMode === 'personal_ops_lane') {
         const resolved = await describePersonalOpsLane(deps.commandContext, args, catalogOptions);
-        if (resolved.status === 'found') return output(resolved.lane);
-        if (resolved.status === 'deferred') return output(resolved);
-        if (resolved.status === 'ambiguous') return error(`Ambiguous Personal Ops lane ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`);
-        return error(resolved.usage);
+        if (resolved.status === 'found') return publishCatalog(output(resolved.lane));
+        if (resolved.status === 'deferred') return publishCatalog(output(resolved));
+        if (resolved.status === 'ambiguous') return publishCatalog(error(`Ambiguous Personal Ops lane ${resolved.input}. Candidates: ${JSON.stringify(resolved.candidates)}`));
+        return publishCatalog(error(resolved.usage));
       }
       if (dispatchMode === 'run_personal_ops_read') return output(await runPersonalOpsRead(deps.commandContext, args, args.laneId === 'inbox' && args.recordId === 'inbox-style-reply-draft' ? catalogOptions : effectCatalogOptions, rawArgs, options));
         if (dispatchMode === 'modes') return output(await listHarnessModes(args, catalogOptions));
@@ -607,8 +611,8 @@ export function createAgentHarnessTool(deps: AgentHarnessToolDeps): Tool {
           const confirmationError = requireConfirmedAction(rawArgs, options, 'File recovery');
           return confirmationError ? error(confirmationError) : output(runFileRecovery(deps.commandContext, rawArgs, options));
         }
-        if (dispatchMode === 'personal_ops_briefing') return output(await personalOpsBriefingSummary(deps.commandContext, args, catalogOptions));
-        if (dispatchMode === 'personal_ops') return output(await personalOpsSummary(deps.commandContext, args, catalogOptions));
+        if (dispatchMode === 'personal_ops_briefing') return publishCatalog(output(await personalOpsBriefingSummary(deps.commandContext, args, catalogOptions)));
+        if (dispatchMode === 'personal_ops') return publishCatalog(output(await personalOpsSummary(deps.commandContext, args, catalogOptions)));
 
         if (dispatchMode === 'memory_posture') return output(await memoryPostureSummary(deps.commandContext, args, catalogOptions));
         if (dispatchMode === 'memory_provider') {

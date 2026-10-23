@@ -31,7 +31,7 @@ beforeEach(() => {
 afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previousPort); fixtureLog[Symbol.dispose](); });
 
 
-  test.each(['workspace', 'categories', 'compactSummary', 'summary', 'filtered', 'all', 'editors', 'action'] as const)('exposes Agent workspace categories, actions, and editor schemas to the model: %s', async view => {
+  test.each(['workspace', 'categories', 'compactSummary', 'summary', 'search', 'all', 'action'] as const)('exposes Agent workspace categories, actions, and editor schemas to the model: %s', async view => {
     const fixture = makeFixture();
     try {
       const workspacePayload = { actions: AGENT_WORKSPACE_CATEGORIES.reduce((count, category) => count + category.actions.length, 0) };
@@ -81,16 +81,17 @@ afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previous
         return;
       }
 
-      if (view === 'filtered') {
-        const listed = await fixture.tool.execute({ mode: 'workspace_actions', query: 'memory create' });
-        expect(listed.success).toBe(true);
-        expect(listed.output).toContain('memory-create');
-        expect(listed.output).toContain('Create memory');
+      if (view === 'search') {
+        const listed = await fixture.tool.execute({ mode: 'workspace_actions', categoryId: 'memory', query: 'memory create', includeParameters: true });
+        expect(listed.success, listed.error).toBe(true);
         const listedPayload = JSON.parse(listed.output!) as {
-          readonly actions: readonly { readonly id: string; readonly modelRoute?: string }[];
+          readonly actions: readonly { readonly id: string; readonly categoryId: string; readonly modelRoute?: string;
+            readonly editor?: { readonly kind: string; readonly fields: readonly { readonly id: string; readonly required: boolean }[] } }[];
         };
         expectCompactSummaryFields(listedPayload);
-        expect(listedPayload.actions.find((entry) => entry.id === 'memory-create')?.modelRoute).toBe('agent_local_registry');
+        expect(listedPayload.actions.map(entry => entry.id)).toEqual(['memory-create']);
+        expect(listedPayload.actions[0]).toMatchObject({ categoryId: 'memory', modelRoute: 'agent_local_registry', editor: { kind: 'memory' } });
+        expect(listedPayload.actions[0]?.editor?.fields).toEqual(expect.arrayContaining([expect.objectContaining({ id: 'summary', required: true })]));
         return;
       }
 
@@ -159,14 +160,6 @@ afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previous
         return;
       }
 
-      if (view === 'editors') {
-        const listedWithEditors = await fixture.tool.execute({ mode: 'workspace_actions', query: 'memory create', includeParameters: true });
-        expect(listedWithEditors.success).toBe(true);
-        expect(listedWithEditors.output).toContain('"editor"');
-        expect(listedWithEditors.output).toContain('"summary"');
-        return;
-      }
-
       if (view === 'action') {
         const action = await fixture.tool.execute({ mode: 'workspace_action', actionId: 'memory-create' });
         expect(action.success).toBe(true);
@@ -182,9 +175,6 @@ afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previous
     }
   });
 
-
-  // DELETED: 'inspects one workspace action from command, target, query, and action id lookups'
-  // memory-list action was removed from the workspace.;
 
   test('uses runtime context for model-visible profile and routine schedule editor schemas', async () => {
     const fixture = makeFixture();

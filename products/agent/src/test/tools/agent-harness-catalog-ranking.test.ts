@@ -743,6 +743,36 @@ function foreignContract(methods: ReturnType<typeof operatorContracts.getOperato
   return { ...native, operator: { ...native.operator, methods } };
 }
 
+test.each(['personal_ops', 'personal_ops_briefing', 'personal_ops_intake', 'personal_ops_lane'] as const)
+  ('%s joins independent reads but refuses a changed original MCP schema before publication', async mode => {
+    const getter = spyOn(operatorContracts, 'getOperatorContract').mockReturnValue(foreignContract([foreignContractMethod()]));
+    try {
+      for (const changeSource of [false, true]) {
+        const f = fixture(), ordinary = readings({});
+        const schema = { inputSchema: { type: 'object', description: 'Original publisher schema' } };
+        let changed = false, providerEffects = 0;
+        Object.assign(f.context.clients!, { mcpApi: {
+          listServerSecurity: () => [],
+          listAllTools: async () => [{ serverName: 'fixture', toolName: 'read', qualifiedName: 'mcp:fixture:read' }],
+          getToolSchema: async () => schema,
+          callTool: async () => { providerEffects++; return {}; },
+        } });
+        installJudgmentPort({ ...ordinary.port, async ask(request) {
+          const answer = await ordinary.port.ask(request);
+          if (changeSource && !changed && request.context?.battery === 'agent.personal-ops.lane-member') {
+            changed = true; schema.inputSchema.description = 'Changed publisher schema';
+          }
+          return answer;
+        } });
+        const run = f.harness.execute({ mode, laneId: 'inbox', query: mode === 'personal_ops_intake' ? 'Review current work' : undefined });
+        if (changeSource) { await expect(run).rejects.toThrow(); expect(changed).toBe(true); }
+        else expect((await run).success).toBe(true);
+        expect(providerEffects).toBe(0);
+        expect(JSON.stringify(ordinary.requests)).not.toContain('Changed publisher schema');
+      }
+    } finally { getter.mockRestore(); }
+  });
+
 test('immutable native contract metadata retains every fresh lane reading across replacement model owners', async () => {
   const native = operatorContracts.OPERATOR_CONTRACT;
   const evidence = new Map(native.operator.methods.map(method => [method.id, JSON.stringify(captureModelReadingInput(method))]));

@@ -214,8 +214,10 @@ export function harnessCatalogExecutionGuard(args: Record<string, unknown>, opti
     if (modelReadingServicePath(options, ['signal']) !== signal) throw new ToolInputProjectionError('stale');
     signal?.throwIfAborted();
     assertCurrentToolExecution(args, options);
+    // This private projection checks the retained source guards on both sides
+    // of owner.project. No borrowed callback runs between it and this return.
     if (projected) projected();
-    for (const guard of retained.values()) guard();
+    else for (const guard of retained.values()) guard();
   };
 }
 
