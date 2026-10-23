@@ -413,6 +413,8 @@ test('cancelling a slow provider retains the user turn and queues a newer turn u
     const transcript = session.conversation.getMessageSnapshot();
     expect(transcript.filter((message) => message.role === 'user').map((message) => message.content)).toEqual(['first request', 'newer request']);
     expect(transcript.some((message) => message.content === '[Response cancelled]')).toBe(true);
+    expect(transcript.find((message) => message.role === 'system' && message.content === '[Response cancelled]'))
+      .toMatchObject({ runtimeEvent: { type: 'TURN_CANCEL' }, presentation: { activity: 'system', severity: 'info', event: 'system_notice' } });
     expect(session.orchestrator.listQueuedMessages()).toHaveLength(0);
     expect(session.orchestrator.isThinking).toBe(false);
   } finally { release(); session.dispose(); }

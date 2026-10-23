@@ -48,6 +48,19 @@ function wired() {
 }
 
 describe('system notices become toasts and history entries', () => {
+  test('a typed native cancellation publishes immediately without a semantic severity request', async () => {
+    const { conversation, feed } = wired();
+    const readings = fakePort(() => { throw new Error('Native cancellation must use its declared status'); });
+    const previous = installJudgmentPort(readings.port);
+    try {
+      conversation.addSystemMessage('[Response cancelled]', { type: 'TURN_CANCEL' });
+      await conversation.whenNoticesSettled();
+      expect(feed.list()).toHaveLength(1);
+      expect(feed.list()[0]).toMatchObject({ title: 'Response cancelled', level: 'info' });
+      expect(readings.requests).toHaveLength(0);
+    } finally { installJudgmentPort(previous); }
+  });
+
   test('a notice added mid-turn is a toast and a history entry with its full text, and no transcript row', async () => {
     const { conversation, feed, toasts } = wired();
     conversation.addUserMessage('review the retry logic');

@@ -135,7 +135,11 @@ for (const product of ['agent'] as const) describe(`${product} real native headl
   }, 30000);
 
   test('large final JSON is fully flushed before the process exits', async () => {
-    const reply = 'exact 😀 response\n'.repeat(16_384);
+    // Cross the pipe buffer while keeping this transport test on the direct
+    // completion path. Larger drafts exercise private source reduction, which
+    // needs structured writer proposals rather than this fixed text provider.
+    const reply = `${HEADLESS_REPLY}\n${'exact 😀 response\n'.repeat(4_096)}`;
+    expect(Buffer.byteLength(reply)).toBeGreaterThan(65_536);
     const f = await fixture(product, reply);
     const output = await f.run(['run', HEADLESS_PROMPT, ...json]);
     expect(output.code).toBe(0);
@@ -262,7 +266,8 @@ describe('tui real direct headless entrypoint', () => {
   }, 30000);
 
   test('large final JSON is fully flushed before the process exits', async () => {
-    const reply = 'exact 😀 response\n'.repeat(16_384);
+    const reply = `${HEADLESS_REPLY}\n${'exact 😀 response\n'.repeat(4_096)}`;
+    expect(Buffer.byteLength(reply)).toBeGreaterThan(65_536);
     const f = await fixture('tui', reply);
     const output = await f.run(['run', HEADLESS_PROMPT, ...json]);
     expect(output.code).toBe(0);

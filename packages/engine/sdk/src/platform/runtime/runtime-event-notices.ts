@@ -25,6 +25,7 @@ const RUNTIME_EVENT_NOTICE_LINES: ReadonlyArray<{
   readonly title: string;
   readonly level: 'info' | 'warning';
 }> = [
+  { pattern: /^\[Response cancelled\]$/, type: 'TURN_CANCEL', title: 'Response cancelled', level: 'info' },
   { pattern: /^\[Agents\] \u2713 \S+ (\S+): ".*" \u2014 completed in \d+s \(\d+ tool calls\)$/s, type: 'AGENT_COMPLETED', title: 'Agent finished', level: 'info' },
   { pattern: /^\[Agents\] \u2717 \S+ (\S+): ".*" \u2014 failed in \d+s: .*/s, type: 'AGENT_FAILED', title: 'Agent failed', level: 'warning' },
   { pattern: /^\[Contract\] \u2713 (\S+) PASSED: \d+ of \d+ criteria met, \d+ corrections$/, type: 'CONTRACT_PASSED', title: 'Workstream passed', level: 'info' },
@@ -77,5 +78,6 @@ export function declaredNoticePresentation(text: string, provenance?: RuntimeEve
   const notice = runtimeEventOfNotice(text, provenance);
   if (!notice || notice.type !== provenance.type) return undefined;
   return Object.freeze({ activity: notice.type === 'AGENT_COMPLETED' || notice.type === 'AGENT_FAILED' ? 'agent' : 'system',
-    severity: notice.level, event: notice.type === 'AGENT_COMPLETED' || notice.type === 'AGENT_FAILED' ? 'task_transition' : 'contract_state' });
+    severity: notice.level, event: notice.type === 'AGENT_COMPLETED' || notice.type === 'AGENT_FAILED' ? 'task_transition'
+      : notice.type === 'TURN_CANCEL' ? 'system_notice' : 'contract_state' });
 }

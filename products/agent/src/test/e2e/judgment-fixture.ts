@@ -10,8 +10,13 @@ import cancelledTurnTimings from '../fixtures/e2e-judgments/cancelled-turn-timin
 import cancelledTurnPending from '../fixtures/e2e-judgments/cancelled-turn-pending.json';
 import privacyNegative from '../fixtures/e2e-judgments/privacy-negative.json';
 import diagnosticFixtures from '../fixtures/e2e-judgments/ci-diagnostics.json';
+import headlessCompletion from '../fixtures/e2e-judgments/headless-completion.json';
+import tuiCompletionTools from '../fixtures/e2e-judgments/tui-completion-tools.json';
 
 const prompts = ['first words in a brand new workspace', 'please answer the e2e marmot question'] as const;
+// Native TUI startup may finish after the original turn-entry snapshot. Keep
+// only this recorded system notice as an alternate complete transcript.
+export const tuiCompletionNotice = { role: 'system', content: '[Daemon] Web surface ready: http://127.0.0.1:3423, serving this machine only until web.hostMode is widened' };
 const stable = (value: unknown): string => JSON.stringify(value, (_key, entry) => entry && typeof entry === 'object' && !Array.isArray(entry)
   ? Object.fromEntries(Object.entries(entry).sort(([a], [b]) => a.localeCompare(b))) : entry);
 
@@ -120,6 +125,9 @@ function diagnosticAnswer(body: unknown, ownedRoot: string | undefined): { kind:
 
 export function startE2EJudgments(options: { readonly ownedRoot?: string } = {}) {
   const accepted: string[] = [];
+  const expectedCompletions = new Set<string>();
+  const completionAnswers = Object.fromEntries(Object.keys(headlessCompletion.questions)
+    .map(name => [name, { type: 'noul', noul: 0.01 }]));
   // Preserve every original model, turn and cancellation fixture decision.
   // Startup/redaction diagnostics have their own complete, observable wire;
   // they cannot satisfy any original accepted/native-action assertion.
@@ -143,7 +151,9 @@ export function startE2EJudgments(options: { readonly ownedRoot?: string } = {})
       acceptedDiagnostics.push({ kind: diagnostic.kind, body });
       return Response.json({ model: 'jev-1.13.0', answers: diagnostic.answers, usage: { input_tokens: 10, output_tokens: 3 } });
     }
-    const reading = e2eJudgmentAnswers(body, options.ownedRoot);
+    const reading = expectedCompletions.has(stable(body))
+      ? { kind: 'headless-completion', answers: completionAnswers }
+      : e2eJudgmentAnswers(body, options.ownedRoot);
     if (!reading) {
       rejected.push(body);
       if (expectedPrivacyRefusal(body, options.ownedRoot)) unavailablePrivacy.push(body);
@@ -159,6 +169,24 @@ export function startE2EJudgments(options: { readonly ownedRoot?: string } = {})
     return Response.json({ model: 'jev-1.13.0', answers: reading.answers, usage: { input_tokens: 10, output_tokens: 3 } });
   } });
   return { baseURL: `http://127.0.0.1:${server.port}`, accepted, acceptedDiagnostics, allRequests, rejected, unexpected, unavailableDiagnostics, unavailablePrivacy,
+    expectTextOnlyCompletion(request: string, response: string, product: 'agent' | 'tui' = 'agent') {
+      const transcript = [{ role: 'user', content: request }];
+      const questions = structuredClone(headlessCompletion.questions);
+      // The recorded native target adapter embeds only short answer literals.
+      // Large answers remain complete in state.response, without an embedded
+      // short-answer binding copied from this captured fixture.
+      if (response.length > 4_000) for (const question of Object.values(questions)) {
+        Reflect.deleteProperty(question.instructions.nativeTargets, 'proposedAnswer');
+      }
+      const completion = { ...headlessCompletion, questions, state: { ...headlessCompletion.state,
+        request, response, transcript, tools: product === 'tui' ? tuiCompletionTools : headlessCompletion.state.tools,
+        requirements: { ...headlessCompletion.state.requirements, originalTask: request },
+        initial: { request, transcript },
+      } };
+      expectedCompletions.add(stable(completion));
+      if (product === 'tui') expectedCompletions.add(stable({ ...completion,
+        state: { ...completion.state, transcript: [...transcript, tuiCompletionNotice] } }));
+    },
     rejectRecordedCancellationTimings() { rejectCancellationTimings = true; },
     assertNoUnexpected: () => { if (unexpected.length) throw new Error(`E2E encountered ${unexpected.length} unknown judgment request(s): ${JSON.stringify(unexpected)}`); },
     stop: () => { void server.stop(true); },

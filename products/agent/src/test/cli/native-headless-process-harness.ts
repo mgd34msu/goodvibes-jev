@@ -109,6 +109,7 @@ export async function makeHeadlessFixture(product: HeadlessProduct, reply = HEAD
   const children = new Set<ReturnType<typeof Bun.spawn>>();
   try {
     home = await makeHome(model);
+    home.judgments.expectTextOnlyCompletion(HEADLESS_PROMPT, reply, product);
     mkdirSync(join(home.root, 'tmp'), { recursive: true });
     // The two products keep separate provider/config state, but use the same fixture contract.
     const tuiRoot = join(home.home, '.goodvibes/tui');

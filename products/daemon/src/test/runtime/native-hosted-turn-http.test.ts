@@ -94,8 +94,10 @@ test('paired native hosted HTTP preserves canonical identity, finishes a real tu
       await new Promise(resolve => setTimeout(resolve, 20)); status = await wire('workLedger.turn.status', identity);
     }
     expect(requests.some(request => request.stream && request.messages.some(message => message.role === 'user' && message.content === TEXT))).toBe(true);
-    expect(judgmentRequests).toHaveLength(1);
-    expect(Object.keys(judgmentRequests[0]!.questions).sort()).toEqual(['false_blocker', 'unfinished', 'unnecessary_permission', 'unanswered', 'unsupported'].sort());
+    const completionRequests = f.fake.requests.filter(request => request.context?.battery === 'engine.core.response-completion');
+    expect(completionRequests).toHaveLength(1);
+    expect(Object.keys(completionRequests[0]!.questions).sort()).toEqual(['false_blocker', 'unfinished', 'unnecessary_permission', 'unanswered', 'unsupported'].sort());
+    expect(judgmentRequests).toHaveLength(0);
     const count = requests.length;
     const duplicate = await wire('workLedger.turn.start', identity);
     expect(duplicate.body).toBe(status.body); expect(requests).toHaveLength(count);

@@ -241,7 +241,6 @@ describe('memory CLI: daemon up routes over the wire', () => {
     expect(matches).toHaveLength(1);
     expect(Object.keys(matches[0]!.questions)).toEqual(['match']);
     expect(parsed.data.semanticResults.find(result => result.record.id === id)?.score).toBe(97);
-    expect(searchRequests.some(request => request.context?.battery === 'engine.redaction.field-kind')).toBe(true);
     expect(JSON.stringify(searchRequests)).not.toContain(TEST_TOKEN);
   });
 

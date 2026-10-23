@@ -1110,7 +1110,7 @@ export class Orchestrator {
       this.reconcileUnresolvedToolCalls([], 'exception-before-results');
       this.conversation.removeMessagesAfter(this.turnStartMessageCount, { preserveCompletedTools: true });
       this.conversation.markLastUserMessageCancelled(this.turnStartMessageCount);
-      this.conversation.addSystemMessage('[Response cancelled]');
+      this.conversation.addSystemMessage('[Response cancelled]', { type: 'TURN_CANCEL' });
       this.turnCancellation.end(turnId);
       if (this.runtimeBus) {
         emitTurnCancel(this.runtimeBus, createEmitterContext(this.currentSessionId, turnId), {
