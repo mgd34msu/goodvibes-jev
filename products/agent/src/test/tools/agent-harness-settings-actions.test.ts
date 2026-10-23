@@ -1169,7 +1169,7 @@ afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previous
         readonly artifacts: Array<{ readonly id: string; readonly file: string; readonly metadata: Record<string, unknown> }>;
       };
       expect(manifest.artifacts.map((entry) => entry.id)).toEqual(['artifact-1', 'artifact-2']);
-      expect(manifest.artifacts[1]?.metadata.secretToken).toBe('<redacted>');
+      expect(manifest.artifacts[1]?.metadata.secretToken).toBe('[REDACTED]');
       const packageFile = manifest.artifacts.find((entry) => entry.id === 'artifact-2')?.file;
       expect(readFileSync(join(packageRoot, packageFile ?? ''), 'utf-8')).toContain('"winner"');
       expect(packageExport.output).not.toContain('not-for-package');

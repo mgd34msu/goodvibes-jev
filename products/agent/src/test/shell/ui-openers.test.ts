@@ -1,5 +1,5 @@
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { choiceAnswer, fakePort } from '@goodvibes-jev/judgment/testing';
+import { fakePort } from '@goodvibes-jev/judgment/testing';
 import { afterEach, beforeEach, describe, expect, mock, test } from 'bun:test';
 import { wireShellUiOpeners } from '../../shell/ui-openers.ts';
 import { buildTestModelDefinition, createTestManagers } from '../helpers/test-managers.ts';
@@ -134,10 +134,10 @@ describe('wireShellUiOpeners', () => {
   // started or stopped serving, without blocking the open.
   describe('live model discovery re-check on picker open', () => {
     let previousPort: ReturnType<typeof installJudgmentPort>;
-    let families: ReturnType<typeof fakePort>;
+    let unexpectedJudgments: ReturnType<typeof fakePort>;
     beforeEach(() => {
-      families = fakePort((_name, question) => choiceAnswer(question, 'Other', 0.99));
-      previousPort = installJudgmentPort(families.port);
+      unexpectedJudgments = fakePort(() => { throw new Error('Known picker model metadata must not require semantic classification'); });
+      previousPort = installJudgmentPort(unexpectedJudgments.port);
     });
     afterEach(() => { installJudgmentPort(previousPort); });
     function wirePickerWithRegistry(refreshLiveModelDiscovery: ReturnType<typeof mock>, getSelectableModels = () => [] as ReturnType<typeof buildTestModelDefinition>[]): void {
@@ -219,8 +219,7 @@ describe('wireShellUiOpeners', () => {
         await done;
         expect(getSelectableModels).toHaveBeenCalledTimes(changed ? 2 : 1);
         expect(picker.models).toEqual(catalog);
-        expect(families.requests.map((request) => request.state)).toEqual(changed
-          ? [{ id: 'a', displayName: 'a', provider: 'openai' }] : []);
+        expect(unexpectedJudgments.requests).toEqual([]);
         expect(frames).toContainEqual({ ids: changed ? ['a'] : [], loading: true });
         expect(frames.at(-1)).toEqual({ ids: changed ? ['a'] : [], loading: false });
       }
