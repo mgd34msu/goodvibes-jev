@@ -2,7 +2,7 @@ import { scheduleEffectAdmission } from '../helpers/schedule-effect-admission.ts
 import { createScheduleInputProjector } from '../../tools/agent-schedule-effect.ts';
 import { registerAgentOperatorMethodTool } from '../../tools/agent-operator-method-tool.ts';
 import { mockFetch } from '../helpers/typed-fetch-mock.ts';
-import { describe, expect, test } from 'bun:test';
+import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
@@ -15,6 +15,12 @@ import {
   registerAgentAutonomyScheduleTool,
 } from '../../tools/agent-autonomy-schedule-tool.ts';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
+import { resetSessionUntrustedContentLedgerForTests } from '../../trust/untrusted-content.ts';
+
+// These fixtures construct independent synthetic sessions, including when Bun
+// runs them after a file that deliberately ingests untrusted source content.
+beforeEach(resetSessionUntrustedContentLedgerForTests);
+afterEach(resetSessionUntrustedContentLedgerForTests);
 
 type ShellPaths = ShellPathService;
 
