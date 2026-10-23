@@ -85,4 +85,13 @@ test('a newer unfinished run and malformed latest history cannot revive an earli
   expect(await readAgentSessionHistory(request)).toBeUndefined();
   writeFileSync(session.sessionFile, original + '{broken final journal row\n');
   expect(await readAgentSessionHistory(request)).toBeUndefined();
+  const invalid = Buffer.from(original); invalid[invalid.indexOf('Final native counts')] = 0xff;
+  writeFileSync(session.sessionFile, invalid);
+  expect(await readAgentSessionHistory(request)).toBeUndefined();
+});
+
+test('changing the lookup identity during permission review retires the original request', async () => {
+  const { request } = await savedWorker();
+  const input = { ...request, async readAccessFilter() { input.agentId = 'agent-other'; return true; } };
+  await expect(readAgentSessionHistory(input)).rejects.toThrow('Historical worker lookup source changed');
 });

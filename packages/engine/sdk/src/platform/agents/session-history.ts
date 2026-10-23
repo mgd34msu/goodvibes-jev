@@ -13,13 +13,19 @@ export async function readAgentSessionHistory(input: {
   readonly signal?: AbortSignal | undefined;
   readonly assertCurrent: () => void;
 }): Promise<Record<string, unknown> | undefined> {
-  if (!/^[A-Za-z0-9_-]+$/.test(input.agentId)) return undefined;
-  const current = () => { input.signal?.throwIfAborted(); input.assertCurrent(); };
+  const { projectRoot, surfaceRoot, agentId, readAccessFilter, signal, assertCurrent } = input;
+  if (!/^[A-Za-z0-9_-]+$/.test(agentId)) return undefined;
+  const current = () => {
+    signal?.throwIfAborted(); assertCurrent();
+    if (input.projectRoot !== projectRoot || input.surfaceRoot !== surfaceRoot || input.agentId !== agentId
+      || input.readAccessFilter !== readAccessFilter || input.signal !== signal || input.assertCurrent !== assertCurrent)
+      throw new Error('Historical worker lookup source changed');
+  };
   current();
   let file: Awaited<ReturnType<typeof open>> | undefined;
   try {
-    const root = await realpath(input.projectRoot);
-    const path = resolve(resolveScopedDirectory(root, input.surfaceRoot, 'sessions', 'agents'), `${input.agentId}.jsonl`);
+    const root = await realpath(projectRoot);
+    const path = resolve(resolveScopedDirectory(root, surfaceRoot, 'sessions', 'agents'), `${agentId}.jsonl`);
     // Every component belongs to this surface; neither a journal symlink nor
     // a redirected directory may turn history lookup into an unrelated read.
     const parts = relative(root, path).split(sep);
@@ -35,7 +41,7 @@ export async function readAgentSessionHistory(input: {
     file = await open(path, constants.O_RDONLY | constants.O_NOFOLLOW);
     const before = await file.stat({ bigint: true });
     current();
-    if (input.readAccessFilter && !await input.readAccessFilter(path)) return undefined;
+    if (readAccessFilter && !await readAccessFilter(path)) return undefined;
     current();
     for (const [directory, expected] of directories) {
       const actual = await lstat(directory, { bigint: true }); current();
@@ -45,7 +51,9 @@ export async function readAgentSessionHistory(input: {
     current();
     if (before.nlink !== 1n || !admitted.isFile() || admitted.isSymbolicLink()
       || before.dev !== admitted.dev || before.ino !== admitted.ino || before.ctimeNs !== admitted.ctimeNs) return undefined;
-    const text = await file.readFile({ encoding: 'utf8' });
+    const bytes = await file.readFile({ signal });
+    const text = bytes.toString('utf8');
+    if (!Buffer.from(text, 'utf8').equals(bytes)) return undefined;
     const after = await file.stat({ bigint: true }), named = await lstat(path, { bigint: true });
     current();
     if (before.dev !== after.dev || before.ino !== after.ino || before.size !== after.size
@@ -57,9 +65,9 @@ export async function readAgentSessionHistory(input: {
       const row: unknown = JSON.parse(line);
       if (!row || typeof row !== 'object' || Array.isArray(row)) return undefined;
       const entry = row as Record<string, unknown>;
-      if (entry.type === 'meta') { metadataMatches = entry.agentId === input.agentId; saved = undefined; }
+      if (entry.type === 'meta') { metadataMatches = entry.agentId === agentId; saved = undefined; }
       if (entry.type !== 'agent_conversation') continue;
-      if (!metadataMatches || entry.agentId !== input.agentId || entry.version !== 1 || !Array.isArray(entry.messages)
+      if (!metadataMatches || entry.agentId !== agentId || entry.version !== 1 || !Array.isArray(entry.messages)
         || !Array.isArray(entry.archive) || !entry.messages.every((message: unknown) => message && typeof message === 'object'
           && 'role' in message && typeof message.role === 'string' && ['user', 'assistant', 'tool', 'system'].includes(message.role))) return undefined;
       saved = entry;
