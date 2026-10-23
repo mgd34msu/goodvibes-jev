@@ -200,7 +200,7 @@ test.each(['malformed', 'unreadable'])('actual modal preserves %s policy and dis
     modal.open(config, createFeatureFlagManager(), new SubscriptionManager(join(root, 'subscriptions.json')), { getAll: () => ({}) });
     modal.selectTarget(KEY);
     expect(modal.getSelected()).toMatchObject({ currentValue: false, effectiveSource: 'unavailable' });
-    expect(modal.getSelected()?.metadataUnavailable).toBe('Host setting metadata is unavailable because managed policy could not be read.');
+    expect(modal.getSelected()?.metadataUnavailable).toBe('Host setting metadata unavailable because managed policy could not be read.');
     const context = settingContextLines(modal).join('\n');
     expect(context).toContain('Source: unavailable');
     expect(context).toContain('Editing unavailable:');
@@ -212,7 +212,7 @@ test.each(['malformed', 'unreadable'])('actual modal preserves %s policy and dis
     const ordinary = config.get('behavior.autoApprove');
     modal.selectTarget('behavior.autoApprove');
     expect(modal.getSelected()?.currentValue).toBe(ordinary);
-    expect(modal.getSelected()?.metadataUnavailable).toBe('Host setting metadata is unavailable because managed policy could not be read.');
+    expect(modal.getSelected()?.metadataUnavailable).toBe('Host setting metadata unavailable because managed policy could not be read.');
     modal.activateSelected();
     expect(config.get('behavior.autoApprove')).toBe(ordinary);
     expect(readdirSync(configDir)).toEqual(names);
@@ -241,7 +241,7 @@ test('a policy failure after open blocks the next edit without recovery writes, 
     expect(modal.getSelected()?.effectiveSource).toBe('unavailable');
     const unavailable = getHarnessSetting(config, KEY);
     expect(unavailable).toMatchObject({ value: false, writable: false, valueSource: 'local' });
-    expect(unavailable?.metadataUnavailable).toBe('Host setting metadata is unavailable because managed policy could not be read.');
+    expect(unavailable?.metadataUnavailable).toBe('Host setting metadata unavailable because managed policy could not be read.');
     writeFileSync(policyPath, JSON.stringify(defaultStore()));
     modal.activateSelected();
     expect(config.getHostBooleanSetting(KEY).get()).toBe(true);

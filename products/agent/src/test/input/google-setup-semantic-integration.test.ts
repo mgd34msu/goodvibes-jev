@@ -49,6 +49,10 @@ function fixture() {
 function readings() {
   return fakePort((name, question, state) => {
     if (name === 'signIn') return noulAnswer(0.01);
+    if (['enabled', 'disabled', 'twoStepRequired', 'labelExists'].includes(name)) {
+      expect(state).toMatchObject({ text: '2-Step Verification is on' });
+      return noulAnswer(name === 'enabled' ? 0.99 : 0.01);
+    }
     const input = state as unknown as { context: { purpose: string }; candidates: { id: string; content: { name: string } }[] };
     const label = input.context.purpose === 'Name the new Google app password' ? 'App password name' : 'Créer';
     const index = input.candidates.findIndex(e => e.content.name === label);
