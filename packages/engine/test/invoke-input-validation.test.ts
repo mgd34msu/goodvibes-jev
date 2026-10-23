@@ -178,3 +178,10 @@ test('published numeric, string and array constraints reject invalid invocations
     expect(validateInvocationInput(method, { value: valid })).toBeNull();
   }
 });
+
+test('unique items compare nested JSON values regardless of object key order', () => {
+  const method = verb({ type: 'object', properties: { value: { type: 'array', uniqueItems: true } }, required: ['value'] });
+  expect(validateInvocationInput(method, { value: [{ name: 'a', data: [1, 2] }, { data: [1, 2], name: 'a' }] })?.code).toBe('INVALID_INPUT');
+  expect(validateInvocationInput(method, { value: [{ name: 'a', data: [1, 2] }, { data: [2, 1], name: 'a' }] })).toBeNull();
+  expect(validateInvocationInput(method, { value: [1, '1', { value: 1 }, [1]] })).toBeNull();
+});

@@ -21,6 +21,7 @@
  */
 
 import type { GatewayMethodDescriptor } from './method-catalog-shared.js';
+import { canonicalJson, type EntryType } from '@goodvibes-jev/judgment';
 
 /** Structured result of a rejected invocation, same 400 shape the router uses. */
 export interface InvokeValidationError {
@@ -126,6 +127,16 @@ function validateBase(value: unknown, schema: Record<string, unknown>, path: str
       if (!Array.isArray(value)) return `${schemaLabel(path)} must be an array`;
       if (typeof schema.minItems === 'number' && value.length < schema.minItems) return `${schemaLabel(path)} has too few items`;
       if (typeof schema.maxItems === 'number' && value.length > schema.maxItems) return `${schemaLabel(path)} has too many items`;
+      if (schema.uniqueItems === true) {
+        const seen = new Set<string>();
+        for (const item of value) {
+          let identity: string;
+          try { identity = canonicalJson(item as EntryType); }
+          catch { return `${schemaLabel(path)} must contain JSON values`; }
+          if (seen.has(identity)) return `${schemaLabel(path)} must contain unique items`;
+          seen.add(identity);
+        }
+      }
       const items = schema.items;
       if (items && typeof items === 'object' && !Array.isArray(items)) {
         for (let i = 0; i < value.length; i++) {
