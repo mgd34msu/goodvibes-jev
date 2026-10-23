@@ -1,10 +1,10 @@
 # Jev usage audit
 
-Baseline revision: `51f97d0a1f345269d78a403b10473e1906e7cc22`. Reviewed working tree: October 18, 2026 (UTC).
+Initial placement revision: `51f97d0a1f345269d78a403b10473e1906e7cc22`. Current inventory follow-up: October 23, 2026 (UTC).
 
 The primary assistant reviewed the existing Jev decision/call inventory and the candidates for missing interpretation personally, without delegated agents. The subsequent screenshots exposed a completion gap that the initial placement review missed. That gap and its implemented follow-up are recorded below. Historical measurements and source inventories remain identified by their revision; they are not post-change traffic measurements.
 
-The current checkout registers **327 application/tooling decisions in 50 registries**, plus **22 foundation reference examples** in their separate registry. Six decisions were added after the initial placement revision, `1bf30e87`, followed by seven staged-verification definitions documented below. Three additional explicit compatibility definitions remain outside automatic registration: field-kind, picker family and PWA platform. Their old automatic callers are removed. The ignored [placement ledger](../../.goodvibes/artifacts/jev-usage/placement-review-ledger.json) records the initial placement revision; the completion additions are enumerated separately below.
+The October 23 registry catalog contains **342 application/tooling definitions in 50 registries**, including three retained compatibility definitions: field-kind, picker family and PWA platform. Their automatic callers remain removed. Excluding those three leaves **339 application/tooling purposes**, plus **22 foundation reference examples**. Registry discovery includes calibration-only compatibility entries and does not establish that a feature makes runtime requests. The category table excludes those three compatibility entries; baseline evidence and the later completion additions remain distinguished below.
 
 The baseline repository defined **339 non-test named Jev decisions**: **317 application and tooling decisions** in **51 registry files**, plus **22 foundation reference examples** in one additional registry. The application decisions occupy 218 source files. Of those decisions, 227 expose fixed question inventories containing 436 questions; the remaining 90 use pattern or custom implementations whose complete question sets are constructed by their readers.
 
@@ -22,14 +22,14 @@ Detailed inventories are local generated evidence under `.goodvibes/artifacts/je
 
 ## Categories
 
-Each application decision appears in exactly one purpose category. Baseline/current counts describe registered definitions, not HTTP requests or frequency.
+Each application decision appears in exactly one purpose category. Baseline/current counts describe purpose definitions, not HTTP requests or frequency. Current counts exclude the three retired compatibility purposes still discoverable in calibration registries.
 
 | Category | Baseline | Current | Purpose |
 |---|---:|---:|---|
 | Knowledge extraction search and answer verification | 57 | 57 | Extract facts and page content; rank sources, facts and evidence; verify answers; align entities; plan and assess repairs. |
 | Models providers and request routing | 36 | 32 | Choose model/provider/effort, read request intent/risk and interpret unresolved provider protocols; published metadata stays local. |
 | Tool arguments execution search and content analysis | 33 | 31 | Fill or repair parameters, interpret booleans, select tools, inspect code and output, rank content, and summarize pages and edits. |
-| Agent planning contracts and work orchestration | 31 | 44 | Shape work and criteria, preserve delegated scope, qualify source evidence, check fulfillment, synthesis and integration, and route corrections. |
+| Agent planning contracts and work orchestration | 31 | 56 | Shape work and criteria, preserve delegated scope, qualify source evidence, check fulfillment, synthesis and integration, and route corrections. |
 | Security permissions and action admission | 26 | 26 | Read action purpose, risk, side effects and scope; screen untrusted sources; check credentials and protected actions; choose autonomous dispositions. |
 | Communication browser voice and integrations | 24 | 29 | Interpret inbound intent and replies, mail style and IMAP errors, browser identity/setup, Google setup, and voice capture failures. |
 | Agent harness records and diagnostic interpretation | 17 | 17 | Interpret externally published runtime, personal-ops, memory-provider and remote-publisher records and their schemas. |
@@ -44,9 +44,9 @@ Each application decision appears in exactly one purpose category. Baseline/curr
 | Catalog code and operational search | 6 | 6 | Search code, hooks, playbooks and ecosystem catalogs; read recommendation fit and trust cautions. |
 | Errors failures and retry interpretation | 6 | 6 | Classify ambiguous error wording, choose display payloads, interpret retry waits, and diagnose slow phases or SQLite-vector refusals. |
 | Learning and consolidation | 5 | 5 | Grade learning proposals, choose targets, align duplicates, select survivors and verify equivalence. |
-| **Application and tooling total** | **317** | **327** | |
+| **Application and tooling total** | **317** | **339** | |
 | Foundation reference examples | 22 | 22 | Foundation exercises and examples. |
-| **All registered definitions** | **339** | **349** | Three additional inactive compatibility definitions remain in source. |
+| **Purpose and foundation definitions** | **339** | **361** | Three additional compatibility definitions remain in calibration registries. |
 
 The baseline [complete decision catalog](../../.goodvibes/artifacts/jev-usage/all-decisions.md) lists all 339 names, descriptions, source locations, methods and fixed question counts. [Questions CSV](../../.goodvibes/artifacts/jev-usage/questions.csv) includes every fixed instruction, choice set and band exposed by these definitions. Dynamic questions remain linked to the implementation that constructs them.
 
@@ -196,6 +196,10 @@ Retained mixed cases include custom provider catalog/credential names, unknown p
 Consecutive duplicates still mean adjacent `A, A` in the full stream with identical purpose and evidence; `A, B, A` remains valid. The changes remove unnecessary purposes and factual queries, rather than treating changed owners or different reasons as duplicate work.
 
 ## Repository-wide personal review
+
+The October 23 differential follow-up traced the changed decision owners and 44 changed lexical-candidate files against the retained source hashes. It also checked the 25 completion/verification additions since the original 314-purpose placement ledger. Registry inventory and source enumeration remain review aids, not proof that every line was read or that all possible semantic defects are absent.
+
+Two additional functional defects were confirmed and corrected: process capability reports inferred contracts from method names, and the background privilege sentinel mistook an `echo` argument for a privilege command. [Capability reporting](../../products/agent/src/tools/agent-harness-background-processes.ts) now uses native SDK facts and validated runtime records. [Ambiguous privilege text](../../products/agent/src/tools/agent-harness-background-privilege.ts) uses the existing Jev privilege question under the protected source owner, with its authority held through process creation. Native literal-program policy stays local; independent recorded execution admission remains mandatory. The complete functional controls passed 61 and 36 cases respectively; these are controlled runtime proofs, not live-model accuracy measurements.
 
 The initial placement review at `1bf30e87` inventories production JavaScript/TypeScript across engine, Agent, TUI, daemon, WebUI and tooling, with foundation transport/examples identified separately. That manifest contains **5,548 production/foundation JavaScript or TypeScript sources**. Each registered application definition and direct execution/composition/transport expression at that revision has a disposition in the placement ledger. Its direct application/tooling execution inventory contains **319 runtime expressions and 11 tooling expressions**; the separate low-level inventory contains **68 ask/forwarding expressions**. These layers can describe the same request and are not request-volume totals.
 
