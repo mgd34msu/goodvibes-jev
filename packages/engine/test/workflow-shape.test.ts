@@ -283,13 +283,13 @@ describe('ci.yml: build once, restore everywhere', () => {
     expect(manifest?.with).toMatchObject({ path: '/tmp/engine-test-manifest.json', 'if-no-files-found': 'error' });
     const include = platformTestMatrix(resolve(ROOT, 'packages/engine')).include;
     const bun = include.filter((row) => row.platform === 'bun');
-    expect(bun).toHaveLength(4);
-    expect(bun.map((row) => /--partition=([^ ]+)/.exec(row['test-cmd'])?.[1])).toEqual(['1/4', '2/4', '3/4', '4/4']);
+    expect(bun).toHaveLength(8);
+    expect(bun.map((row) => /--partition=([^ ]+)/.exec(row['test-cmd'])?.[1])).toEqual(['1/8', '2/8', '3/8', '4/8', '5/8', '6/8', '7/8', '8/8']);
     for (const row of bun) {
       expect(row['test-cmd']).toStartWith('GOODVIBES_TEST_CEILING_MS=900000 bun packages/engine/scripts/test.ts --partition=');
       expect(row['test-cmd']).toMatch(/ --manifest-sha256=[a-f0-9]{64}$/);
     }
-    expect(include.filter((row) => row.foundation).map((row) => row.name)).toEqual(['bun 1/4']);
+    expect(include.filter((row) => row.foundation).map((row) => row.name)).toEqual(['bun 1/8']);
     expect(new Set(include.map((row) => row.name)).size).toBe(include.length);
     expect(platform.name).toBe('Platform matrix (${{ matrix.name }})');
     for (const row of include.filter((row) => row.platform !== 'bun')) {

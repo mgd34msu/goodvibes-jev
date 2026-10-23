@@ -292,7 +292,6 @@ describe('native semantic and durable admission union', () => {
     const original = 'dirty captured owner input\n'; writeFileSync(join(root, 'README.md'), original);
     const readPaths: string[] = []; const requests: { kind: 'plan' | 'fix'; workingDir: string }[] = [];
     const filter = async (path: string) => { readPaths.push(path); return path !== join(root, 'private.ts'); };
-    let deliverableChecks = 0;
     const h = setup({ root, contract: { isolation: 'worktree' }, readAccessFilter: filter,
       repositoryMap: async directory => { expect(readFileSync(join(directory, 'README.md'), 'utf8')).toBe(original); return 'captured README'; },
       planner: { run: async invocation => {
@@ -319,7 +318,7 @@ describe('native semantic and durable admission union', () => {
         return { status: 'completed', output: plannerOutput(kind === 'plan' ? plan() : fixPlan([{ serves: ['c1', 'c2', 'c3'] }])), elapsedMs: 1 };
       } },
       scripts: scriptsWith({ u1: finishes('initial produced parser') }, unitId => unitId.endsWith('.f1.u1') ? finishes('corrected produced parser') : undefined),
-      port: context => { if (judgeOf(context) !== 'deliverable') return undefined; if (context.name === 'goal') deliverableChecks++; return noulAnswer(deliverableChecks === 1 ? 0.9 : 0.03); },
+      port: context => { if (judgeOf(context) !== 'deliverable') return undefined; return noulAnswer(JSON.stringify((context.state['evidence'] as Record<string, unknown>)['currentArtifacts']).includes('corrected produced parser') ? 0.03 : 0.9); },
     });
     const base = request(root);
     const started = await h.runner.startDurable({ ...base, input: { ...base.input, isolation: 'worktree' } });

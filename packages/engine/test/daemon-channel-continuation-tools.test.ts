@@ -23,7 +23,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, spyOn, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fakePort, choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort, choiceAnswer, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { forgetGateReadings, gateReadingsPort, READ_ONLY } from './_helpers/gate-readings.ts';
 import { seedBenchmarkCache } from './_helpers/benchmark-cache.ts';
 import { ConfigManager } from '../sdk/src/platform/config/manager.js';
@@ -175,7 +175,10 @@ function buildHarness(options: { attemptProfile?: boolean; ownerChannels?: strin
   }).continuationRunner;
   const daemon = disposables.add(new DaemonServer({ runtimeServices: services }));
   const conversation = fakePort((_name, question) => choiceAnswer(question, 'conversation', 0.99));
+  const completion = fakePort(() => noulAnswer(.01));
   const prior = installJudgmentPort({ model: conversation.port.model, ask(request) {
+    if (['engine.core.response-completion', 'engine.core.execution-assurance', 'engine.core.delegation-consolidation'].includes(String(request.context?.battery)))
+      return completion.port.ask(request);
     if (request.context?.battery !== 'engine.daemon.inbound-intent') throw new Error('Unexpected fixture reading');
     return conversation.port.ask(request);
   } });

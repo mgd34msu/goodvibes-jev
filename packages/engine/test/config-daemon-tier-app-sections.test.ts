@@ -216,8 +216,8 @@ describe('settings ingestion: a key form from a newer component', () => {
     expect(entry?.action).toBe('skipped');
     expect(entry?.reason).toContain('newer form of calendar.google.clientSecretRef');
     expect(readings.requests.map(request => request.state)).toEqual([
-      expect.objectContaining({ context: { section: 'calendar.google', name: 'clientSecretRef@v2' } }),
-      { field: 'file' }, { field: 'key' }, { field: 'reason' }, { field: 'remedy' },
+      expect.objectContaining({ context: { section: 'calendar.google', name: 'clientSecretRef@v2' },
+        selectionFitInstructions: 'Is `name` in `context` a newer, renamed or extended form of this known setting, holding the same setting?' }),
     ]);
     // Never deleted: the file is shared, and a component that understands the
     // newer form must still find it there.

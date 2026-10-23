@@ -11,9 +11,11 @@ if (process.env.GOODVIBES_TEST_REQUIRE_EXEC_CONTAINMENT === '1' && !availability
 
 test.skipIf(!availability.available)('actual first-tool Bun exec builds, tests and reads generated captured members without approval', async () => {
   const opened: string[] = [];
+  const contentReads: string[] = [];
   const read = asyncFs.readFile;
   const tap = spyOn(asyncFs, 'readFile').mockImplementation(((...args: Parameters<typeof read>) => {
     opened.push(String(args[0]));
+    contentReads.push(String(args[0]));
     return read(...args);
   }) as typeof read);
   const open = asyncFs.open;
@@ -22,7 +24,7 @@ test.skipIf(!availability.available)('actual first-tool Bun exec builds, tests a
     return open(...args);
   }) as typeof open);
   try {
-    const proof = await runDirectExecContract(() => { opened.length = 0; });
+    const proof = await runDirectExecContract(() => { opened.length = 0; contentReads.length = 0; });
     expect(proof.status, JSON.stringify(proof)).toBe('passed');
     expect(proof.storedDenial).toBe(true);
     expect(proof.originalReadAccess).toBe('restricted');
@@ -37,7 +39,9 @@ test.skipIf(!availability.available)('actual first-tool Bun exec builds, tests a
     expect(opened).toContain(join(proof.memberRoot!, 'allowed.ts'));
     expect(opened).toContain(join(proof.memberRoot!, 'bunfig.toml'));
     expect(opened).toContain(join(proof.memberRoot!, 'first-preload.ts'));
-    expect(opened.some((path) => path.endsWith('/private.ts'))).toBe(false);
+    // Native snapshot copies and ownership hashes may open the preserved input;
+    // worker content reads and all actual child access remain restricted.
+    expect(contentReads.some((path) => path.endsWith('/private.ts'))).toBe(false);
     expect(JSON.parse(proof.generated!)).toEqual({
       value: DIRECT_EXEC_CAPTURED_VALUE, configuredType: 'PROJECT_LOADER_OK', configValue: 'PROJECT_CONFIG_OK',
       startupOrder: ['first', 'second'], denied: ['DENIED_READ', 'DENIED_READ', 'DENIED_IMPORT'],

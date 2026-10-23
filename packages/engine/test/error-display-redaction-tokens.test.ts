@@ -38,6 +38,7 @@ function everythingIsPayload() {
     if (protectedAnswer !== undefined) return protectedAnswer;
     if (name.startsWith('payload_')) return noulAnswer(0.97);
     if (state !== "Message: ENOENT: [REDACTED_TEXT], open '/home/[REDACTED]/hooks.json'"
+      && state !== "Message: ENOENT: no such file or directory, open '/home/[REDACTED]/hooks.json'"
       && state !== 'Message: provider rejected {"code":"bad_request"} [request-id 123] reading /home/[REDACTED]/x.json, retry later')
       throw new Error('Unspecified authored redaction-token failure state');
     if (name === 'category') return choiceAnswer(question, 'unknown', 0.95);

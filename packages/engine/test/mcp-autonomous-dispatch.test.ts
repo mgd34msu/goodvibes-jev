@@ -152,8 +152,10 @@ for (const mode of ['blocked', 'capability', 'path', 'host']) test(`${mode} rest
   if (mode === 'host') { hostValue = true; f.internal.permissions.registerServer('synthetic', 'standard', { allowedHosts: ['allowed.invalid'] }); }
   await expect(f.call({ name: mode === 'host' ? 'https://outside.invalid/file' : '/synthetic/file' })).rejects.toThrow(); expect(states).toHaveLength(0); expect(f.wire).toHaveLength(0);
 });
-test('source replacement during the first reading cannot adopt a new goal', async () => {
-  const f = fixture(); let goal = 'Original goal'; beforeRead = async () => { goal = 'Replacement goal'; };
+test('source replacement during schema loading cannot adopt a new goal', async () => {
+  const f = fixture(); let goal = 'Original goal';
+  const schema = f.client.getToolSchema.bind(f.client);
+  f.client.getToolSchema = async (...args) => { goal = 'Replacement goal'; return schema(...args); };
   await expect(withExternalOperationSource({ sourceOf: () => ({ goal, criteria: [] }), assertCurrent() {} }, () => f.api.callTool!('mcp:synthetic:write', {}))).rejects.toThrow();
   expect(f.wire).toHaveLength(0); expect(states).toHaveLength(0);
 });
@@ -175,14 +177,16 @@ test('revocation after first MRTR dispatch prevents the continuation write', asy
   const f = fixture(true); afterWire = () => { if (f.wire.length === 1) f.registry.setServerTrustMode('synthetic', 'blocked'); };
   await expect(f.call()).rejects.toThrow(); expect(f.wire).toHaveLength(1);
 });
-test('unavailable recorded reader and a late answer after cancellation dispatch nothing', async () => {
+test('late schema resolution after cancellation cannot dispatch; ordinary MCP tools do not require a semantic reader', async () => {
   const f = fixture(); const controller = new AbortController();
   let release!: () => void; const wait = new Promise<void>(resolve => { release = resolve; });
   let entered!: () => void; const started = new Promise<void>(resolve => { entered = resolve; });
-  beforeRead = async () => { entered(); await wait; };
+  const schema = f.client.getToolSchema.bind(f.client);
+  f.client.getToolSchema = async (...args) => { entered(); await wait; return schema(...args); };
   const pending = f.call(undefined, controller.signal).catch(error => error);
   await started; controller.abort(); release(); expect(await pending).toBeInstanceOf(Error);
   expect(f.wire).toHaveLength(0); expect(humans).toBe(0);
+  f.client.getToolSchema = schema;
   beforeRead = async () => { throw new Error('Synthetic unavailable provider'); };
   await f.call(); expect(f.wire).toHaveLength(1);
 });
@@ -200,7 +204,8 @@ test('actual registry admits a captured native source with canonical UUID proven
 
 test('changing native provenance after capture cannot reuse the original MCP authority', async () => {
   const f = fixture(); const source = selectedDiffSource(); let observed = false;
-  beforeRead = async () => { observed = true; source.selectedDiffContext.provenance.latestCheckpointId = 'new-checkpoint'; };
+  const schema = f.client.getToolSchema.bind(f.client);
+  f.client.getToolSchema = async (...args) => { observed = true; source.selectedDiffContext.provenance.latestCheckpointId = 'new-checkpoint'; return schema(...args); };
   await expect(withExternalOperationSource({ ...operation(), sourceOf: () => source }, () => f.api.callTool!('mcp:synthetic:write', {}))).rejects.toThrow();
   expect(observed).toBe(true); expect(f.wire).toHaveLength(0);
 });
