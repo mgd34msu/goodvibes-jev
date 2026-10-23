@@ -602,6 +602,45 @@ describe('agent tool contracts and contract-history modes', () => {
 });
 
 describe('workflow tool contract definition', () => {
+  test('the initial contract proposal checks the host instruction before starting any owner', async () => {
+    const h = harness();
+    const services = createWorkflowServices();
+    const tool = createWorkflowTool(services, { contractRunner: h.runner, projectRoot: PROJECT_ROOT, resolveSessionId: () => SESSION_ID });
+    const fake = fakePort(name => noulAnswer(name === 'delegation_forbidden' ? .99 : .01));
+    installJudgmentPort(fake.port);
+    try {
+      const result = await withDelegationRequest({ request: 'Review the parser personally without delegating.' },
+        () => tool.execute({ mode: 'start', definition: 'contract', task: 'Review the parser.' }));
+      expect(result.success).toBe(false);
+      expect(h.runner.starts).toHaveLength(0);
+      expect(h.manager.list()).toHaveLength(0);
+      expect(JSON.parse(result.output!).recovery.fixes[0].check).toBe('delegation_forbidden');
+      expect(fake.requests.some(request => request.context?.battery === 'engine.agents.delegation-authorization')).toBe(true);
+    } finally { h.manager.clear(); }
+  });
+
+  test('a repaired workflow contract is checked again against the same host restriction', async () => {
+    const h = harness();
+    const tool = createWorkflowTool(createWorkflowServices(), { contractRunner: h.runner, projectRoot: PROJECT_ROOT, resolveSessionId: () => SESSION_ID });
+    const fake = fakePort((name, _question, raw) => {
+      const input = raw as { specialistAssignments?: { task: string }[] };
+      return noulAnswer(name === 'constraint_conflict' && input.specialistAssignments?.some(assignment => assignment.task.startsWith('Edit ')) ? .99 : .01);
+    });
+    installJudgmentPort(fake.port);
+    try {
+      await withDelegationRequest({ request: 'Review parser.ts without changing any files.' }, async () => {
+        const rejected = await tool.execute({ mode: 'start', definition: 'contract', task: 'Edit parser.ts to fix its defects.' });
+        expect(rejected.success).toBe(false);
+        expect(h.runner.starts).toHaveLength(0);
+        const repaired = await tool.execute({ mode: 'start', definition: 'contract', task: 'Read parser.ts and return findings without changing files.' });
+        expect(repaired.success, repaired.error).toBe(true);
+      });
+      expect(h.runner.starts).toHaveLength(1);
+      expect(h.runner.starts[0]!.ask).toBe('Read parser.ts and return findings without changing files.');
+      expect(fake.requests.filter(request => request.context?.battery === 'engine.agents.delegation-authorization')).toHaveLength(2);
+    } finally { h.manager.clear(); }
+  });
+
   test('start with definition contract starts a contract through the runner', async () => {
     const { manager } = harness();
     const runner = fakeRunner(manager);
@@ -616,6 +655,27 @@ describe('workflow tool contract definition', () => {
     expect(JSON.parse(result.output!)).toMatchObject({ contractStarted: true, contractId: 'ctr-00000001', status: 'queued' });
     // A contract is not a tracked state machine.
     expect(services.workflowManager.list()).toHaveLength(0);
+  });
+
+  test.each(['abort', 'session', 'task'] as const)('contract validation cannot start work after its %s changes', async change => {
+    const h = harness(), controller = new AbortController();
+    let session = SESSION_ID;
+    const input = { mode: 'start', definition: 'contract', task: 'Review parser.ts without changing files.' };
+    const tool = createWorkflowTool(createWorkflowServices(), { contractRunner: h.runner, projectRoot: PROJECT_ROOT, resolveSessionId: () => session });
+    const fake = fakePort(() => {
+      if (change === 'abort') controller.abort();
+      if (change === 'session') session = 'another-session';
+      if (change === 'task') input.task = 'Edit parser.ts.';
+      return noulAnswer(.01);
+    });
+    installJudgmentPort(fake.port);
+    try {
+      const result = await withDelegationRequest({ request: 'Review parser.ts without changing files.', signal: controller.signal }, () => tool.execute(input));
+      expect(result.success).toBe(false);
+      expect(fake.requests.length).toBeGreaterThan(0);
+      expect(h.runner.starts).toHaveLength(0);
+      expect(h.manager.list()).toHaveLength(0);
+    } finally { h.manager.clear(); }
   });
 
   test('the tracked definitions still start state machines without the runner', async () => {

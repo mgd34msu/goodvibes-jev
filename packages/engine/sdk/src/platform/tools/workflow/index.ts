@@ -1,7 +1,10 @@
 import { isNativeConversationTurn, NATIVE_TURN_EXECUTION_REFUSAL } from '../../core/native-turn-scope.js';
 import { readDelegationRequest } from '../../core/delegation-request-context.js';
 import { delegationPlanHolds, delegationPlanKey } from '../../agents/delegation-plan-holds.js';
-import type { Tool } from '../../types/tools.js';
+import { assertAgentBriefFidelity, DelegationPlanHeldError } from '../../agents/brief-fidelity.js';
+import { readCompletionRepairContext } from '../../core/completion-repair-context.js';
+import { assertCurrentToolInvocation } from '../registry.js';
+import type { Tool, ToolExecuteOptions } from '../../types/tools.js';
 import { resolveCredentialEnvScrub, scrubCredentialEnv, type CredentialEnvScrubConfig, type ResolvedCredentialEnvScrub } from '../exec/credential-env.js';
 import type { ContractRunner } from '../../contract/runner.js';
 import { workflowSchema } from './schema.js';
@@ -454,7 +457,7 @@ export function createWorkflowTool(services: WorkflowServices, contracts: Workfl
   return {
     definition: workflowSchema,
 
-    async execute(args: Record<string, unknown>): Promise<{ success: boolean; output?: string; error?: string | undefined }> {
+    async execute(args: Record<string, unknown>, options?: ToolExecuteOptions): Promise<{ success: boolean; output?: string; error?: string | undefined }> {
       try {
         if (!args.mode || typeof args.mode !== 'string') {
           return { success: false, error: 'Missing required "mode" field' };
@@ -470,7 +473,7 @@ export function createWorkflowTool(services: WorkflowServices, contracts: Workfl
           if (!input.definition) {
             return { success: false, error: 'mode "start" requires "definition"' };
           }
-          if (!input.task) {
+          if (typeof input.task !== 'string' || !input.task.trim()) {
             return { success: false, error: 'mode "start" requires "task"' };
           }
           if (input.definition === CONTRACT_WORKFLOW_DEFINITION) {
@@ -481,11 +484,41 @@ export function createWorkflowTool(services: WorkflowServices, contracts: Workfl
               : [...holds.values()].find(plan => plan.sessionId === sessionId);
             if (held) return { success: false, error: 'Delegation remains held. Repair and revalidate the pending agent plan before starting a replacement contract.',
               output: JSON.stringify({ recovery: { kind: 'revise-delegation', ...held, requiredMode: held.mode } }) };
-            const started = contracts.contractRunner.start({
-              ask: input.task,
-              sessionId: contracts.resolveSessionId(),
+            const task = input.task, projectRoot = contracts.projectRoot, runner = contracts.contractRunner, start = runner.start;
+            const signal = source?.signal && options?.signal ? AbortSignal.any([source.signal, options.signal]) : source?.signal ?? options?.signal;
+            const assertCurrent = () => {
+              signal?.throwIfAborted();
+              assertCurrentToolInvocation(args, options);
+              const checked: unknown = source?.assertCurrent?.();
+              if (checked !== undefined) {
+                void Promise.resolve(checked).catch(() => {});
+                throw new Error('Workflow contract source checks must be synchronous.');
+              }
+              if (input.task !== task || input.mode !== 'start' || input.definition !== CONTRACT_WORKFLOW_DEFINITION
+                || contracts.resolveSessionId() !== sessionId || contracts.projectRoot !== projectRoot
+                || contracts.contractRunner !== runner || runner.start !== start) throw new Error('Workflow contract proposal changed during validation.');
+              signal?.throwIfAborted();
+            };
+            assertCurrent();
+            if (source) {
+              const repairContext = readCompletionRepairContext();
+              try {
+                await assertAgentBriefFidelity({ request: source.request, assignments: [{ task }],
+                  ...(repairContext ? { repairContext } : {}) }, { signal, assertCurrent });
+              } catch (error) {
+                if (!(error instanceof DelegationPlanHeldError)) throw error;
+                return { success: false, error: error.message, output: JSON.stringify({ recovery: {
+                  kind: 'revise-delegation', request: source.request, assignments: [{ task }], fixes: error.fixes,
+                  requiredMode: 'start', definition: CONTRACT_WORKFLOW_DEFINITION,
+                  instruction: 'Repair these exact conflicts and resubmit this workflow contract proposal for Jev revalidation against the original request.' } }) };
+              }
+            }
+            assertCurrent();
+            const started = start.call(runner, {
+              ask: task,
+              sessionId,
               origin: 'agent-tool',
-              projectRoot: contracts.projectRoot,
+              projectRoot,
             });
             return {
               success: true,
