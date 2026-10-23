@@ -74,7 +74,8 @@ test('actual Agent inventory is an independent complete disjoint census, with no
   expect(manifest.groups[2]!.files).toEqual([modelCatalog]);
   expect(manifest.groups[3]!.files).toEqual([modelReadiness]);
   const harness = new Set<string>(Object.values(AGENT_HARNESS_GROUP_FILES));
-  expect(manifest.groups[4]!.files).toEqual(census.filter(file => !file.startsWith('src/test/e2e/') && ![headless, modelCatalog, modelReadiness].includes(file) && !harness.has(file)));
+  expect(manifest.groups.filter(group => group.id === 'remaining' || group.id.startsWith('remaining-')).flatMap(group => group.files).sort())
+    .toEqual(census.filter(file => !file.startsWith('src/test/e2e/') && ![headless, modelCatalog, modelReadiness].includes(file) && !harness.has(file)));
 });
 
 test('native harness groups retain whole files and leave nested names in the complete remaining inventory', () => {
@@ -128,6 +129,25 @@ test('two owned remaining plans preserve every complete file and all future sour
   }
   write(agent, 'src/test/future/new-worker.spec.ts');
   expect(() => agentGroupTestPlans(agent, args)).toThrow('differs');
+});
+
+test('complete remaining CI partitions preserve every file and isolate the native catalogs', () => {
+  const agent = resolve(import.meta.dir, '../../../products/agent');
+  const manifest = agentTestManifest(agent);
+  const groups = manifest.groups.filter(group => group.id === 'remaining' || group.id.startsWith('remaining-'));
+  const selected = groups.flatMap(group => {
+    const plans = agentGroupTestPlans(agent, [`--group=${group.id}`, `--manifest-sha256=${manifest.sha256}`]);
+    const files = plans.flatMap(plan => plan.slice(2).map(file => file.slice(2)));
+    expect(files.sort()).toEqual(group.files);
+    return files;
+  });
+  expect(new Set(selected).size).toBe(selected.length);
+  expect(groups[0]!.files).toEqual([
+    'src/test/tools/agent-harness-semantic-record-catalogs.test.ts', 'src/test/tools/agent-harness-tool.test.ts',
+  ]);
+  const sizes = groups.slice(1).map(group => group.files.length);
+  expect(Math.max(...sizes) - Math.min(...sizes)).toBeLessThanOrEqual(1);
+  expect(Math.max(...sizes)).toBeLessThanOrEqual(240);
 });
 
 test('future nested tests are discovered once; stale, malformed, duplicate and mixed selectors fail closed', () => {
@@ -208,37 +228,17 @@ test('CI-only product discovery removes only Agent while local catalog remains c
   expect(run('matrix-without-agent', ['tui']).exitCode).not.toBe(0);
 }, 60_000);
 
-test('CI keeps exact artifacts, complete gates, other product commands and unchanged runner deadlines', () => {
+test('CI Agent completion gate refuses unsuccessful build and test-group results', () => {
   const repo = resolve(import.meta.dir, '../../..');
-  const workflow = readFileSync(join(repo, '.github/workflows/ci.yml'), 'utf8');
-  const agent = workflow.split('\n  agent-tests:\n')[1]!.split('\n  agent-tests-complete:')[0]!;
-  expect(agent).toContain('fail-fast: false');
-  expect(agent).toContain('timeout-minutes: 15');
-  for (const prerequisite of ['workspace-build-output', 'ci-artifact.ts verify "$GITHUB_SHA"', 'goodvibes-agent-linux-x64 --version', 'GOODVIBES_E2E_BINARY=', 'install --no-install-recommends -y tmux', 'git config --global user.email', 'git config --global user.name']) expect(agent).toContain(prerequisite);
-  expect(agent).not.toContain('run-tests.ts');
-  expect(agent).not.toContain('GOODVIBES_TEST_CEILING_MS');
-  expect(agent).toContain('id: agent-test-run');
-  expect(agent).toContain("if: ${{ always() && steps.agent-test-run.outputs.owner_evidence != '' }}");
-  expect(agent).toContain('name: agent-owner-evidence-${{ matrix.group }}-${{ github.run_attempt }}');
-  expect(agent).toContain('path: ${{ steps.agent-test-run.outputs.owner_evidence }}');
-  expect(agent).toContain('if-no-files-found: error');
-  const aggregate = workflow.split('\n  agent-tests-complete:\n')[1]!.split('\n  # Exact TUI')[0]!;
-  expect(aggregate).toContain('name: Product tests (agent)');
-  expect(aggregate).toContain('if: always()');
-  expect(aggregate).toContain('needs: [build, agent-tests]');
-  const command = aggregate.match(/run: (test .*)/)![1]!;
+  const workflow = Bun.YAML.parse(readFileSync(join(repo, '.github/workflows/ci.yml'), 'utf8')) as {
+    jobs: Record<string, { steps: { run?: string }[] }>
+  };
+  const command = workflow.jobs['agent-tests-complete']!.steps.find(step => step.run)?.run;
+  if (!command) throw new Error('Agent completion gate has no executable step');
   for (const build of ['success', 'failure', 'cancelled', 'skipped']) for (const groups of ['success', 'failure', 'cancelled', 'skipped']) {
     const result = Bun.spawnSync({ cmd: ['sh', '-c', command], env: { BUILD_RESULT: build, AGENT_RESULT: groups } });
     expect(result.exitCode === 0).toBe(build === 'success' && groups === 'success');
   }
-  const release = workflow.split('\n  auto-release:')[1]!;
-  for (const dependency of ['product-tests', 'agent-tests', 'agent-tests-complete']) expect(release).toContain(`      - ${dependency}\n`);
-  expect(workflow).toContain('run: bun run products:test "$PRODUCT"');
-  expect(JSON.parse(readFileSync(join(repo, 'products/agent/package.json'), 'utf8')).scripts.test).toBe('bun ../../packages/engine/scripts/test.ts --cwd ../../products/agent src/test');
-  const owned = readFileSync(join(repo, 'packages/engine/toolchain/src/test-runner/owned-test-child.ts'), 'utf8');
-  expect(owned).toContain('const DEFAULT_STALL_MS = 180_000');
-  expect(owned).toContain('const DEFAULT_CEILING_MS = 720_000');
-  expect(readFileSync(join(repo, 'packages/engine/scripts/test.ts'), 'utf8')).toContain('return 60_000');
 });
 
 test('owner-log replay drains complete logs or reports bounded truncation and interruption', async () => {

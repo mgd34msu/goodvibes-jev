@@ -16,8 +16,15 @@ export const AGENT_HARNESS_GROUP_FILES = {
   'harness-integrations': 'src/test/tools/agent-harness-integrations.test.ts',
   'harness-workspace-interface': 'src/test/tools/agent-harness-workspace-interface.test.ts',
   'harness-settings-actions': 'src/test/tools/agent-harness-settings-actions.test.ts',
+  'harness-stateful-catalogs': 'src/test/tools/agent-harness-stateful-catalogs.test.ts',
+  'routing-engine-integration': 'src/test/tools/agent-route-engine-integration.test.ts',
+  'harness-routing-engine-integration': 'src/test/tools/agent-harness-route-engine-integration.test.ts',
+  'routing-personal-ops': 'src/test/tools/agent-route-tool.test.ts',
+  'routing-research-media': 'src/test/tools/agent-route-research-media.test.ts',
+  'routing-provider-channel-policy': 'src/test/tools/agent-route-provider-channel-policy.test.ts',
+  'routing-local-work': 'src/test/tools/agent-route-local-work.test.ts',
 } as const;
-export type AgentTestGroup = typeof AGENT_TEST_GROUPS[number] | keyof typeof AGENT_HARNESS_GROUP_FILES;
+export type AgentTestGroup = typeof AGENT_TEST_GROUPS[number] | keyof typeof AGENT_HARNESS_GROUP_FILES | `remaining-${number}`;
 const HEADLESS = 'src/test/cli/native-headless-entrypoint.test.ts';
 // Keep the expensive full-source model suites intact on independent hosts.
 // All other/future files remain in the recursively discovered remaining group.
@@ -27,6 +34,7 @@ const REMAINING_NATIVE_CATALOGS = [
   'src/test/tools/agent-harness-tool.test.ts',
   'src/test/tools/agent-harness-semantic-record-catalogs.test.ts',
 ] as const;
+const REMAINING_FILES_PER_GROUP = 240;
 const IGNORED_DIRECTORIES = new Set(['node_modules', '.git', 'dist']);
 const TEST_FILE = /\.(?:test|spec)\.[cm]?[jt]sx?$/;
 
@@ -65,6 +73,20 @@ export function groupAgentTestFiles(files: readonly string[]) {
       : file === MODEL_CATALOG ? 2 : file === MODEL_READINESS ? 3 : 4;
     groups[index]!.files.push(file);
   }
+  const remaining = groups[4]!;
+  if (remaining.files.length > REMAINING_FILES_PER_GROUP) {
+    const catalogs = remaining.files.filter(file => REMAINING_NATIVE_CATALOGS.some(owned => owned === file));
+    const others = remaining.files.filter(file => !catalogs.includes(file));
+    const count = Math.ceil(others.length / REMAINING_FILES_PER_GROUP);
+    const partitions = Array.from({ length: count }, () => [] as string[]);
+    others.forEach((file, index) => partitions[index % count]!.push(file));
+    // Each complete partition gets its own CI host and the existing deadline.
+    // Keep the two catalog fixtures together, isolated from unrelated globals.
+    remaining.files = catalogs.length ? catalogs : partitions.shift()!;
+    for (const selected of partitions) {
+      groups.push({ id: `remaining-${groups.filter(group => group.id === 'remaining' || group.id.startsWith('remaining-')).length + 1}`, files: selected });
+    }
+  }
   if (groups.some((group) => group.files.length === 0)) throw new Error('Agent test groups must be nonempty');
   return groups;
 }
@@ -100,7 +122,7 @@ export function agentGroupTestPlans(agentRoot: string, args: readonly string[]):
   const group = selectedAgentGroup(agentRoot, args);
   const owned = group.id === 'remaining' ? REMAINING_NATIVE_CATALOGS.filter(file => group.files.includes(file)) : [];
   const others = group.files.filter(file => !owned.some(selected => selected === file));
-  const plans = owned.length > 0 && others.length > 0 ? [owned, others] : [group.files];
+  const plans = [...(owned.length ? [owned] : []), ...(others.length ? [others] : [])];
   const census = plans.flat().sort();
   if (census.length !== group.files.length || new Set(census).size !== census.length
     || census.some((file, index) => file !== group.files[index])) throw new Error('Agent child plans differ from the complete selected group');

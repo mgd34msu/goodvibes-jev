@@ -2,7 +2,20 @@
 
 > Internal source map. For day-to-day validation commands see [Testing and Validation](./testing-and-validation.md).
 
-Tests should protect architecture, not just implementation details.
+Tests should verify observable functionality: results, saved state, recovery,
+permissions, and what the user receives. Use the smallest fixture that exposes
+the actual failure. Remove checks that only pin source spelling, count coverage,
+assert a trivial alias, or exercise copies of historical implementations.
+
+For AI-assisted behavior, accept supported results that meet the requirement;
+do not require a particular wording or generated fact title. Controlled model
+responses can exercise specific outcomes without asserting that a live model
+will always choose one phrasing.
+
+Retries belong in runtime recovery for identified transient failures. Keep
+attempts bounded, revalidate current state and permissions, and check whether a
+write already committed before repeating it. Preserve the original failure and
+never retry a test merely to obtain a pass.
 
 Key expectations:
 
