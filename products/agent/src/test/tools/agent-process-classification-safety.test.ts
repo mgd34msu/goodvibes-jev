@@ -76,7 +76,7 @@ function fixture(owner = ordinaryResearchOwner()) {
       : choiceAnswer(question, name === 'disposition' ? 'act' : name === 'kind' ? 'read' : 'generic', 0.999));
     using log = new SqliteDecisionLog(':memory:');
     const wrapper = withDecisionLog({ ...admission.port, async ask(request) {
-      if (request.context?.battery === 'agent.tools.long-lived-process' || request.context?.battery === 'engine.tools.credential-env') {
+      if (request.context?.battery === 'agent.tools.long-lived-process' || request.context?.battery === 'engine.tools.credential-env' || request.context?.battery === 'engine.gate.sandbox-needs') {
         if (!sourcePort || sourcePort.ask !== sourceAsk) throw new Error('Lifetime reader is unavailable or changed');
         return sourcePort.ask(request);
       }
@@ -394,4 +394,41 @@ describe('protected process lifetime classification', () => {
     }
   });
 
+});
+
+
+test('mentioning a privilege command as an echo argument does not block the requested output', async () => {
+  const f = fixture();
+  reading(0.01);
+  const command = 'echo sudo true';
+  const result = await f.run({ ...start, command, processClass: 'command', explicitUserRequest: 'Print the literal text sudo true.' });
+  expect(result.status).toBe('started');
+  expect(f.calls).toHaveLength(1);
+  expect(f.calls[0]![0]).toBe(command);
+});
+
+
+test('literal and wrapped privilege programs remain blocked before process creation', async () => {
+  const f = fixture(); const fake = reading(0.99);
+  for (const command of ['/usr/bin/sudo true', 'env sudo true']) {
+    const result = await f.run({ ...start, command, processClass: 'command', explicitUserRequest: 'Try the privilege command.' });
+    expect(result.status).toBe('blocked');
+  }
+  expect(f.calls).toHaveLength(0);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.gate.sandbox-needs')).toBe(true);
+});
+
+test('cancellation during an ambiguous privilege reading prevents process creation', async () => {
+  const f = fixture(), pending = latch(), fake = fakePort(() => noulAnswer(0.01));
+  const controller = new AbortController();
+  installJudgmentPort({ ...fake.port, async ask(request) {
+    if (request.context?.battery === 'engine.gate.sandbox-needs') { pending.started(); await pending.gate; }
+    return fake.port.ask(request);
+  } });
+  const run = f.run({ ...start, command: 'echo sudo true', processClass: 'command', explicitUserRequest: 'Print the literal text sudo true.' }, f.options(controller.signal));
+  const settled = run.then(() => undefined, () => undefined);
+  try {
+    await pending.first; controller.abort(); pending.release(); await settled;
+    expect(f.calls).toHaveLength(0);
+  } finally { pending.release(); await settled; }
 });

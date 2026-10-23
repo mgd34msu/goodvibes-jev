@@ -1,3 +1,4 @@
+import { withBackgroundPrivilegeCheck } from './agent-harness-background-privilege.ts';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { realpathSync } from 'node:fs';
@@ -585,10 +586,6 @@ function readCwd(context: CommandContext, args: AgentHarnessBackgroundProcessArg
   return realpathSync(resolveAndValidatePath(raw || '.', shellPaths.workingDirectory));
 }
 
-function looksLikeSudo(command: string): boolean {
-  return /(^|[\s;&|])(?:sudo|su|doas|pkexec)\b/.test(command);
-}
-
 async function waitForProcess(manager: ProcessManager, processId: string, timeoutMs: number, options: CatalogRankingOptions): Promise<BackgroundProcess | undefined> {
   const started = Date.now();
   for (;;) {
@@ -663,50 +660,52 @@ export async function runBackgroundProcessAction(context: CommandContext, args: 
     const current = processClassificationOptions(context), supplied = options;
     const command = readCommand(args);
     if (!command) throw new Error('Background process start requires command.');
-    if (looksLikeSudo(command)) {
+    return withBackgroundPrivilegeCheck(command, options, async (privileged, assertPrivilegeCurrent) => {
+      if (privileged) {
+        return {
+          status: 'blocked',
+          capability: 'sudo',
+          reason: 'Background sudo prompts are not exposed by Agent because they can hang or hide privilege escalation.',
+          guidance: (await capabilities(context, options)).sudo,
+        };
+      }
+      const cwd = readCwd(context, args);
+      const root = context.workspace.shellPaths?.workingDirectory;
+      if (!root) throw new ToolInputProjectionError('held');
+      const physicalRoot = realpathSync(root);
+      const launchOptions = { ...supplied, assertCurrent: () => {
+        assertPrivilegeCurrent(); assertEffect(); current.assertCurrent?.();
+        if (realpathSync(root) !== physicalRoot || readCwd(context, args) !== cwd) throw new ToolInputProjectionError('held');
+      } };
+      const timeoutMs = clampTimeout(args.timeoutMs ?? readField(args, 'timeoutMs'), DEFAULT_BACKGROUND_TIMEOUT_MS);
+      const { processClass, killOnTimeout, result } = await spawnClassifiedBackgroundProcess(manager, args, command, cwd, timeoutMs, launchOptions);
       return {
-        status: 'blocked',
-        capability: 'sudo',
-        reason: 'Background sudo prompts are not exposed by Agent because they can hang or hide privilege escalation.',
-        guidance: (await capabilities(context, options)).sudo,
+        status: 'started',
+        processClass,
+        killOnTimeout,
+        timeoutBehavior: timeoutMs === 0 ? 'No automatic deadline; stop it explicitly with process action:"kill".' : killOnTimeout
+          ? `SIGTERM then SIGKILL after ${timeoutMs}ms.`
+          : `Left running past ${timeoutMs}ms; stop it explicitly with process action:"kill".`,
+        processId: result.process_id,
+        processSessionId: result.process_id,
+        sessionId: result.process_id,
+        session_id: result.process_id,
+        pid: result.pid,
+        command: await redactSensitiveDataAsync(command, launchOptions),
+        cwd,
+        timeoutMs,
+        routes: {
+          inspect: result.process_id ? routeFor(result.process_id, 'background_process') : null,
+          poll: result.process_id ? routeFor(result.process_id, 'run_background_process', 'poll') : null,
+          log: result.process_id ? routeFor(result.process_id, 'run_background_process', 'log') : null,
+          wait: result.process_id ? routeFor(result.process_id, 'run_background_process', 'wait') : null,
+          stop: result.process_id ? routeFor(result.process_id, 'run_background_process', 'stop') : null,
+          visibleMonitor: 'workspace action:"open" surfaceId:"process-monitor"',
+          liveTail: result.process_id ? `workspace action:"open" surfaceId:"live-tail" target:"${result.process_id}"` : null,
+        },
+        policy: 'Started as a tracked local background process with visible monitor/live-tail routes.',
       };
-    }
-    const cwd = readCwd(context, args);
-    const root = context.workspace.shellPaths?.workingDirectory;
-    if (!root) throw new ToolInputProjectionError('held');
-    const physicalRoot = realpathSync(root);
-    const launchOptions = { ...supplied, assertCurrent: () => {
-      assertEffect(); current.assertCurrent?.();
-      if (realpathSync(root) !== physicalRoot || readCwd(context, args) !== cwd) throw new ToolInputProjectionError('held');
-    } };
-    const timeoutMs = clampTimeout(args.timeoutMs ?? readField(args, 'timeoutMs'), DEFAULT_BACKGROUND_TIMEOUT_MS);
-    const { processClass, killOnTimeout, result } = await spawnClassifiedBackgroundProcess(manager, args, command, cwd, timeoutMs, launchOptions);
-    return {
-      status: 'started',
-      processClass,
-      killOnTimeout,
-      timeoutBehavior: timeoutMs === 0 ? 'No automatic deadline; stop it explicitly with process action:"kill".' : killOnTimeout
-        ? `SIGTERM then SIGKILL after ${timeoutMs}ms.`
-        : `Left running past ${timeoutMs}ms; stop it explicitly with process action:"kill".`,
-      processId: result.process_id,
-      processSessionId: result.process_id,
-      sessionId: result.process_id,
-      session_id: result.process_id,
-      pid: result.pid,
-      command: await redactSensitiveDataAsync(command, launchOptions),
-      cwd,
-      timeoutMs,
-      routes: {
-        inspect: result.process_id ? routeFor(result.process_id, 'background_process') : null,
-        poll: result.process_id ? routeFor(result.process_id, 'run_background_process', 'poll') : null,
-        log: result.process_id ? routeFor(result.process_id, 'run_background_process', 'log') : null,
-        wait: result.process_id ? routeFor(result.process_id, 'run_background_process', 'wait') : null,
-        stop: result.process_id ? routeFor(result.process_id, 'run_background_process', 'stop') : null,
-        visibleMonitor: 'workspace action:"open" surfaceId:"process-monitor"',
-        liveTail: result.process_id ? `workspace action:"open" surfaceId:"live-tail" target:"${result.process_id}"` : null,
-      },
-      policy: 'Started as a tracked local background process with visible monitor/live-tail routes.',
-    };
+    });
   }
 
   if (action === 'stop' || action === 'kill' || action === 'cancel') {
