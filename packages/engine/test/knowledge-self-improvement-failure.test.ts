@@ -7,6 +7,8 @@ import { AppError } from '../sdk/src/platform/types/errors.js';
 import { KnowledgeRepairProfileHeldError } from '../sdk/src/platform/knowledge/semantic/repair-profile/types.js';
 import { captureRepairFailureReader } from '../sdk/src/platform/knowledge/semantic/self-improvement-failure.js';
 import { KnowledgeRepairBudgetError, runWithRepairBudget } from '../sdk/src/platform/knowledge/semantic/self-improvement-budget.js';
+import { withSupportBudget } from '../sdk/src/platform/knowledge/semantic/support-budget.js';
+import { KnowledgeGeneratedFactSupportHeldError } from '../sdk/src/platform/knowledge/semantic/verification/types.js';
 import { KnowledgeSemanticService } from '../sdk/src/platform/knowledge/semantic/service.js';
 import { createStores } from './_helpers/knowledge-semantic-fixtures.js';
 import { seedKnowledgeResearchTask } from './_helpers/knowledge-semantic-activation-fixtures.js';
@@ -50,6 +52,17 @@ describe('knowledge repair failure cause', () => {
     const result = await reader()(new Error('timeout deadline budget exceeded'));
     expect(result.cause).toBe(cause); expect(result.basis).toBe('reading'); expect(fake.requests).toHaveLength(1);
     expect(fake.requests[0]?.signal).toBeDefined(); expect(fake.requests[0]?.beforeAttempt).toBeDefined();
+  });
+
+  test.each([false, true])('an owned support timer retains its retryable cause through cooperative abort: %s', async cooperative => {
+    const fake = fixture('other');
+    const failure = await withSupportBudget(signal => new Promise<never>((_resolve, reject) => {
+      if (cooperative) signal.addEventListener('abort', () => reject(new KnowledgeGeneratedFactSupportHeldError('aborted')), { once: true });
+    }), 1).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(KnowledgeGeneratedFactSupportHeldError);
+    expect(await reader()(failure)).toMatchObject({ cause: 'run_budget', basis: 'owned-support-timer' });
+    expect(await reader()(new KnowledgeGeneratedFactSupportHeldError('budget'))).toMatchObject({ cause: 'other', basis: 'typed-judgment-hold' });
+    expect(fake.requests).toHaveLength(0);
   });
   test('the canonical UNKNOWN code does not hide free-text evidence', async () => {
     const fake = fixture('request_timeout');
@@ -171,6 +184,19 @@ async function serviceFixture(error: unknown) {
 }
 
 describe('actual semantic service failure path', () => {
+  test('support timer expiry defers the actual repair task and reports its exhausted budget', async () => {
+    const fake = fixture('other');
+    const { store, service, gap, spaceId } = await serviceFixture(new Error('unused'));
+    service.setGapRepairer(() => withSupportBudget(() => new Promise<never>(() => {}), 1));
+    const result = await service.selfImprove({ knowledgeSpaceId: spaceId, gapIds: [gap.id], force: true });
+    const task = store.getRefinementTask(result.taskIds[0]!)!;
+    expect(result).toMatchObject({ budgetExhausted: true, truncated: true, blockedGaps: 1 });
+    expect(task.state).toBe('blocked');
+    expect(task.trace.at(-1)?.data).toMatchObject({ retryable: true,
+      failureCause: { cause: 'run_budget', basis: 'owned-support-timer' } });
+    expect(fake.requests.filter(request => 'cause' in request.questions)).toHaveLength(0);
+  });
+
   test('an explicit short timeout is honored without a five-second minimum', async () => {
     const fake = fixture('other');
     const { store, service, gap, spaceId } = await serviceFixture(new Error('unused'));

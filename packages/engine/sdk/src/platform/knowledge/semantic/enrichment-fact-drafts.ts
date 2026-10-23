@@ -36,20 +36,25 @@ export async function prepareEnrichmentFactDrafts(input: {
   const nodes = [...new Map([...input.sourceSubjects, ...input.proposedEntities].map(node => [node.id, node])).values()];
   const candidates = nodes.map((node, index) => ({ ...repairProfileSubject(node), kind: node.kind,
     aliases: node.aliases, identity: repairProfileSubject(node).identity ?? {}, reference: `subject-${index + 1}` }));
-  const states = input.persistedFacts.map(fact => candidates.map(candidate => ({
-    reference: candidate.reference, candidate: candidate.reference, candidates, objectProfiles: [],
+  const states = input.persistedFacts.flatMap((fact, factIndex) => candidates.map((candidate, candidateIndex) => ({
+    reference: `subject-${factIndex * candidates.length + candidateIndex + 1}`, candidate: candidate.reference, candidates, objectProfiles: [],
     query: JSON.stringify({ title: fact.title, summary: fact.summary, value: fact.value,
       evidence: fact.evidence, labels: fact.labels, targetHints: fact.targetHints }),
   })));
   assertJudgmentInput(states);
   const current = () => { input.assertCurrent?.(); };
   const reader = createRepairSubjectSelectionReader({ signal: input.signal, assertCurrent: current });
+  // One complete owned batch uses the reader's bounded parallelism. Each
+  // fact/candidate pair keeps its own response identity; no fact is published
+  // until every reading settles under the original source and owner guards.
+  guard.assertCurrent();
+  const readings = await reader.read(states);
+  guard.assertCurrent(); reader.assertCurrent();
   const drafts = [];
   for (const [index, fact] of input.persistedFacts.entries()) {
     guard.assertCurrent();
-    const readings = await reader.read(states[index]!);
-    guard.assertCurrent(); reader.assertCurrent();
-    const selectedIds = new Set(readings.filter(reading => reading.selected).map(reading => nodes[candidates.findIndex(candidate => candidate.reference === reading.reference)]!.id));
+    const selectedIds = new Set(readings.slice(index * candidates.length, (index + 1) * candidates.length)
+      .flatMap((reading, candidateIndex) => reading.selected ? [nodes[candidateIndex]!.id] : []));
     const factLinkedObjects = input.sourceSubjects.filter(subject => selectedIds.has(subject.id));
     const entitySubjects = input.proposedEntities.filter(subject => selectedIds.has(subject.id));
     const sourceLinkedObjectIds = factLinkedObjects.map((node) => node.id);

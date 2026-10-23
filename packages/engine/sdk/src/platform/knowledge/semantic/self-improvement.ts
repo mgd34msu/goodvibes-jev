@@ -56,6 +56,7 @@ interface SelfImproveContext {
 }
 
 interface GapRepairOutcome {
+  readonly budgetExhausted?: boolean;
   readonly repairableGaps: number;
   readonly skippedGaps: number;
   readonly blockedGaps: number;
@@ -262,6 +263,7 @@ function markRunBudgetExhausted(state: SelfImproveRunState): void {
 }
 
 function applyRepairOutcome(state: SelfImproveRunState, repair: GapRepairOutcome): void {
+  if (repair.budgetExhausted) markRunBudgetExhausted(state);
   state.repairableGaps += repair.repairableGaps;
   state.skippedGaps += repair.skippedGaps;
   state.blockedGaps += repair.blockedGaps;
@@ -423,7 +425,7 @@ async function persistGapRepairFailure(context: SelfImproveContext, gap: Knowled
       }, owner.assertCurrent));
       owner.assertCurrent();
       return emptyRepairOutcome({ repairableGaps: 1, queuedTasks: 1, blockedGaps: 1,
-        nextRepairAttemptAt, errors: [{ gapId: gap.id, error: reason }] });
+        budgetExhausted: failure.cause === 'run_budget', nextRepairAttemptAt, errors: [{ gapId: gap.id, error: reason }] });
     }
     owner.acceptTask(await updateRefinementTask(context.store, task, 'failed', reason,
       { failureCause }, owner.assertCurrent));

@@ -1,5 +1,14 @@
 import { KnowledgeGeneratedFactSupportHeldError } from './verification/types.js';
 
+const expiredBudgets = new WeakSet<object>();
+const hasExpiredBudget = expiredBudgets.has.bind(expiredBudgets);
+const markExpiredBudget = expiredBudgets.add.bind(expiredBudgets);
+
+/** Only this operation's native timer can establish an expired support budget. */
+export function isOwnedSupportBudgetExpiry(error: unknown): boolean {
+  return error !== null && typeof error === 'object' && hasExpiredBudget(error);
+}
+
 /** A bounded semantic pass, including ports that ignore their AbortSignal. */
 export async function withSupportBudget<T>(
   run: (signal: AbortSignal) => Promise<T>, timeoutMs: number, parent?: AbortSignal,
@@ -10,7 +19,11 @@ export async function withSupportBudget<T>(
   let rejectStop: (error: KnowledgeGeneratedFactSupportHeldError) => void = () => {};
   const stopped = new Promise<never>((_resolve, reject) => { rejectStop = reject; });
   const stop = (reason: 'aborted' | 'budget') => {
-    controller.abort(); rejectStop(new KnowledgeGeneratedFactSupportHeldError(reason));
+    const error = new KnowledgeGeneratedFactSupportHeldError(reason);
+    if (reason === 'budget') markExpiredBudget(error);
+    // Settle the owned cause before cooperative abort handlers can substitute
+    // their generic cancellation error for the timer that stopped the pass.
+    rejectStop(error); controller.abort();
   };
   const abort = () => stop('aborted');
   parent?.addEventListener('abort', abort, { once: true });
