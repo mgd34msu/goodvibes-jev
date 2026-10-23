@@ -44862,7 +44862,7 @@
         "getWorkingDirectory",
         "isAutoApproveEnabled"
       ],
-      "text": "export interface PermissionConfigReader { getAutonomousSnapshot?(): Readonly<{ permissions: PermissionConfigSnapshot['permissions']; autoApprove: boolean; directory: string | null; incarnation?: number; }>; isAutoApproveEnabled(): boolean; getSnapshot(): PermissionConfigSnapshot; getWorkingDirectory(): string | null; getDecisionOtlpConfig?(): DecisionOtlpConfig; } ;; via DecisionOtlpConfig = export interface DecisionOtlpConfig { readonly enabled: boolean; readonly endpoint: string; readonly signal: 'span' | 'log' | 'both'; readonly serviceName?: string | undefined; readonly timeoutMs?: number | undefined; readonly headers?: Record<string, string> | undefined; } ;; PermissionConfigSnapshot = type PermissionConfigSnapshot = Readonly<Pick<ReturnType<typeof getConfigSnapshot>, 'permissions'>>; ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; };"
+      "text": "export interface PermissionConfigReader { flushPendingChanges?(): void; getAutonomousSnapshot?(): Readonly<{ permissions: PermissionConfigSnapshot['permissions']; autoApprove: boolean; directory: string | null; incarnation?: number; }>; isAutoApproveEnabled(): boolean; getSnapshot(): PermissionConfigSnapshot; getWorkingDirectory(): string | null; getDecisionOtlpConfig?(): DecisionOtlpConfig; } ;; via DecisionOtlpConfig = export interface DecisionOtlpConfig { readonly enabled: boolean; readonly endpoint: string; readonly signal: 'span' | 'log' | 'both'; readonly serviceName?: string | undefined; readonly timeoutMs?: number | undefined; readonly headers?: Record<string, string> | undefined; } ;; PermissionConfigSnapshot = type PermissionConfigSnapshot = Readonly<Pick<ReturnType<typeof getConfigSnapshot>, 'permissions'>>; ;; Readonly = type Readonly<T> = { readonly [P in keyof T]: T[P]; };"
     },
     {
       "name": "PermissionDecisionReasonCode",
@@ -45103,7 +45103,7 @@
     {
       "name": "createPermissionConfigReader",
       "kind": "function",
-      "text": "export declare function createPermissionConfigReader(configManager: Pick<ConfigManager, 'get' | 'getRaw' | 'getWorkingDirectory'> & Partial<Pick<ConfigManager, 'getAutonomousPermissionSnapshot'>>): PermissionConfigReader; ;; via Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
+      "text": "export declare function createPermissionConfigReader(configManager: Pick<ConfigManager, 'get' | 'getRaw' | 'getWorkingDirectory'> & Partial<Pick<ConfigManager, 'getAutonomousPermissionSnapshot' | 'flushConfigFileChanges'>>): PermissionConfigReader; ;; via Partial = type Partial<T> = { [P in keyof T]?: T[P]; }; ;; Pick = type Pick<T, K extends keyof T> = { [P in K]: T[P]; };"
     },
     {
       "name": "decideAutonomousTool",
