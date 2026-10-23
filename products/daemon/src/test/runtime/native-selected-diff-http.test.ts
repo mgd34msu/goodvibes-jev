@@ -20,7 +20,7 @@ test('selected native diff stays exact host evidence through capture, changed wo
   await f.scopes.add(f.daemon.workingDirectory, { checkpointEligible: true });
   f.controls.route = 'converse';
   const activeBarrier = intakeBarrier();
-  type ModelRequest = { messages: { role: string; content: unknown }[]; stream?: boolean };
+  type ModelRequest = { messages: readonly { role: string; content: unknown }[]; stream?: boolean };
   const requests: ModelRequest[] = [];
   const lastUser = (body: ModelRequest) => [...body.messages].reverse().find(message => message.role === 'user')?.content;
   const server = Bun.serve({ port: 0, hostname: '127.0.0.1', async fetch(request) {
@@ -209,7 +209,11 @@ test('selected native diff stays exact host evidence through capture, changed wo
     f.controls.route = 'converse'; f.daemon.services.configManager.set('provider.model', 'selected-diff-wire:selected-diff-model');
     const active = await captureAndAdmit(command('active', ACTIVE));
     const activeStart = await wire('workLedger.turn.start', active.identity); turn(activeStart);
-    await waitFor(async () => requests.some(request => request.stream && lastUser(request) === ACTIVE), Boolean);
+    await waitFor(async () => {
+      const status = turn(await wire('workLedger.turn.status', active.identity));
+      if (['failed', 'cancelled', 'completed', 'recovery-required'].includes(status.state)) throw new Error(`Active barrier turn stopped before its provider request: ${JSON.stringify(status)}; providers: ${JSON.stringify(requests.map(request => ({ stream: request.stream, user: lastUser(request) })))}; fixture: ${JSON.stringify(f.requests.map(request => ({ model: request.model, user: lastUser(request) })))}; judgmentErrors: ${JSON.stringify(f.judgmentErrors.map(error => error instanceof Error ? error.stack : error))}`);
+      return { status, reachedProvider: requests.some(request => request.stream && lastUser(request) === ACTIVE) };
+    }, value => value.reachedProvider);
     const busyDiscovery = await wire('workLedger.turn.session', { sessionId }); expect(body(busyDiscovery)).toMatchObject({ busy: true });
     const queued = await captureAndAdmit(command('queued-cancel', 'Cancel just this queued selected diff comment.', sessionSelector));
     if (queued.result.kind !== 'turn') throw new Error(queued.admit.body);

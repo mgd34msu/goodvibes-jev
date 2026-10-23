@@ -6,7 +6,7 @@ import { join } from 'node:path';
 // The native prebuild check requires this fallback to match the current manifest.
 // Uses import.meta.dir (Bun) to locate package.json relative to this file,
 // which is correct regardless of the process working directory.
-let _version = '2.0.23';
+let _version = '2.0.24';
 try {
   const pkg = JSON.parse(readFileSync(join(import.meta.dir, '..', 'package.json'), 'utf-8'));
   // Only trust a version read from OUR OWN package.json. A Bun single-file

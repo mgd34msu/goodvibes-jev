@@ -398,6 +398,8 @@ describe('knowledge generated projections and maps', () => {
     const { store, artifactStore } = createStores();
     const projectionService = new KnowledgeProjectionService(store, artifactStore);
     const source = await store.upsertSource({
+      // Its actual generated canonical URI contains a card-shaped digest.
+      id: 'owned-projection-target-1283',
       connectorId: 'manual',
       sourceType: 'document',
       title: 'Project Manual',

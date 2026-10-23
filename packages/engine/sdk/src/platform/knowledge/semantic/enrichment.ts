@@ -4,7 +4,7 @@ import { extractedSentenceKind, readKnowledgeBattery } from './repair-decisions.
 import { repairProfileValueCandidates } from './repair-profile/reader.js';
 import { prepareKnowledgeExtractionValueReading } from './extraction-value/reader.js';
 import { guardKnowledgeEdgeInput } from '../store-edge-writes.js';
-import { captureKnowledgeSourceReferences, knowledgeSourceJudgmentUris, projectKnowledgeSourceReferences } from '../source-structural-references.js';
+import { captureKnowledgeSourceReferences, knowledgeSourceJudgmentUris, projectKnowledgeSourceReferences, prepareGeneratedKnowledgeNodeIdentity } from '../source-structural-references.js';
 import { createSemanticNodeSlugPlanner } from './node-slug.js';
 import { prepareObservedKnowledgeNodeInput } from '../store-node-observation.js';
 import { KnowledgeRecordAdmissionHeldError } from '../store-record-snapshot.js';
@@ -340,8 +340,14 @@ async function persistSemanticExtraction(
   const gaps: KnowledgeNodeRecord[] = [];
 
   const nodeSlug = createSemanticNodeSlugPlanner(store);
+  const nodeIdentities = new Map<string, ReturnType<typeof prepareGeneratedKnowledgeNodeIdentity>>();
+  const nativeNodeId = (prefix: Parameters<typeof prepareGeneratedKnowledgeNodeIdentity>[1], ...parts: string[]) => {
+    const identity = prepareGeneratedKnowledgeNodeIdentity(store, prefix, parts);
+    nodeIdentities.set(identity.id, identity);
+    return identity.id;
+  };
   const entityPlans = semantic.entities.map((entity) => ({
-      id: `sem-entity-${semanticHash(spaceId, source.id, entity.title)}`,
+      id: nativeNodeId('sem-entity', spaceId, source.id, entity.title),
       kind: 'knowledge_entity' as const,
       slug: semanticSlug(`${spaceId}-${entity.title}`),
       title: entity.title,
@@ -443,6 +449,8 @@ async function persistSemanticExtraction(
       () => ({ source: store.getSource(source.id), extraction: store.getExtractionBySourceId(source.id) })),
   }));
   const wikiDraft = prepareWikiPageNodeInput(source, semantic, spaceId, options.textHash);
+  for (const { gap } of gapPlans) nativeNodeId('sem-gap', spaceId, source.id, gap.question);
+  if (wikiDraft) nativeNodeId('sem-page', spaceId, source.id);
   const wikiInput = wikiDraft ? nodeSlug(wikiDraft) : undefined;
   const activation = await store.prepareNodeWrites([...entityPlans, ...factPlans.map((plan) => plan.nodeInput),
     ...gapPlans.map((plan) => plan.nodeInput), ...(wikiInput ? [wikiInput] : [])], { signal: options.signal, requireAccepted: true, assertCurrent: assertQualityCurrent });
@@ -455,6 +463,7 @@ async function persistSemanticExtraction(
     assertSemanticWriteAllowed(options.signal, options.shouldStop);
     assertQualityCurrent();
     const node = await store.upsertPreparedNode(activation, activationIndex++);
+    nodeIdentities.get(node.id)!.retain(node);
     entities.push(node);
     await linkSourceToNode(store, source.id, node.id, 'mentions_entity', spaceId, semantic.extractor, {}, assertQualityCurrent);
   }
@@ -479,6 +488,7 @@ async function persistSemanticExtraction(
     assertSemanticWriteAllowed(options.signal, options.shouldStop);
     assertQualityCurrent();
     const node = await store.upsertPreparedNode(activation, activationIndex++);
+    nodeIdentities.get(node.id)!.retain(node);
     gaps.push(node);
     await linkSourceToNode(store, source.id, node.id, 'has_gap', spaceId, semantic.extractor, {}, assertQualityCurrent);
     await store.applyPreparedIngest({ sources: [], extractions: [], nodes: [], edges: [], issues: [] }, async () => ({ nodes: [], edges: [], issues: [{
@@ -499,6 +509,7 @@ async function persistSemanticExtraction(
 
   assertSemanticWriteAllowed(options.signal, options.shouldStop);
   const wikiPage = await persistWikiPage(store, source, semantic, spaceId, wikiInput, wikiInput ? () => store.upsertPreparedNode(activation, activationIndex++) : undefined, assertQualityCurrent);
+  if (wikiPage) nodeIdentities.get(wikiPage.id)!.retain(wikiPage);
   await applySupersession();
   assertQualityCurrent();
   const result = { source, skipped: false, extractor: semantic.extractor, facts, entities, gaps, ...(wikiPage ? { wikiPage } : {}) };

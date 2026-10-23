@@ -197,6 +197,21 @@ describe('provider.model changes reach the next agent without a restart', () => 
     expect(route.requestedModelId).toBe(NEW_KEY);
     expect(route.modelId).toBe('model-new');
     expect(route.provider.name).toBe(NEW_PROVIDER);
+
+    // Contract execution may set both configuration and an explicit model,
+    // then restore the previous configured provider before another read.
+    // The following real agent route must use that restored provider.
+    configManager.setDynamic('provider.model', OLD_KEY);
+    registry.setCurrentModel(OLD_KEY);
+    configManager.setDynamic('provider.model', NEW_KEY);
+    const restoredRoute = resolveRoute();
+    expect(restoredRoute.requestedModelId).toBe(NEW_KEY);
+    expect(restoredRoute.provider.name).toBe(NEW_PROVIDER);
+
+    registry.setCurrentModel(OLD_KEY);
+    configManager.setDynamic('provider.model', OLD_KEY);
+    configManager.setDynamic('provider.model', NEW_KEY);
+    expect(resolveRoute().provider.name).toBe(NEW_PROVIDER);
   });
 
   test('adopting a config change announces MODEL_CHANGED on the runtime bus', () => {

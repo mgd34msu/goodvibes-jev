@@ -11,7 +11,8 @@ use POSIX process management and filesystem behavior.
 
 ## Release rules
 
-- Package versions must be aligned across the workspace.
+- Root, Engine, Judgment and Daemon versions must be aligned. Agent and TUI
+  retain their independent product versions.
 - `CHANGELOG.md` must contain the release narrative for the package version.
 - Generated contracts and generated docs must match source.
 - Validation must pass before a release is cut.
@@ -82,7 +83,7 @@ run.
 
 ### What `release.yml` does, either way
 
-1. `verify-tag-version` confirms the tag equals `packages/engine/sdk`'s version.
+1. `verify-tag-version` confirms the tag equals `packages/engine`'s version.
 2. `release-verify` (the reusable `reusable-release-verify.yml`, run in
    `workspace` mode so the SDK verifies itself with its own toolchain rather
    than a published one) confirms the tagged commit's push-CI run concluded

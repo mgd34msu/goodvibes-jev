@@ -2,7 +2,13 @@
 
 ## Unreleased
 
+## [2.0.24] - 2026-10-23
+
 ### Fixed
+
+- Preserve exact native Knowledge identities and generated projection URIs when their digests resemble card numbers, retaining complete checks on ordinary content and replaced records.
+
+- Apply restored model settings after temporary runtime selections, including intervening configuration writes between model reads.
 
 - Recover bounded private SQLite allocation collisions without treating a healthy persisted database as corrupt.
 

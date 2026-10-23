@@ -108,7 +108,7 @@ export interface ProviderCatalogOptions {
 }
 
 export interface ProviderRegistryOptions {
-  readonly configManager: Pick<ConfigManager, 'get' | 'getCategory' | 'getControlPlaneConfigDir'>;
+  readonly configManager: Pick<ConfigManager, 'get' | 'getCategory' | 'getControlPlaneConfigDir'> & Partial<Pick<ConfigManager, 'subscribe'>>;
   readonly subscriptionManager: Pick<SubscriptionManager, 'get' | 'getPending' | 'saveSubscription' | 'resolveAccessToken'>;
   readonly secretsManager: ProviderRuntimeMetadataDeps['secretsManager'];
   readonly serviceRegistry: ProviderRuntimeMetadataDeps['serviceRegistry'];

@@ -81,7 +81,7 @@ export class ProviderRegistry {
   private _watchingClosed: Promise<void> | undefined;
   private _readyPromise: Promise<void> | null = null;
   private readonly startupDiscovery = new StartupModelDiscovery();
-  private readonly configManager: Pick<ConfigManager, 'get' | 'getCategory' | 'getControlPlaneConfigDir'>;
+  private readonly configManager: ProviderRegistryOptions['configManager'];
   private readonly subscriptionManager: Pick<SubscriptionManager, 'get' | 'getPending' | 'saveSubscription' | 'resolveAccessToken'>;
   private readonly capabilityRegistry: ProviderCapabilityRegistry;
   private readonly cacheHitTracker: CacheHitTracker;
@@ -149,6 +149,10 @@ export class ProviderRegistry {
       runtimeBus: this.runtimeBus,
     });
     this.currentModelRegistryKey = this.configuredModel.initialRegistryKey();
+    this.configManager.subscribe?.('provider.model', () => {
+      this.configuredModel.configurationChanged();
+      this._modelRegistryRevision += 1;
+    });
   }
 
   private registerBuiltins(resolvedKeys?: Record<string, string>): void {
@@ -723,6 +727,7 @@ export class ProviderRegistry {
     if (!def.selectable) throw new Error(`Model '${registryKey}' is not selectable.`);
     const previousRegistryKey = this.currentModelRegistryKey;
     const previousProvider = splitModelRegistryKey(previousRegistryKey).providerId;
+    this.configuredModel.noteExplicitSelection();
     // Store the registryKey for unambiguous future lookups
     this.currentModelRegistryKey = def.registryKey;
     if (this.runtimeBus) {

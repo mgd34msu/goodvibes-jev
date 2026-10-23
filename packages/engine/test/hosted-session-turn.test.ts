@@ -353,26 +353,38 @@ test('the transcript survives the persistence round trip a restart replays', asy
   second.dispose();
 });
 
-test('two hosted sessions in one workspace keep separate transcripts', async () => {
-  answers.push(textAnswer('answer for a'), textAnswer('answer for b'));
+test('hosted sessions keep their own providers and transcripts while sharing live provider updates', async () => {
+  answers.push(textAnswer('answer for a'), textAnswer('another answer for a'));
+  const alternateRequests: ChatRequest[] = [], replacementRequests: ChatRequest[] = [];
+  const alternateModel: ModelDefinition = { ...stubModel(), provider: 'alternate-stub', id: 'alternate-1', registryKey: 'alternate-stub:alternate-1' };
+  const alternateProvider = (received: ChatRequest[]): LLMProvider => ({ ...stubProvider(), name: alternateModel.provider,
+    models: [alternateModel.id], async chat(request) { received.push(request); return textAnswer('answer for b'); } });
+  services.providerRegistry.registerRuntimeProvider({ provider: alternateProvider(alternateRequests), models: [alternateModel], replace: true });
   const floor = { services, contractRunner: services.contractRunner, dispose: (): void => {} };
   const a = createHostedSessionRuntime({ sessionId: 'hosted-a', workspaceRoot: workspace, floor, systemPrompt: 'hosted' });
-  const b = createHostedSessionRuntime({ sessionId: 'hosted-b', workspaceRoot: workspace, floor, systemPrompt: 'hosted' });
+  const b = createHostedSessionRuntime({ sessionId: 'hosted-b', workspaceRoot: workspace, floor, systemPrompt: 'hosted', model: alternateModel });
+  try {
+    await a.submit('question a');
+    await b.submit('question b');
+    expect(requests.map(request => request.model)).toEqual([MODEL]);
+    expect(alternateRequests.map(request => request.model)).toEqual([alternateModel.id]);
 
-  await a.submit('question a');
-  await b.submit('question b');
+    // Refresh the actual shared provider after both sessions already exist.
+    // The pinned session must use the replacement; the default session keeps
+    // its own provider. A copied registry or ignored model option fails here.
+    services.providerRegistry.registerRuntimeProvider({ provider: alternateProvider(replacementRequests), models: [alternateModel], replace: true });
+    await b.submit('follow up b');
+    await a.submit('follow up a');
+    expect(alternateRequests).toHaveLength(1);
+    expect(replacementRequests.map(request => request.model)).toEqual([alternateModel.id]);
+    expect(requests.map(request => request.model)).toEqual([MODEL, MODEL]);
 
-  const aText = JSON.stringify(a.conversation.getMessageSnapshot());
-  const bText = JSON.stringify(b.conversation.getMessageSnapshot());
-  expect(aText).toContain('question a');
-  expect(aText).not.toContain('question b');
-  expect(bText).toContain('question b');
-  expect(bText).not.toContain('question a');
-  // The file cache and project index they share are per-workspace by design;
-  // the conversation is not, and that is the split the engine rests on.
-  expect(readFileSync(join(workspace, 'note.txt'), 'utf-8')).toContain('the file this session can read');
-  a.dispose();
-  b.dispose();
+    const aText = JSON.stringify(a.conversation.getMessageSnapshot());
+    const bText = JSON.stringify(b.conversation.getMessageSnapshot());
+    expect(aText).toContain('question a'); expect(aText).not.toContain('question b');
+    expect(bText).toContain('question b'); expect(bText).not.toContain('question a');
+    expect(bText).toContain('follow up b'); expect(aText).not.toContain('follow up b');
+  } finally { a.dispose(); b.dispose(); }
 });
 
 

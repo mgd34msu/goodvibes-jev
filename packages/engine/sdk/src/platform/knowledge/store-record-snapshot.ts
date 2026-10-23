@@ -1,5 +1,5 @@
 import { projectGeneratedFactRecordAdmission } from './generated-fact-record-references.js';
-import { captureKnowledgeSourceReferences, projectKnowledgeSourceReferences, projectKnowledgeNodeActivationMetadata } from './source-structural-references.js';
+import { captureKnowledgeSourceReferences, projectKnowledgeSourceReferences, projectKnowledgeNodeActivationMetadata, projectGeneratedKnowledgeNodeIdentity } from './source-structural-references.js';
 import { createHash } from 'node:crypto';
 import { assertJudgmentInput, captureOwnedJson } from '../gate/judgment-input.js';
 import type { PersistedKnowledgeRecordSelector, SQLiteStore } from '../state/sqlite-store.js';
@@ -75,6 +75,8 @@ export function prepareKnowledgeRecordAdmission(store: KnowledgeStore, kind: Rec
   const originalRaw = captureOwnedJson(snapshot.raw) as Record<string, unknown>;
   const generated = kind === 'node' ? projectGeneratedFactRecordAdmission(store, record as KnowledgeNodeRecord, originalRaw) : undefined;
   const raw = generated?.raw ?? { ...originalRaw };
+  const nodeIdentity = kind === 'node' ? projectGeneratedKnowledgeNodeIdentity(store, record as KnowledgeNodeRecord) : undefined;
+  if (nodeIdentity) raw.id = nodeIdentity.id;
   // A node's foreign key may contain card-shaped digits in a generated digest.
   // Only the existing producer proof for the exact live source can represent it.
   const nodeSource = kind === 'node' && 'sourceId' in record && record.sourceId ? store.getSource(record.sourceId) : null;
@@ -109,6 +111,7 @@ export function prepareKnowledgeRecordAdmission(store: KnowledgeStore, kind: Rec
   }
   const assertGeneration = (generation: string | null) => {
     generated?.assertCurrent();
+    nodeIdentity?.assertCurrent();
     if (kind === 'node') projectKnowledgeNodeActivationMetadata(store, record as KnowledgeNodeRecord, decoded.metadata);
     if (nodeSourceReference && nodeSource) projectKnowledgeSourceReferences(nodeSource, nodeExtraction, nodeSourceProof);
     if (generation !== snapshot.generation || !sameKnowledgeRecord(original, record) || current() !== record) throw new KnowledgeRecordAdmissionHeldError('stale');

@@ -636,13 +636,28 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
   });
 
   test('semantic gap repair is idempotent once a repair source is linked', async () => {
-    // Initial manual evidence is genuinely partial, regardless of the generator's own gap list.
-    answerReadings.set({ enough: 0.01, complete: 0.01 });
+    // One missing fact exercises source repair and duplicate prevention. Broad
+    // multi-category profile synthesis has its own functional answer tests.
+    const query = 'Does this TV support Bluetooth?';
+    const evidence = 'The LG TV supports Bluetooth.';
+    const partialAnswer = 'The available manual does not establish Bluetooth support.';
+    const readings = {
+      repairProfile: [['Network and wireless capabilities', evidence]] as const,
+      extractedKinds: [[evidence, 'feature']] as const,
+      repairUseful: [['Bluetooth support', evidence, evidence]] as const,
+    };
+    answerReadings.set({ ...readings, enough: 0.01, complete: 0.01 });
     const { store } = createStores();
     const calls: unknown[] = [];
     const semantic = new KnowledgeSemanticService(store, {
       backgroundSelfImproveMinDelayMs: 10,
-      llm: new GapRepairAnswerLlm(),
+      llm: {
+        async completeJson(input) {
+          if (input.purpose !== 'knowledge-semantic-extraction') return null;
+          return { summary: evidence, entities: [], facts: [{ kind: 'feature', title: 'Bluetooth support', summary: evidence, evidence }], relations: [], gaps: [] };
+        },
+        async completeText() { return partialAnswer; },
+      },
       gapRepairer: async (request) => {
         calls.push(request);
         const extractionFixtureRepairSource = await store.upsertSource({
@@ -660,20 +675,19 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
           extractorId: 'test-web',
           format: 'html',
           structure: {
-            searchText: 'LG 86NANO90UNA specifications include a NanoCell 4K display, Dolby Vision, HDR10, HDMI eARC, webOS smart TV features, Wi-Fi, Bluetooth, and Game Optimizer.',
+            searchText: evidence,
           },
           metadata: { knowledgeSpaceId: 'homeassistant:test' },
         });
         answerReadings.addExtractionValue(...extractionValueFixtureFor(extractionFixtureRepairSource, store.getExtractionBySourceId(extractionFixtureRepairSource.id), 0.99));
-        // Once the fixture repair text exists, measured evidence is sufficient.
-        // The old generator still gives its partial manual answer; the literal
-        // candidate is independently complete and must be preferred.
-        answerReadings.set({ enough: 0.99, complete: 0.97,
-          completeByCandidate: [['manual only confirms Magic Remote', 0.01]], preferred: 'rendered',
+        // The supported fact answers this exact question; the unchanged partial
+        // generator answer must not override the now-complete evidence.
+        answerReadings.set({ ...readings, enough: 0.99, complete: 0.97,
+          completeByCandidate: [[partialAnswer, 0.01]], preferred: 'rendered',
         });
         return {
           searched: true,
-          query: 'lg 86nano90una full specifications',
+          query,
           ingestedSourceIds: ['repair-source'],
           skippedUrls: [],
         };
@@ -697,7 +711,12 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       metadata: knowledgeSpaceMetadata('homeassistant:test', { manufacturer: 'LG', model: '86NANO90UNA' }),
     });
     answerReadings.addAssessments([intrinsicAssessmentFixture(device, [{ facts: [], probability: 0.01 }])]);
-    answerReadings.addAssessments(answerGapAssessmentFixtures(['lg 86nano90una full specifications', 'what features does the TV have?'], [device], 0.99));
+    answerReadings.addAssessments(answerGapAssessmentFixtures([query], [device], 0.01).map(fixture => ({ ...fixture, coverage: [
+      { facts: [], probability: 0.01 },
+      { facts: ['Network and wireless capabilities'], probability: 0.99 },
+      { facts: ['Bluetooth support'], probability: 0.99 },
+      { facts: ['Network and wireless capabilities', 'Bluetooth support'], probability: 0.99 },
+    ] })));
     await store.upsertEdge({
       fromKind: 'source',
       fromId: source.id,
@@ -710,11 +729,11 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
       extractorId: 'test',
       format: 'text',
       structure: {
-        searchText: 'The LG TV supports Magic Remote MR20GA when the wireless module includes Bluetooth.',
+        searchText: 'The manual describes the remote control buttons.',
       },
     });
 
-    await semantic.answer({ query: 'what features does the TV have?', knowledgeSpaceId: 'homeassistant:test', includeSources: true });
+    await semantic.answer({ query, knowledgeSpaceId: 'homeassistant:test', includeSources: true });
     await waitFor(() => store.listEdges().some((edge) => edge.relation === 'repairs_gap')
       && store.listNodes(10).some((node) => node.kind === 'knowledge_gap' && node.metadata.repairStatus === 'repaired'), 50_000)
       .catch((cause: unknown) => {
@@ -722,7 +741,7 @@ describe('semantic knowledge/wiki enrichment: self-improvement', () => {
           .map(task => ({ state: task.state, reason: task.blockedReason, trace: task.trace.slice(-3) }));
         throw new Error(`The source repair did not reach its durable completed state: ${JSON.stringify(tasks)}`, { cause });
       });
-    const secondAnswer = await semantic.answer({ query: 'what features does the TV have?', knowledgeSpaceId: 'homeassistant:test', includeSources: true });
+    const secondAnswer = await semantic.answer({ query, knowledgeSpaceId: 'homeassistant:test', includeSources: true });
 
     expect(calls).toHaveLength(1);
     expect(secondAnswer.answer.gaps).toHaveLength(0);

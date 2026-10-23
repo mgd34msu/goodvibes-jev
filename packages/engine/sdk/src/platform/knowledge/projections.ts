@@ -1,4 +1,5 @@
 import type { ArtifactStore } from '../artifacts/index.js';
+import { registerGeneratedKnowledgeSourceReferences } from './source-structural-references.js';
 import {
   generatedKnowledgeCanonicalUri,
   generatedKnowledgeSourceId,
@@ -194,6 +195,7 @@ export class KnowledgeProjectionService {
       assertCurrent: scope.assertCurrent,
       ...(target ? { target } : {}),
     });
+    registerGeneratedKnowledgeSourceReferences(this.store, generated.source, { id: sourceId, canonicalUri, sourceUri: canonicalUri });
     return {
       bundle,
       artifact: generated.artifact,

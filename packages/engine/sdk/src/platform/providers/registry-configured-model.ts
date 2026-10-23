@@ -11,13 +11,9 @@
  * success and changed nothing that mattered, which from the outside is
  * indistinguishable from the write being lost.
  *
- * The fix is a re-read at USE time, not a cache with an invalidation hook: the
- * registry asks this follower on every `getCurrentModel()`, and the follower
- * asks ConfigManager. That covers BOTH write paths for free, an in-process
- * `set()`/`setDynamic()` and an external settings-file edit that the config
- * file watcher reloads, and it needs no `subscribe`, so hosts that construct
- * the registry with a narrow config reader (`get` only) follow config changes
- * exactly like the daemon does.
+ * Re-read configuration at use time, including hosts with a narrow get-only
+ * reader. A full ConfigManager additionally reports intervening writes, so an
+ * unread A -> B -> A restoration cannot be mistaken for unchanged settings.
  *
  * Last write wins, whichever path made it:
  *   - a config write supersedes an earlier in-process `setCurrentModel`,
@@ -65,6 +61,7 @@ export class ConfiguredModelFollower {
   private lastResolvedRaw: string;
   /** The raw value whose resolution failure has already been logged (so it is logged once). */
   private lastWarnedRaw: string | null = null;
+  private changedSinceSelection = false;
 
   constructor(private readonly deps: ConfiguredModelFollowerDeps) {
     this.lastResolvedRaw = this.readRaw();
@@ -86,6 +83,17 @@ export class ConfiguredModelFollower {
     return this.resolveRegistryKey(this.lastResolvedRaw);
   }
 
+  configurationChanged(): void { this.changedSinceSelection = true; }
+
+  /** An explicit selection supersedes the configuration visible at that point. */
+  noteExplicitSelection(): void {
+    try {
+      this.lastResolvedRaw = this.readRaw();
+      this.lastWarnedRaw = null;
+      this.changedSinceSelection = false;
+    } catch { /* An unavailable config read must not reject a validated explicit model. */ }
+  }
+
   /**
    * Adopt a `provider.model` write made after construction. Returns the
    * registryKey to use now, `currentRegistryKey` unchanged when config has
@@ -101,7 +109,7 @@ export class ConfiguredModelFollower {
     } catch {
       return currentRegistryKey;
     }
-    if (raw === this.lastResolvedRaw) return currentRegistryKey;
+    if (raw === this.lastResolvedRaw && !this.changedSinceSelection) return currentRegistryKey;
 
     let nextRegistryKey: string;
     try {
@@ -124,6 +132,7 @@ export class ConfiguredModelFollower {
 
     this.lastResolvedRaw = raw;
     this.lastWarnedRaw = null;
+    this.changedSinceSelection = false;
     if (nextRegistryKey === currentRegistryKey) return currentRegistryKey;
     logger.info('[provider-registry] adopted a provider.model change made after startup', {
       from: currentRegistryKey,

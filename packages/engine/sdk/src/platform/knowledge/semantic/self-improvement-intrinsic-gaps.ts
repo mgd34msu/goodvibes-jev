@@ -1,4 +1,5 @@
 import { knowledgeRawRepresentation } from '../store-record-representation.js';
+import { prepareGeneratedKnowledgeNodeIdentity } from '../source-structural-references.js';
 import { createSemanticWriteGuard } from './primary-source-plan.js';
 import { KnowledgeRepairFactUsefulnessHeldError } from './repair-usefulness/types.js';
 import { createKnowledgeFactQualityReader, type KnowledgeFactQualityPlan } from './fact-quality.js';
@@ -98,7 +99,8 @@ async function upsertIntrinsicFeatureGap(
   assertCurrent: () => void,
 ): Promise<boolean> {
   assertCurrent();
-  const id = `sem-intrinsic-gap-${semanticHash(spaceId, subject.id, 'features-specifications')}`;
+  const identity = prepareGeneratedKnowledgeNodeIdentity(store, 'sem-intrinsic-gap', [spaceId, subject.id, 'features-specifications']);
+  const id = identity.id;
   if (createdIds.has(id)) return false;
   createdIds.add(id);
   const existing = store.getNode(id);
@@ -157,12 +159,15 @@ async function upsertIntrinsicFeatureGap(
       }),
     };
   const existingVersion = JSON.stringify(existing);
-  await store.applyPreparedIngest({ sources: [], extractions: [], nodes: [], edges: [], issues: [] }, async () => ({
+  const published = await store.applyPreparedIngest({ sources: [], extractions: [], nodes: [], edges: [], issues: [] }, async () => ({
     nodes: [gapInput], edges, issues: [issue], assertCurrent: () => {
       assertCurrent();
       if (store.getNode(id) !== existing || JSON.stringify(store.getNode(id)) !== existingVersion) throw new KnowledgeRepairFactUsefulnessHeldError('stale');
     },
   }));
+  const node = published.nodes.find(node => node.id === id);
+  if (!node) throw new KnowledgeRepairFactUsefulnessHeldError('stale');
+  identity.retain(node);
   return !existing;
 }
 

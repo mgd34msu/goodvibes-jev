@@ -9,6 +9,9 @@ const answerReadings = useKnowledgeAnswerReadings({ extractedKinds: semanticRepa
 useSemanticActivationFixtures(answerReadings);
 
 import { describe, expect, test } from 'bun:test';
+import { JudgmentInputError, judgmentInputProblem } from '../sdk/src/platform/gate/judgment-input.js';
+import { prepareKnowledgeRecordAdmission } from '../sdk/src/platform/knowledge/store-record-snapshot.js';
+import { KnowledgeStore } from '../sdk/src/platform/knowledge/store.js';
 import {
   createProviderBackedKnowledgeSemanticLlm,
   createWebKnowledgeGapRepairer,
@@ -56,6 +59,9 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
       metadata: { knowledgeSpaceId: spaceId },
     });
     const source = await store.upsertSource({
+      // Its real wiki-page digest has a card-shaped digit run. Reindex must
+      // retain the native identity rather than depend on random fixture IDs.
+      id: 'owned-page-source-689',
       connectorId: 'manual',
       sourceType: 'manual',
       title: 'LG source',
@@ -83,6 +89,20 @@ describe('semantic knowledge/wiki enrichment: runtime bounds', () => {
     expect(store.getSemanticEnrichmentState(generated.id)).toBeNull();
     expect(store.getSemanticEnrichmentState(source.id)).not.toBeNull();
     expect(store.getSource(source.id)?.metadata.semanticEnrichment).toBeUndefined();
+    const page = store.listNodes(20).find(node => node.kind === 'wiki_page' && node.sourceId === source.id)!;
+    expect(page).toBeDefined();
+    expect(judgmentInputProblem(page.id)).toBe('card-material');
+    const admission = prepareKnowledgeRecordAdmission(store, 'node', page);
+    admission.assertCurrent();
+    expect(() => prepareKnowledgeRecordAdmission(store, 'node', structuredClone(page))).toThrow(JudgmentInputError);
+    const reopened = new KnowledgeStore({ dbPath: store.storagePath });
+    try {
+      await reopened.init();
+      expect(() => prepareKnowledgeRecordAdmission(reopened, 'node', reopened.getNode(page.id)!)).toThrow(JudgmentInputError);
+    } finally { await reopened.close(); }
+    await store.replaceNodeRecord({ ...page, summary: 'Replaced publication' });
+    expect(() => admission.assertCurrent()).toThrow();
+    expect(() => prepareKnowledgeRecordAdmission(store, 'node', store.getNode(page.id)!)).toThrow(JudgmentInputError);
   });
 
   test('scheduled self-improvement repairs intrinsic device gaps without waiting for Ask', async () => {

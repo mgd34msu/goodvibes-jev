@@ -5,6 +5,8 @@ import { KnowledgeGeneratedFactSupportHeldError } from './semantic/verification/
 import { captureOwnedJson } from '../gate/judgment-input.js';
 import { captureStrictJudgmentJson } from '../gate/judgment-result.js';
 import { knowledgeJudgmentRepresentation, knowledgeRecordVersion, sameKnowledgeRecord } from './store-record-representation.js';
+import { hasKnowledgeNodePublication, knowledgeNodePublicationGeneration } from './store.js';
+import { semanticHash } from './semantic/utils.js';
 
 // Native registry lookups cannot be replaced by a later prototype override.
 const weakMapGet = WeakMap.prototype.get, weakMapSet = WeakMap.prototype.set, applyWeakMap = Reflect.apply;
@@ -22,6 +24,35 @@ const answerAliases = new WeakMap<KnowledgeSourceRecord, { readonly original: Kn
 const extractionIdentities = new WeakMap<KnowledgeExtractionRecord, ExtractionIdentity & { readonly store: KnowledgeStore; readonly hash: string }>();
 const activationReferences = new WeakMap<KnowledgeNodeRecord, { readonly store: KnowledgeStore; readonly original: unknown;
   readonly evidence: readonly { readonly source: KnowledgeSourceRecord | null; readonly extraction: KnowledgeExtractionRecord | null; readonly proof: object | undefined }[] }>();
+const nodeIdentities = new WeakMap<KnowledgeNodeRecord, { readonly store: KnowledgeStore; readonly hash: string; readonly generation: string }>();
+
+/** Bind an identifier constructed here to its actual SQL publication. This
+ * proves its origin only; content and semantic acceptance remain independent. */
+export function prepareGeneratedKnowledgeNodeIdentity(store: KnowledgeStore,
+  prefix: 'sem-entity' | 'sem-gap' | 'sem-page' | 'sem-intrinsic-gap', parts: readonly string[]) {
+  const id = `${prefix}-${semanticHash(...parts)}`;
+  const previous = store.getNode(id) ?? undefined;
+  const kind = prefix === 'sem-entity' ? 'knowledge_entity' : prefix === 'sem-page' ? 'wiki_page' : 'knowledge_gap';
+  return Object.freeze({ id, retain(record: KnowledgeNodeRecord): void {
+    if (record.id !== id || record.kind !== kind || store.getNode(id) !== record
+      || !hasKnowledgeNodePublication(store, record, previous)) throw new KnowledgeGeneratedFactSupportHeldError('stale');
+    const generation = knowledgeNodePublicationGeneration(store, record, previous);
+    if (generation === null) throw new KnowledgeGeneratedFactSupportHeldError('stale');
+    writeNativeReference(nodeIdentities, record, Object.freeze({ store, hash: fingerprint(record), generation }));
+  } });
+}
+
+/** Copies, raw replacements and reopened records inherit no native ID proof. */
+export function projectGeneratedKnowledgeNodeIdentity(store: KnowledgeStore, record: KnowledgeNodeRecord) {
+  const known = readNativeReference(nodeIdentities, record);
+  if (!known) return undefined;
+  const assertCurrent = () => {
+    if (known.store !== store || store.getNode(record.id) !== record || fingerprint(record) !== known.hash
+      || store.getRecordGeneration('node', record.id) !== known.generation) throw new KnowledgeGeneratedFactSupportHeldError('stale');
+  };
+  assertCurrent();
+  return Object.freeze({ id: 'generated-node-reference', assertCurrent });
+}
 const projections = new WeakMap<object, { readonly store: KnowledgeStore; readonly source: SourceIdentity;
   readonly sourceRecord: KnowledgeSourceRecord; readonly sourceHash: string; readonly extractionRecord: KnowledgeExtractionRecord | null;
   readonly extractionHash: string; readonly extraction?: ExtractionIdentity | undefined }>();

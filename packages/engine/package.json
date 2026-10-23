@@ -1,6 +1,6 @@
 {
   "name": "@goodvibes-jev/engine",
-  "version": "2.0.23",
+  "version": "2.0.24",
   "description": "The platform library: the old goodvibes-sdk packages, with Jev judgment at every decision point.",
   "keywords": [
     "goodvibes",
