@@ -1,5 +1,6 @@
 import { assertAgentBriefFidelity, DelegationPlanHeldError } from '../../agents/brief-fidelity.js';
 import { delegationPlanHolds, delegationPlanKey } from '../../agents/delegation-plan-holds.js';
+import { readAgentSessionHistory } from '../../agents/session-history.js';
 import { readCompletionRepairContext } from '../../core/completion-repair-context.js';
 import { types as nodeTypes } from 'node:util';
 import type { Tool, ToolExecuteOptions } from '../../types/tools.js';
@@ -167,6 +168,8 @@ export interface AgentToolConfig {
   readonly contractRunner: Pick<ContractRunner, 'start' | 'list' | 'get'> & Partial<Pick<ContractRunner, 'cancel' | 'join'>>;
   /** The project a contract started here works in. */
   readonly projectRoot: string;
+  readonly surfaceRoot?: string | undefined;
+  readonly readAccessFilter?: import('../shared/read-access.js').ReadAccessFilter | undefined;
   /** The conversation session a contract started here belongs to, read on each call. */
   readonly resolveSessionId: () => string;
 }
@@ -529,6 +532,18 @@ export function createAgentTool(config: AgentToolConfig): Tool {
 
         const record = manager.getStatus(input.agentId);
         if (!record) {
+          const history = await readAgentSessionHistory({ projectRoot: config.projectRoot, surfaceRoot: config.surfaceRoot,
+            agentId: input.agentId, readAccessFilter: config.readAccessFilter, signal, assertCurrent });
+          assertCurrent();
+          if (history) {
+            const detail = input.detail ?? 'full';
+            const selected = detail === 'full' || detail === 'messages' ? history : {
+              kind: history.kind, agentId: history.agentId, executionActive: false, timestamp: history.timestamp,
+              messageCount: Array.isArray(history.messages) ? history.messages.length : 0,
+              archiveCount: Array.isArray(history.archive) ? history.archive.length : 0, meaning: history.meaning,
+            };
+            return publish({ success: true, output: JSON.stringify({ id: input.agentId, historical: true, history: selected }) });
+          }
           return { success: false, error: `Unknown agent: '${input.agentId}'` };
         }
 
@@ -538,6 +553,12 @@ export function createAgentTool(config: AgentToolConfig): Tool {
             ? record.completedAt - record.startedAt
             : Date.now() - record.startedAt;
         const detail = input.detail ?? 'full';
+
+        const history = !record.fullOutput && !['pending', 'running'].includes(record.status)
+          && (detail === 'full' || detail === 'messages') ? await readAgentSessionHistory({ projectRoot: config.projectRoot,
+            surfaceRoot: config.surfaceRoot, agentId: input.agentId, readAccessFilter: config.readAccessFilter, signal, assertCurrent }) : undefined;
+        assertCurrent();
+        const historicalField = history ? { history } : {};
 
         const base = {
           id: record.id,
@@ -579,11 +600,11 @@ export function createAgentTool(config: AgentToolConfig): Tool {
         return {
           success: true,
           output: JSON.stringify(detail === 'full'
-            ? { ...base, ...failureField, ...contract, ...messages }
+            ? { ...base, ...failureField, ...contract, ...messages, ...historicalField }
             : detail === 'contract'
               ? { ...base, ...failureField, ...contract }
               : detail === 'messages'
-                ? { ...base, ...failureField, ...messages }
+                ? { ...base, ...failureField, ...messages, ...historicalField }
                 : { ...base, ...failureField }),
         };
       }

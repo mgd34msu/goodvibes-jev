@@ -100,6 +100,7 @@ function captureAgentRunTerminal(context: AgentOrchestratorRunContext, record: A
   const generation = {};
   terminalRunGenerations.set(record, generation);
   const id = record.id, task = record.task, startedAt = record.startedAt, cwd = context.workingDirectory;
+  const journalRoot = context.journalRoot;
   const assignment = JSON.stringify(workerAcceptanceDetails(record));
   const getSignal = context.getCancellationSignal, signal = getSignal?.call(context, id);
   const failed = context.emitAgentFailedEvent, completed = context.emitAgentCompletedEvent, cancelled = context.emitAgentCancelledEvent;
@@ -110,7 +111,7 @@ function captureAgentRunTerminal(context: AgentOrchestratorRunContext, record: A
   const assertIdentity = () => {
     if (terminalRunGenerations.get(record) !== generation || record.id !== id || record.task !== task || record.startedAt !== startedAt
       || JSON.stringify(workerAcceptanceDetails(record)) !== assignment
-      || context.workingDirectory !== cwd || context.getCancellationSignal !== getSignal
+      || context.workingDirectory !== cwd || context.journalRoot !== journalRoot || context.getCancellationSignal !== getSignal
       || context.emitAgentFailedEvent !== failed || context.emitAgentCompletedEvent !== completed || context.emitAgentCancelledEvent !== cancelled
       || context.runtimeBus !== runtimeBus || context.processManager !== processManager || processManager?.list !== list
       || processManager?.stop !== stop || processManager?.hasBoundaryOwner !== hasBoundaryOwner || context.beforeRunSettlement !== beforeSettlement
@@ -491,8 +492,8 @@ export async function runAgentTask(
       // conversation files in sessions/, never mixed with them, so a
       // conversation-scoped sweep can never touch an agent transcript and
       // vice versa (see append-only-registry.ts's session-journals store).
-      sessionsDir: resolveScopedDirectory(context.workingDirectory, context.surfaceRoot, 'sessions', 'agents'),
-      stateDir: resolveScopedDirectory(context.workingDirectory, context.surfaceRoot, 'state'),
+      sessionsDir: resolveScopedDirectory(context.journalRoot ?? context.workingDirectory, context.surfaceRoot, 'sessions', 'agents'),
+      stateDir: resolveScopedDirectory(context.journalRoot ?? context.workingDirectory, context.surfaceRoot, 'state'),
     }, context.atRestPolicy);
     session.appendMessage({ type: 'session_config', template: record.template, task: record.task, ...(acceptanceDetails ?? {}), tools: record.tools, model: modelId, provider: record.provider ?? 'unknown', timestamp: new Date().toISOString() });
 

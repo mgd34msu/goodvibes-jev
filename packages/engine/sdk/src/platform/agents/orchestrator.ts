@@ -796,6 +796,7 @@ export class AgentOrchestrator {
       : undefined;
     return {
       workingDirectory: cwd,
+      journalRoot: authority ? contractInputAuthoritySourceRoot(authority) : this.toolDeps?.workingDirectory ?? cwd,
       agentManager: this.toolDeps?.agentManager,
       ...(autonomousSource ? { autonomousSource } : {}),
       ...(autonomousPort ? { autonomousPort } : {}),

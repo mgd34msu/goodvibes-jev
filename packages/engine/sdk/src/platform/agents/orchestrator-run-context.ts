@@ -27,6 +27,8 @@ export interface AgentOrchestratorRunContext {
   /** Revalidate captured byte authority immediately before each initial/retried provider admission. */
   readonly beforeProviderRequest?: (() => Promise<void>) | undefined;
   readonly workingDirectory: string;
+  /** Durable owner storage, independent of an execution worktree's lifetime. */
+  readonly journalRoot?: string | undefined;
   readonly surfaceRoot?: string | undefined;
   /** At-rest journal redaction + retention policy; undefined -> honest default (redaction on). */
   readonly atRestPolicy?: import('../runtime/at-rest-persistence.js').AtRestPolicy | undefined;

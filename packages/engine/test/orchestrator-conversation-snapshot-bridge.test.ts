@@ -16,7 +16,7 @@
  *     with a stub LLM provider, not a reimplementation of the loop.
  */
 import { describe, expect, test } from 'bun:test';
-import { mkdtempSync, rmSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { mkdtempSync, mkdirSync, rmSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { AgentOrchestrator } from '../sdk/src/platform/agents/orchestrator.js';
@@ -48,13 +48,15 @@ describe('AgentOrchestrator: conversation-sink wiring', () => {
     // createRunContext() reads this.toolDeps!.providerRegistry! directly,
     // give it just enough to not throw; the actual routing methods are not
     // exercised by this test (it only asserts the register/release wiring).
-    (orchestrator as unknown as { toolDeps: { providerRegistry: object } }).toolDeps = { providerRegistry: {} };
-    const createRunContext = (): Promise<AgentOrchestratorRunContext> =>
-      (orchestrator as unknown as { createRunContext(): Promise<AgentOrchestratorRunContext> }).createRunContext();
+    (orchestrator as unknown as { toolDeps: { providerRegistry: object; workingDirectory: string } }).toolDeps = { providerRegistry: {}, workingDirectory: '/owned-project' };
+    const createRunContext = (cwd?: string): Promise<AgentOrchestratorRunContext> =>
+      (orchestrator as unknown as { createRunContext(cwd?: string): Promise<AgentOrchestratorRunContext> }).createRunContext(cwd);
 
     const bareContext = await createRunContext();
     expect(bareContext.registerConversationSource).toBeUndefined();
     expect(bareContext.releaseConversationSource).toBeUndefined();
+    expect(bareContext.journalRoot).toBe('/owned-project');
+    expect(await createRunContext('/isolated-worktree')).toMatchObject({ workingDirectory: '/isolated-worktree', journalRoot: '/owned-project' });
 
     const registered: string[] = [];
     const released: string[] = [];
@@ -228,6 +230,21 @@ test('changing worker acceptance before a provider retry prevents transmission u
 });
 
 describe('runAgentTask: conversation-snapshot bridge call sites', () => {
+  test('worker history survives removal of its execution worktree', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'worker-history-owner-'));
+    const worktree = join(root, 'execution-worktree'); mkdirSync(worktree);
+    try {
+      const record = makeAgentRecord({ id: 'agent-durable', task: 'Return the completed worker result.' });
+      await runAgentTask({ ...makeMinimalRunContext({ workingDirectory: worktree }), journalRoot: root }, record);
+      expect(record.status).toBe('completed');
+      rmSync(worktree, { recursive: true, force: true });
+      const journal = readFileSync(join(root, '.goodvibes/sessions/agents/agent-durable.jsonl'), 'utf8')
+        .trim().split('\n').map(line => JSON.parse(line));
+      expect(journal.find(entry => entry.type === 'agent_conversation').messages.some((message: ConversationMessageSnapshot) =>
+        message.role === 'assistant' && message.content === 'All done.')).toBe(true);
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   test('registers a live source right after creating the ConversationManager, then releases exactly once on normal completion', async () => {
     const dir = mkdtempSync(join(tmpdir(), 'snapshot-bridge-'));
     try {

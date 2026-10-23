@@ -598,6 +598,8 @@ export function registerAllTools(
       ...(archetypeLoader ? { archetypeLoader } : {}),
       contractRunner: deps.contractRunner,
       projectRoot: deps.projectRoot,
+      surfaceRoot: deps.surfaceRoot,
+      readAccessFilter: deps.readAccessFilter,
       resolveSessionId: resolveContractSessionId,
       ...(deps.providerRegistry ? { getSelectedModel: () => deps.providerRegistry!.getCurrentModel() } : {}),
     }),
