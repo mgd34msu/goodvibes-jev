@@ -564,10 +564,8 @@ async function proveAutonomousRead(): Promise<void> {
     expect(stream.status).toBe(401);
   });
 
-  // Original server case 16, source line 453.
-  test('knowledge routes ingest and query structured knowledge', async () => {
+  async function ingestKnowledgeRoutePage() {
     const sourceUrl = KNOWLEDGE_ROUTE_SOURCE_URL;
-    const sourceUrlList = `${sourceUrl}?connector=1`;
     daemon.enable({ daemon: true }, TEST_TOKEN);
     await daemon.start();
     const ingest = await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/ingest/url`, {
@@ -582,6 +580,11 @@ async function proveAutonomousRead(): Promise<void> {
     const ingested = await ingest.json() as { source: { id: string } };
     expect(ingested.source.id).toBeTruthy();
 
+    return ingested;
+  }
+
+  test('Knowledge URL ingestion produces searchable content, task packets, rendered pages and GraphQL results', async () => {
+    const ingested = await ingestKnowledgeRoutePage();
     await waitFor(async () => {
       const results = await runtimeServices.knowledgeService.search('Knowledge Route Page');
       return results.length > 0 ? results : null;
@@ -598,6 +601,86 @@ async function proveAutonomousRead(): Promise<void> {
     const searchJson = await search.json() as { results: Array<{ id: string }> };
     expect(searchJson.results.length).toBeGreaterThan(0);
 
+    const packet = await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/packet`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${TEST_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ task: 'Knowledge Route Page' }),
+    });
+    expect(packet.status, packet.status === 200 ? undefined : (await packet.clone().text()).slice(0, 500)).toBe(200);
+    const packetJson = await packet.json() as { items: Array<{ id: string }> };
+    expect(packetJson.items.length).toBeGreaterThan(0);
+
+    const renderProjection = await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/projections/render`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${TEST_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ kind: 'source', id: ingested.source.id }),
+    });
+    expect(renderProjection.status, renderProjection.status === 200 ? undefined : (await renderProjection.clone().text()).slice(0, 500)).toBe(200);
+    const renderJson = await renderProjection.json() as { pageCount: number; pages: Array<{ content: string }> };
+    expect(renderJson.pageCount).toBe(1);
+    expect(renderJson.pages[0]?.content).toContain('Knowledge Route Page');
+
+    const materializeProjection = await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/projections/materialize`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${TEST_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ kind: 'source', id: ingested.source.id }),
+    });
+    expect(materializeProjection.status, materializeProjection.status === 201 ? undefined : (await materializeProjection.clone().text()).slice(0, 500)).toBe(201);
+    const materializeJson = await materializeProjection.json() as { artifact: { id: string; mimeType: string } };
+    expect(materializeJson.artifact.id).toBeTruthy();
+    expect(materializeJson.artifact.mimeType).toBe('text/markdown');
+
+    const graphqlSchema = await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/graphql/schema`, {
+      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
+    });
+    expect(graphqlSchema.status, graphqlSchema.status === 200 ? undefined : (await graphqlSchema.clone().text()).slice(0, 500)).toBe(200);
+    const graphqlSchemaJson = await graphqlSchema.json() as { schema: string };
+    expect(graphqlSchemaJson.schema).toContain('type Query');
+
+    const graphql = await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/graphql`, {
+      method: 'POST',
+      headers: {
+        Authorization: `Bearer ${TEST_TOKEN}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({
+        query: `
+          query KnowledgeRouteGraph($sourceId: String!) {
+            status { sourceCount }
+            projection(kind: SOURCE, id: $sourceId) {
+              target { kind }
+              pageCount
+            }
+          }
+        `,
+        variables: { sourceId: ingested.source.id },
+      }),
+    });
+    expect(graphql.status, graphql.status === 200 ? undefined : (await graphql.clone().text()).slice(0, 500)).toBe(200);
+    const graphqlJson = await graphql.json() as {
+      data: {
+        status: { sourceCount: number };
+        projection: { target: { kind: string }; pageCount: number };
+      };
+    };
+    expect(graphqlJson.data.status.sourceCount).toBeGreaterThan(0);
+    expect(graphqlJson.data.projection.target.kind).toBe('SOURCE');
+    expect(graphqlJson.data.projection.pageCount).toBe(1);
+  });
+
+  test('Knowledge connectors import an authored URL through their HTTP route', async () => {
+    daemon.enable({ daemon: true }, TEST_TOKEN);
+    await daemon.start();
+    const sourceUrlList = `${KNOWLEDGE_ROUTE_SOURCE_URL}?connector=1`;
     const connectors = await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/connectors`, {
       headers: { Authorization: `Bearer ${TEST_TOKEN}` },
     });
@@ -634,6 +717,11 @@ async function proveAutonomousRead(): Promise<void> {
     expect(connectorIngestJson.imported + connectorIngestJson.failed).toBeGreaterThan(0);
     expect(Array.isArray(connectorIngestJson.sources)).toBe(true);
 
+  });
+
+  test('Knowledge artifact routes extract path and multipart CSV uploads', async () => {
+    daemon.enable({ daemon: true }, TEST_TOKEN);
+    await daemon.start();
     const csvPath = join(workingDir, 'knowledge.csv');
     writeFileSync(csvPath, 'project,owner\nGoodVibes,buzzkill\n');
     const ingestArtifact = await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/ingest/artifact`, {
@@ -678,18 +766,10 @@ async function proveAutonomousRead(): Promise<void> {
     const projectionsJson = await projections.json() as { targets: Array<{ kind: string }> };
     expect(projectionsJson.targets.some((target) => target.kind === 'overview')).toBe(true);
 
-    const packet = await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/packet`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${TEST_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ task: 'Knowledge Route Page' }),
-    });
-    expect(packet.status, packet.status === 200 ? undefined : (await packet.clone().text()).slice(0, 500)).toBe(200);
-    const packetJson = await packet.json() as { items: Array<{ id: string }> };
-    expect(packetJson.items.length).toBeGreaterThan(0);
+  });
 
+  test('Knowledge maintenance runs persist their completed job receipt after usage', async () => {
+    await ingestKnowledgeRoutePage();
     for (let index = 0; index < 3; index += 1) {
       await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/search`, {
         method: 'POST',
@@ -756,68 +836,6 @@ async function proveAutonomousRead(): Promise<void> {
     const jobRunsJson = await jobRuns.json() as { runs: Array<{ id: string; jobId: string }> };
     expect(jobRunsJson.runs.some((run) => run.id === runJobJson.run.id && run.jobId === 'knowledge-light-consolidation')).toBe(true);
 
-    const renderProjection = await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/projections/render`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${TEST_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ kind: 'source', id: ingested.source.id }),
-    });
-    expect(renderProjection.status, renderProjection.status === 200 ? undefined : (await renderProjection.clone().text()).slice(0, 500)).toBe(200);
-    const renderJson = await renderProjection.json() as { pageCount: number; pages: Array<{ content: string }> };
-    expect(renderJson.pageCount).toBe(1);
-    expect(renderJson.pages[0]?.content).toContain('Knowledge Route Page');
-
-    const materializeProjection = await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/projections/materialize`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${TEST_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({ kind: 'source', id: ingested.source.id }),
-    });
-    expect(materializeProjection.status, materializeProjection.status === 201 ? undefined : (await materializeProjection.clone().text()).slice(0, 500)).toBe(201);
-    const materializeJson = await materializeProjection.json() as { artifact: { id: string; mimeType: string } };
-    expect(materializeJson.artifact.id).toBeTruthy();
-    expect(materializeJson.artifact.mimeType).toBe('text/markdown');
-
-    const graphqlSchema = await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/graphql/schema`, {
-      headers: { Authorization: `Bearer ${TEST_TOKEN}` },
-    });
-    expect(graphqlSchema.status, graphqlSchema.status === 200 ? undefined : (await graphqlSchema.clone().text()).slice(0, 500)).toBe(200);
-    const graphqlSchemaJson = await graphqlSchema.json() as { schema: string };
-    expect(graphqlSchemaJson.schema).toContain('type Query');
-
-    const graphql = await fetch(`http://127.0.0.1:${boundPort}/api/knowledge/graphql`, {
-      method: 'POST',
-      headers: {
-        Authorization: `Bearer ${TEST_TOKEN}`,
-        'Content-Type': 'application/json',
-      },
-      body: JSON.stringify({
-        query: `
-          query KnowledgeRouteGraph($sourceId: String!) {
-            status { sourceCount }
-            projection(kind: SOURCE, id: $sourceId) {
-              target { kind }
-              pageCount
-            }
-          }
-        `,
-        variables: { sourceId: ingested.source.id },
-      }),
-    });
-    expect(graphql.status, graphql.status === 200 ? undefined : (await graphql.clone().text()).slice(0, 500)).toBe(200);
-    const graphqlJson = await graphql.json() as {
-      data: {
-        status: { sourceCount: number };
-        projection: { target: { kind: string }; pageCount: number };
-      };
-    };
-    expect(graphqlJson.data.status.sourceCount).toBeGreaterThan(0);
-    expect(graphqlJson.data.projection.target.kind).toBe('SOURCE');
-    expect(graphqlJson.data.projection.pageCount).toBe(1);
   });
 
   for (const change of ['session-revocation', 'request-abort'] as const) {
