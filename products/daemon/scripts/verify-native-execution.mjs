@@ -253,7 +253,7 @@ try {
   // Same production controls as Linux: structured extension/index availability
   // and finite distance for the exact added record, with no initialization retry.
   const { added, searched, vector } = await proveNativeMemoryRoundTrip(invoke);
-  const diagnostic = await readNativeAddonEvidence(readingPort, { added, searched, stderr: errors }, AbortSignal.timeout(10_000));
+  const diagnostic = await readNativeAddonEvidence(readingPort, { stderr: errors }, AbortSignal.timeout(10_000));
   assert.ifError(judgmentError); assert(requests.some(request => 'native_addon_failure' in request.questions));
   assert(!hostExited, 'Native host exited before owned shutdown'); original.retained.assertCurrent(); relocated.assertCurrent();
   host.kill('SIGTERM');

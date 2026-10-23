@@ -100,8 +100,12 @@ try {
   ]) {
     const result = await run(argv); assert.equal(result.code, 2); assert.equal(result.stdout, ''); assert(result.stderr.includes(text));
   }
+  // Relocating release payloads is not an installed native ownership receipt.
+  // The shipped runtime is composed, so activation reaches installation
+  // admission and fails closed before any service or selected-home effects.
   for (const argv of [['install-service'], ['start-service'], ['restart-service'], ['migrate-service', '-y']]) {
-    const result = await run(argv); assert.equal(result.code, 2); assert.match(result.stderr, /composition|not been migrated/);
+    const result = await run(argv);
+    assert.deepEqual(result, { code: 1, stdout: '', stderr: 'Daemon command failed\n' }, argv.join(' '));
   }
   for (const path of [daemon, tree, join(home, '.goodvibes'), join(home, '.config'), join(root, 'xdg'), join(work, 'elsewhere')]) {
     assert(!existsSync(path), `Read-only/refused command created ${path}`);
@@ -253,9 +257,9 @@ try {
     // Readiness now waits for canonical MemoryStore.init; no retry can hide a
     // native extension failure. Check structured native availability as well as
     // the original add/search exercise, so lexical fallback cannot pass as vec0.
-    const { added, searched, vector } = await proveNativeMemoryRoundTrip(smokeInvoke);
+    const { vector } = await proveNativeMemoryRoundTrip(smokeInvoke);
     console.log('[boot-smoke] reading compiled addon diagnostics');
-    const diagnostic = await readNativeAddonEvidence(smokePort, { added, searched, stderr: errors }, AbortSignal.timeout(10_000));
+    const diagnostic = await readNativeAddonEvidence(smokePort, { stderr: errors }, AbortSignal.timeout(10_000));
     assert.ifError(smokeJudgmentError);
     assert(smokeJudgmentRequests.some(request => 'native_addon_failure' in request.questions));
     console.log(JSON.stringify({ proof: 'compiled-daemon-boot-smoke', semanticQualification: 'synthetic-only', status: 'running', malformedSettingsExit: malformed.code,

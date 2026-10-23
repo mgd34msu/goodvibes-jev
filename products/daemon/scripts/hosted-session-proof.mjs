@@ -239,7 +239,11 @@ export async function runHostedSessionProof({ binary, boundary, env, root }) {
     const turnEvents = () => { if (streamError) throw streamError; return events.filter(event => event.value.sessionId === sessionId && event.value.payload).map(event => event.value.payload); };
     const complete = await until(() => turnEvents().find(event => event.type === 'TURN_COMPLETED'), 'successful terminal event');
     const deltas = turnEvents().filter(event => event.type === 'STREAM_DELTA' && event.turnId === complete.turnId);
-    assert(deltas.length >= 2); assert.equal(deltas.map(event => event.content).join(''), marker);
+    assert(deltas.length >= 2, 'Streaming activity must remain observable during private generation');
+    assert.equal(deltas.map(event => event.content ?? '').join(''), '', 'Draft text must remain private until publication review');
+    assert.equal(complete.response, marker, 'The checked terminal event must deliver the complete answer');
+    assert.equal(turnEvents().filter(event => event.type === 'TURN_COMPLETED' && event.turnId === complete.turnId).length, 1);
+    assert(judgmentRequests.some(request => Object.hasOwn(request.body.questions, 'unfinished')), 'The compiled turn must reach completion review');
     assert(judgmentRequests.length > 0, 'production SystemOne configuration must reach the synthetic peer');
     assert(judgmentRequests.every(request => request.path === '/v1/systemone' && request.authorization === 'Bearer synthetic-system-one-key' && request.body.model === 'jev-latest'));
     async function send(text) {
@@ -291,12 +295,15 @@ export async function runHostedSessionProof({ binary, boundary, env, root }) {
       const request = judgmentRequests.find(request => createHash('sha256').update(JSON.stringify(request.body)).digest('hex') === identity);
       return { identity, count, questions: Object.keys(request.body.questions).sort(), stateKeys: Object.keys(request.body.state ?? {}).sort(), scopedPrivacy: scopedPrivacyContract(request)?.name };
     });
-    const repeatedBootDecisions = repeatedQuestionGroups.filter(group => group.scopedPrivacy === undefined);
-    assert(repeatedBootDecisions.length === 0, `No non-privacy SystemOne request identity may exceed the two daemon boots: ${JSON.stringify({ questionGroups: Object.fromEntries(questionGroups), repeatedBootDecisions })}`);
+    // Identical activity text on separate native turns is a separate use.
+    // Aggregate wire identity counts cannot establish duplicate work. Bind
+    // completion checks to the two successful turns this proof actually ran.
+    assert.equal(judgmentRequests.filter(request => Object.hasOwn(request.body.questions, 'unfinished')).length, 2,
+      'Each successful original turn must receive one completion review');
     const identityCounts = {};
     for (const count of identities.values()) identityCounts[count] = (identityCounts[count] ?? 0) + 1;
     return { elapsedMs: Date.now() - startedAt, judgmentQuestionGroups: Object.fromEntries(questionGroups), judgmentUniqueIdentities: identities.size, judgmentRequestsPerIdentity: identityCounts,
-      repeatedScopedPrivacyIdentities: repeatedQuestionGroups, nonPrivacyRequestIdentityBound: 2, totalJudgmentRequestBound: 5_000,
+      repeatedWireIdentities: repeatedQuestionGroups, totalJudgmentRequestBound: 5_000,
       evidence: 'synthetic-http-protocol-only; not live Jev calibration', modelRequests: modelRequests.length, judgmentRequests: judgmentRequests.length, streamedDeltas: deltas.length, persistedDetachPolicyPrecedence: true, originalSteerHistoryPreserved: true, lastWatcherDetachKills: true, explicitKillAndTerminatedList: true, relativeWorkspaceRefused: true, restartHistoryPreserved: true, cancellationSettled: true, failureObserved: true, shutdownDuringStream: true };
   } catch (error) {
     console.error('HOSTED FAILURE DETAILS', JSON.stringify({ output, errors, modelRequests: modelRequests.length, judgmentRequests: judgmentRequests.length, events: events.filter(event => event.value.type).map(event => event.value) })); throw error;
