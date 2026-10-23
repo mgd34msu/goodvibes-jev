@@ -93,7 +93,7 @@ const noIssueWriter: VerificationWriter = async request => request.operation !==
     reason: 'The existing primary observation resolves the earlier concern.',
     passage: { reference: 'original observation', quote: 'Completed review and delivery observed.' } })) });
 
-test('bounded worker read receipts and returned results stay primary while every older history page is audited', async () => {
+test.each([false, true])('bounded worker receipts stay primary while older history is audited (large worker history: %s)', async largeWorkerHistory => {
   const older = [{ role: 'user', content: 'Verify review.md using one read-only worker.' },
     { role: 'tool', callId: 'older-failed-plan', content: 'Historical delegation was held.\n'.repeat(10000) }];
   const transcript = [...older,
@@ -101,7 +101,10 @@ test('bounded worker read receipts and returned results stay primary while every
     { role: 'tool', callId: 'spawn-worker', outcome: 'ok', content: JSON.stringify({ agentId: 'worker', status: 'spawned' }) }];
   const full = { request: 'Verify review.md using one read-only worker.', response: 'The worker verified review.md: 2 passed, 1 failed, exit 1.',
     initial: { request: 'Verify review.md using one read-only worker.', transcript: older }, transcript, tools: ['agent'], requirements: null,
-    delegated: [{ id: 'worker', task: 'Read review.md only.', status: 'completed', output: 'Verified report consistency: 2 passed, 1 failed, exit 1.', evidence: [
+    delegated: [...(largeWorkerHistory ? Array.from({ length: 4 }, (_, index) => ({ id: `older-worker-${index}`, task: 'Read the earlier report.',
+      status: 'completed', output: 'Earlier report inspected.', evidence: [{ role: 'tool', callId: `earlier-read-${index}`,
+        content: `Earlier report version ${index}: ` + 'Complete historical report content. '.repeat(800) }] })) : []),
+      { id: 'worker', task: 'Read review.md only.', status: 'completed', output: 'Verified report consistency: 2 passed, 1 failed, exit 1.', evidence: [
       { role: 'assistant', content: '', toolCalls: [{ id: 'worker-read', name: 'read', arguments: { path: 'review.md' } }] },
       { role: 'tool', callId: 'worker-read', outcome: 'ok', content: 'Complete actual report: 2 passed, 1 failed, exit 1.' },
       { role: 'assistant', content: 'Verified report consistency: 2 passed, 1 failed, exit 1.' },

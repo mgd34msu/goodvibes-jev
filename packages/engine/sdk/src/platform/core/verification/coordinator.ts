@@ -839,8 +839,25 @@ export class CompletionVerification {
             meaning: 'Actual assignment/result observation. Its recorded status does not restore a live worker, execution permission or completion approval.' } }] : [];
       } catch { return []; } // Fragmented records stay in original-source retrieval.
     });
-    const delegatedPrimary = bounded(delegatedSources.map(verificationWireSource), VERIFICATION_FRAME_CHARACTERS * 2)
-      ? delegatedSources : [];
+    let delegatedPrimary = delegatedSources;
+    if (!bounded(delegatedPrimary.map(verificationWireSource), VERIFICATION_FRAME_CHARACTERS * 2)) {
+      // A growing worker history must not displace the current worker's actual
+      // result. Keep complete assignment/evidence groups, newest first, within
+      // the existing packet budget. Every omitted original remains available
+      // to retrieval and the mandatory complete-history counterevidence audit.
+      delegatedPrimary = [];
+      const assignments = delegatedSources.filter(source => source.reference.startsWith('delegated assignment/result '));
+      for (const assignment of [...assignments].reverse()) {
+        const marker = 'delegated assignment/result ';
+        const boundary = assignment.reference.indexOf(';', marker.length);
+        if (boundary < 0) continue;
+        const id = assignment.reference.slice(marker.length, boundary);
+        const group = delegatedSources.filter(source => source.reference.startsWith(`${marker}${id};`)
+          || source.reference.startsWith(`delegated ${id}.evidence[`));
+        const candidate = [...delegatedPrimary, ...group];
+        if (bounded(candidate.map(verificationWireSource), VERIFICATION_FRAME_CHARACTERS * 2)) delegatedPrimary = candidate;
+      }
+    }
     const recent = [...new Map([...hostPrimary, ...checkedAnswer, ...currentPrimary, ...delegatedPrimary].map(source => [source.id, source])).values()];
     const rememberSources = () => { this.previousSources = { identity: access.identity, request: requestKey, ids: new Set(sources.map(source => source.id)) }; };
     const key = verificationHash([sources.map(source => source.id), ledger, full.response, overview.map(node => this.compactNode(node))]);
