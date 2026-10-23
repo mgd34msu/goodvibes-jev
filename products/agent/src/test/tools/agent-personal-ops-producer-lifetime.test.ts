@@ -421,3 +421,19 @@ test('each protected DTO invocation still performs its fresh complete canonical 
   expect(JSON.stringify(fake.requests.slice(count))).toBe(originalQuestions);
   expect<unknown>(second).toEqual(first); expect(Object.isFrozen(second)).toBe(false);
 });
+
+
+test('Personal Ops structured connector records survive screening while extensions and credentials remain withheld', async () => {
+  const fake = privacyFixture(); installJudgmentPort(fake.port);
+  const source = { content: [{ type: 'text', text: 'Quarterly planning' }], structuredContent: {
+    messages: [{ id: 'message-one', subject: 'Quarterly planning', from: 'sender@example.test',
+      accessToken: 'synthetic-result-secret', unknownExtension: { detail: 'Private extension detail' } }],
+    metadata: { detail: 'Private metadata detail' },
+  } };
+  const result = await protectPersonalOpsResult(source);
+  expect(result).toMatchObject({ structuredContent: { messages: [{ id: 'message-one', subject: 'Quarterly planning',
+    from: 'sender@example.test', accessToken: '[REDACTED]', unknownExtension: '[REDACTED]' }], metadata: { detail: '[REDACTED]' } } });
+  expect(JSON.stringify(result)).not.toContain('synthetic-result-secret');
+  expect(JSON.stringify(result)).not.toContain('Private extension detail');
+  expect(JSON.stringify(fake.requests)).not.toContain('synthetic-result-secret');
+});

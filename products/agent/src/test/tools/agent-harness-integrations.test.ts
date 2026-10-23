@@ -967,7 +967,7 @@ afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previous
         expect(sensors?.summary).toContain('certified');
         expect(sensors?.modelRoute).toContain('camera-location-sensors');
         expect(sensors?.evidence?.certifiedLiveRecords?.[0]?.summary).toContain('token=<redacted>');
-        expect(sensors?.evidence?.certifiedLiveRecords?.[0]?.certification.publicationGuarantee).toContain('secret=[REDACTED]');
+        expect(sensors?.evidence?.certifiedLiveRecords?.[0]?.certification.publicationGuarantee).toContain('secret=<redacted>');
         expect(sensors?.evidence?.certifiedLiveRecords?.[0]?.certification.receiptId).toBe('device-sensor-receipt-1');
         expect(sensors?.evidence?.certifiedLiveRecords?.[0]?.certification.missingSignals).toEqual([]);
         expect(JSON.stringify(posture)).not.toContain('sensor-summary-secret');

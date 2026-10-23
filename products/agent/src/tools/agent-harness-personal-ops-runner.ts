@@ -10,7 +10,6 @@ import { captureCatalogData, captureCatalogMethods, rankHarnessCatalog, type Cat
 import { harnessCatalogInvocationAuthority } from './agent-harness-catalog-ingress.ts';
 import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
-import { redactStructuredDataAsync } from '@goodvibes-jev/engine/sdk/platform/utils';
 import type { CommandContext } from '../input/command-registry.ts';
 import { previewHarnessText } from './agent-harness-text.ts';
 import { PERSONAL_OPS_READ_CONTROL_FIELDS, type PersonalOpsConnectorSignal, type PersonalOpsConnectorTool, type PersonalOpsExecutionStep, type PersonalOpsIntakeCandidate, type PersonalOpsLane, type PersonalOpsLaneId, type PersonalOpsLiveRecord, type PersonalOpsReadRunResult, type PersonalOpsRoutePacket, type PersonalOpsWorkflow, type PersonalOpsWorkflowStatus } from './agent-harness-personal-ops-types.ts';
@@ -409,8 +408,8 @@ export async function savePersonalOpsReviewArtifact(options: {
   // payment-card guard. Encode only the generated UUID, preserving its entropy;
   // user titles and existing filenames still face the unchanged source boundary.
   const nonce = agentRecordNonce();
-  const protectedPayload = await redactStructuredDataAsync(payload, reading);
-  const protectedMetadata = await redactStructuredDataAsync({
+  const protectedPayload = await protectPersonalOpsData(payload, reading);
+  const protectedMetadata = await protectPersonalOpsData({
     purpose: 'personal-ops-review-cards', laneId: options.lane.id, sourceRecordId: options.sourceRecord.id,
     sourceTool: options.sourceRecord.qualifiedName ?? '', reviewRecordCount: options.reviewRecords.length,
     reviewLabels, reviewKinds, reviewRecordIds, fullRawConnectorOutputStored: false,

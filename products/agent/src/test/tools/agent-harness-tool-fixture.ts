@@ -1330,7 +1330,8 @@ export function createHarnessFixtureReadings(): JudgmentPort {
     throw new Error(`Unscripted learning alignment fixture question ${name}`);
   });
   const learningSelection = fakePort((name, question, state) => {
-    if (!learningObject(state) || !learningObject(state.context) || !Array.isArray(state.candidates) || state.candidates.length !== 2) throw new Error('Unexpected complete learning survivor fixture state');
+    if (!learningObject(state) || !learningObject(state.context) || state.selectionFitInstructions !== selectionFitInstructions
+      || !Array.isArray(state.candidates) || state.candidates.length !== 2) throw new Error('Unexpected complete learning survivor fixture state');
     const controls = state.candidates.map(candidate => {
       if (!learningObject(candidate) || (candidate.id !== '0' && candidate.id !== '1')) throw new Error('Unexpected native learning candidate ID');
       return learningControl(candidate.content);
@@ -1344,7 +1345,7 @@ export function createHarnessFixtureReadings(): JudgmentPort {
     }
     if (question.type === 'noul' && (name === 'fits_0' || name === 'fits_1')) {
       const index = name === 'fits_0' ? 0 : 1;
-      assertLearningQuestion(question, noul({ question: selectionFitInstructions, candidate: `\`candidates[${index}]\` (id ${JSON.stringify(String(index))})` }));
+      assertLearningQuestion(question, noul({ question: 'Apply the complete selectionFitInstructions in state to this exact candidate.', candidate: `\`candidates[${index}]\` (id ${JSON.stringify(String(index))})` }));
       return noulAnswer(String(index) === chosen ? 0.9999 : 0.0001);
     }
     throw new Error(`Unscripted learning survivor fixture question ${name}`);

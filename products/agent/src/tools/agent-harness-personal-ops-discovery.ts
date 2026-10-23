@@ -1,4 +1,4 @@
-import { assertPersonalOpsDataCurrent, capturePersonalOpsData } from './agent-harness-personal-ops-source.ts';
+import { capturePersonalOpsSnapshot } from './agent-harness-personal-ops-source.ts';
 import { captureModelReadingInput, captureModelReadingSnapshotGuard, modelReadingServicePath } from './agent-harness-model-reading-source.ts';
 import { types as nodeTypes } from 'node:util';
 import { captureCatalogData, captureCatalogMethods, prepareHarnessCatalog, type CatalogRankingOptions } from './agent-harness-catalog-ranking.ts';
@@ -265,8 +265,8 @@ export async function mcpToolRecords(context: CommandContext, options: CatalogRa
       ...(typeof tool.qualifiedName === 'string' ? { qualifiedName: tool.qualifiedName } : {}),
     };
   });
-  const sourceSnapshot = capturePersonalOpsData(raw);
-  const assertCompleteSource = () => { assertSource(); assertPersonalOpsDataCurrent(raw, sourceSnapshot); };
+  const sourceSnapshot = capturePersonalOpsSnapshot(raw);
+  const assertCompleteSource = () => { assertSource(); sourceSnapshot.assertCurrent(raw); };
   options.retainCurrent?.(assertCompleteSource, 'personal-ops-mcp-tools');
   return result;
 }
@@ -288,8 +288,8 @@ export function mcpSchemaReader(context: CommandContext, options: CatalogRanking
     const captured = captureCatalogData(raw);
     const schema = schemaObject(captured);
     if (!schema) throw new ToolInputProjectionError('invalid');
-    const sourceSnapshot = capturePersonalOpsData(raw);
-    const assertCompleteSource = () => { assertSource(); assertPersonalOpsDataCurrent(raw, sourceSnapshot); };
+    const sourceSnapshot = capturePersonalOpsSnapshot(raw);
+    const assertCompleteSource = () => { assertSource(); sourceSnapshot.assertCurrent(raw); };
     assertCompleteSource(); options.retainCurrent?.(assertCompleteSource, `personal-ops-mcp-schema:${qualifiedName}`);
     return { ...schema, inputSchema: schema.inputSchema };
   };

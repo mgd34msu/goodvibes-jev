@@ -1100,7 +1100,7 @@ afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previous
       expect(show.output).toContain('"tool": "agent_artifacts"');
       const showPayload = JSON.parse(show.output ?? '{}') as { readonly output?: string | null };
       expect(showPayload.output).toContain('Saved comparison report');
-      expect(showPayload.output).toContain('"apiKey": "<redacted>"');
+      expect(showPayload.output).toContain('"apiKey": "[REDACTED]"');
       expect(showPayload.output).not.toContain('not-for-transcript');
 
       const unconfirmedExport = await fixture.tool.execute({

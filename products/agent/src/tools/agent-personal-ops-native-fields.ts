@@ -8,7 +8,7 @@ export const PERSONAL_OPS_EFFECT_RECEIPT_PURPOSES = new Set([
 ]);
 export const PERSONAL_OPS_REVIEW_PURPOSE = 'personal-ops-review-cards';
 const NATIVE_METADATA_PURPOSES = new Set([
-  ...PERSONAL_OPS_EFFECT_RECEIPT_PURPOSES, PERSONAL_OPS_REVIEW_PURPOSE,
+  ...PERSONAL_OPS_EFFECT_RECEIPT_PURPOSES, PERSONAL_OPS_REVIEW_PURPOSE, 'watcher-run-receipt',
   'agent-memory-provider-receipt', 'connected-host-memory-provider-receipt', 'external-memory-provider-receipt',
   'goodvibes-memory-provider-receipt', 'memory-provider-receipt', 'external-memory-receipt',
   'remote-runner-artifact-receipt', 'remote-runner-closeout-receipt', 'remote-runner-export-receipt',
@@ -87,6 +87,15 @@ const NATIVE_FIELDS = new Set([
   'promptEligible', 'correlationId', 'capabilities', 'read', 'write', 'sync', 'forget', 'receipts',
   'promptPolicy', 'eligible', 'receiptStreamStatus', 'supermemory', 'mem0', 'zep',
   'reminders', 'project', 'remindAt', 'cadence', 'deliveryTarget',
+  'source', 'state', 'enabled', 'metadata', 'outputPreview', 'outputTruncated', 'reviewRecords', 'inputFieldKeys', 'rawKeys', 'followUpBoundary',
+  'totalWatchers', 'activeWatcherIds', 'totalDegraded', 'totalLagged',
+  'parentTaskId', 'childTaskIds', 'queuedAt', 'endedAt', 'retryPolicy', 'retryDelayMs', 'retryAt',
+  'currentAttempt', 'maxAttempts', 'baseDelayMs', 'maxDelayMs', 'backoffMultiplier', 'result', 'message',
+  'jobs', 'totalJobs', 'totalRuns', 'activeRunIds', 'totalFailed', 'deliveryTotals', 'succeeded', 'deadLettered',
+  'connectionState', 'activeClientIds', 'requestCount', 'clients', 'sessions', 'recentEvents', 'host', 'port',
+  'version', 'phase', 'sourceIds', 'checkpoints', 'at', 'note', 'reportArtifactId', 'pausedAt', 'cancelledAt', 'failedAt',
+  'servers', 'stack', 'serverVersion', 'loadedModels', 'contextWindowTokens', 'toolSupport', 'resourcePressure',
+  'memoryUsagePercent', 'startReceiptId', 'repairReceiptId', 'receiptStatus', 'startRoute', 'repairRoute', 'lastCheckedAt',
 ]);
 
 export function personalOpsNativeFields(value: unknown): NonNullable<StructuredRedactionOptions['declaredFields']> {
@@ -101,16 +110,19 @@ export function personalOpsNativeFields(value: unknown): NonNullable<StructuredR
     if (path.at(-1) === 'metadata') {
       const purpose = (entry as Record<string, unknown>).purpose;
       const embeddingProvider = path.slice(-4).join('.') === 'embeddings.providers.*.metadata';
-      if (!embeddingProvider && (typeof purpose !== 'string' || !NATIVE_METADATA_PURPOSES.has(purpose.trim()))) return;
+      const nativeWatcher = path.join('.') === 'nativeSnapshot.watchers.*.metadata'
+        || path.join('.') === 'nativeSnapshot.watchers.*.source.metadata';
+      if (!embeddingProvider && !nativeWatcher && (typeof purpose !== 'string' || !NATIVE_METADATA_PURPOSES.has(purpose.trim()))) return;
     }
     for (const [key, child] of Object.entries(entry)) {
       const childPath = [...path, key], identity = JSON.stringify(childPath);
       // sourceCounts is the native publisher's Record<source-path, count>.
       // Its exact keys are provenance identities, never inferred field roles.
       const sourceCount = path.at(-1) === 'sourceCounts' && typeof child === 'number' && Number.isSafeInteger(child) && child >= 0;
+      const nativeServerKey = path.at(-1) === 'servers' && child !== null && typeof child === 'object' && !Array.isArray(child);
       const validLane = key !== 'laneId' || path.at(-1) !== 'metadata'
         || typeof child === 'string' && LANE_IDS.some(lane => lane === child.trim());
-      if ((NATIVE_FIELDS.has(key) || sourceCount) && validLane && !declared.has(identity)) {
+      if ((NATIVE_FIELDS.has(key) || sourceCount || nativeServerKey) && validLane && !declared.has(identity)) {
         fields.push({ path: childPath, kind: 'content' }); declared.add(identity);
       }
       visit(child, childPath);
@@ -120,5 +132,29 @@ export function personalOpsNativeFields(value: unknown): NonNullable<StructuredR
   // Native declarations are detached, immutable schema data. Retaining them
   // must not repeatedly traverse the complete schema at each text boundary;
   // the caller's separate original-producer guard remains authoritative.
+  return captureOwnedJson(fields) as NonNullable<StructuredRedactionOptions['declaredFields']>;
+}
+
+/** The MCP text/structured result envelope and the Personal Ops record DTOs
+ * have explicit content fields. Extension fields and arbitrary metadata retain
+ * the canonical withholding policy; credentials always override declarations. */
+export function personalOpsResultFields(value: unknown): NonNullable<StructuredRedactionOptions['declaredFields']> {
+  const names = new Set(['content', 'structuredContent', 'type', 'text', 'messages', 'threads', 'events',
+    'items', 'results', 'id', 'threadId', 'messageId', 'eventId', 'subject', 'title', 'label', 'summary',
+    'from', 'to', 'receivedAt', 'snippet', 'body', 'start', 'end', 'startsAt', 'endsAt', 'attendees',
+    'organizer', 'location', 'status', 'kind', 'sourceTool', 'followUpBoundary', 'rawKeys']);
+  const fields: Array<{ path: string[]; kind: 'content' }> = [];
+  const seen = new Set<string>();
+  const visit = (entry: unknown, path: string[]): void => {
+    if (Array.isArray(entry)) { for (const child of entry) visit(child, [...path, '*']); return; }
+    if (!entry || typeof entry !== 'object') return;
+    for (const [name, child] of Object.entries(entry)) {
+      if (!names.has(name)) continue;
+      const childPath = [...path, name], key = JSON.stringify(childPath);
+      if (!seen.has(key)) { seen.add(key); fields.push({ path: childPath, kind: 'content' }); }
+      visit(child, childPath);
+    }
+  };
+  visit(value, []);
   return captureOwnedJson(fields) as NonNullable<StructuredRedactionOptions['declaredFields']>;
 }

@@ -23,6 +23,7 @@ interface OperatorContractMethod {
   };
   readonly invokable?: boolean;
   readonly outputSchema?: Record<string, unknown>;
+  readonly inputSchema?: Record<string, unknown>;
 }
 
 interface OperatorMethodToolArgs {
@@ -275,8 +276,29 @@ function operatorResultFields(method: OperatorContractMethod): NonNullable<Param
     const key = JSON.stringify(path);
     if (fields.get(key)?.kind !== 'secret') fields.set(key, { path, kind });
   };
-  for (const name of ['methodId', 'status', 'ok', 'route', 'effect', 'body', 'outcome']) add([name]);
-  const pending = [{ schema: method.outputSchema, path: ['body'] }];
+  for (const name of ['methodId', 'status', 'ok', 'route', 'effect', 'body', 'outcome', 'preview', 'dryRun']) add([name]);
+  // These are constructed here, independently of the connected host body.
+  const previewFields = ['methodId', 'title', 'category', 'access', 'scopes', 'route', 'effect',
+    'confirmationRequired', 'admissionRequired', 'body', 'query', 'expectedOutcome'];
+  for (const name of previewFields) add(['preview', name]);
+  const outcomeFields = ['kind', 'status', 'certified', 'methodId', 'evidence', 'expectedOutcome', 'lifecycleDecision', 'nextStep'];
+  for (const name of outcomeFields) add(['outcome', name]);
+  const expectedFields = ['target', 'successCriteria', 'evidenceFields', 'verificationRoute', 'recoveryRoute'];
+  for (const path of [['preview', 'expectedOutcome'], ['outcome', 'expectedOutcome']]) {
+    for (const name of expectedFields) add([...path, name]);
+  }
+  const evidenceFields = ['receipt', 'installed', 'autostart', 'running', 'pid', 'lastAction', 'actionError',
+    'controlPlaneReady', 'id', 'kind', 'label', 'state', 'sourceKind', 'sourceEnabled',
+    'sourceStatus', 'lastCheckpoint', 'lastError'];
+  for (const path of [['outcome', 'evidence'], ['outcome', 'lifecycleDecision', 'evidence']]) {
+    for (const name of evidenceFields) add([...path, name]);
+  }
+  for (const name of ['status', 'action', 'reason', 'evidence', 'statusRoute', 'setupRoute', 'modelRoute', 'methodId', 'decisionRules']) {
+    add(['outcome', 'lifecycleDecision', name]);
+  }
+  const pending = [{ schema: method.outputSchema, path: ['body'] },
+    { schema: method.inputSchema, path: ['preview', 'body'] },
+    { schema: method.inputSchema, path: ['preview', 'query'] }];
   while (pending.length) {
     const { schema, path } = pending.pop()!;
     if (!isRecord(schema)) continue;
@@ -601,7 +623,7 @@ export function createAgentOperatorMethodTool(
       const preview = summarizePreview(route);
       if (readBoolean(args.dryRun)) {
         try {
-          const output = await stringifyOutput({ preview, dryRun: true }, { signal: options?.signal, assertCurrent: () => {
+          const output = await stringifyOutput({ preview, dryRun: true }, { declaredFields: operatorResultFields(methodSnapshot), signal: options?.signal, assertCurrent: () => {
             options?.signal?.throwIfAborted(); assertCurrentToolInvocation(rawArgs, options);
             if (findConnectedOperatorMethod(methodId) !== method || !isDeepStrictEqual(captureStrictJudgmentJson(method), methodSnapshot)) throw new Error('Connected operator method changed.');
           } });

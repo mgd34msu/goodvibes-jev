@@ -276,7 +276,8 @@ describe('canonical semantic record catalogs', () => {
     installJudgmentPort({ ...fake.port, async ask(request) {
       const answer = await fake.port.ask(request);
       const state = request.state;
-      if (state && typeof state === 'object' && !Array.isArray(state) && 'field' in state && state.field === 'outputPreview') {
+      if (state && typeof state === 'object' && !Array.isArray(state) && 'parts' in state && Array.isArray(state.parts)
+        && state.parts.some(part => part && typeof part === 'object' && 'text' in part && part.text === 'Initial synthetic watcher output')) {
         watcher.metadata.outputPreview = 'Changed while privacy was pending'; publish();
         changed = true;
       }
@@ -330,7 +331,7 @@ describe('canonical semantic record catalogs', () => {
     expect(fake.requests.filter(request => request.context?.battery === 'agent.personal-ops.receipt-status')).toHaveLength(0);
   });
 
-  test('native watcher full snapshot reaches privacy before publishing its actual state and usable preview', async () => {
+  test('native watcher snapshot protects undisplayed metadata before publishing its actual state and usable preview', async () => {
     const f = fixture(), { watcher, readModel, readModels, publish } = watcherReadModelFixture('running', 'Synthetic native watcher preview');
     Object.defineProperty(watcher.source.metadata, 'undisplayed', { value: 'Synthetic undisplayed native source evidence', enumerable: false });
     publish();
@@ -340,7 +341,7 @@ describe('canonical semantic record catalogs', () => {
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({ label: 'Watcher: Synthetic watcher', status: 'running',
       output: { status: 'preview', preview: 'Synthetic native watcher preview' }, sourceIds: expect.arrayContaining([watcher.id]) });
-    expect(JSON.stringify(fake.requests)).toContain('Synthetic undisplayed native source evidence');
+    expect(JSON.stringify(fake.requests)).not.toContain('Synthetic undisplayed native source evidence');
     expect(JSON.stringify(records)).not.toContain('Synthetic undisplayed native source evidence');
   });
 

@@ -580,7 +580,7 @@ afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previous
           readonly reviewRecords: readonly { readonly summary: string; readonly rawKeys: readonly string[] }[];
         };
         expect(savedPayload.createdAt).toBe('2026-10-09T15:24:23.008Z');
-        expect(savedPayload.outputPreview).toContain('password=[REDACTED]');
+        expect(savedPayload.outputPreview).toContain('Quarterly planning');
         expect(savedPayload.reviewRecords[0]?.summary).toContain('token=[REDACTED]');
         expect(savedPayload.reviewRecords[0]?.rawKeys).toContain('subject');
         expect(savedPayload.reviewRecords[0]?.rawKeys).toContain('token=[REDACTED]');

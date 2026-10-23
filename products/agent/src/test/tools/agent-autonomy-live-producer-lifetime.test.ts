@@ -84,7 +84,8 @@ describe('Autonomy complete native live-source boundary', () => {
     }
     await expect(captureAutonomyLiveRecords(f.context, { sourceOwner: ordinaryResearchOwner() })).rejects.toBeInstanceOf(ToolInputProjectionError);
     expect(JSON.stringify(fake.requests)).not.toContain('synthetic-hidden-tail-private');
-    expect(fake.requests.some(request => JSON.stringify(request).includes('accessToken'))).toBe(true);
+    expect(f.store.getState().tasks.tasks.size).toBe(21);
+    expect(f.store.getState().tasks.tasks.get('task-20')).toHaveProperty('accessToken');
   });
   test('returned pure source guards retain omitted tail rows and reject native A to B to A', async () => {
     const f = fixture(), fake = privacyFixture(); installJudgmentPort(fake.port);

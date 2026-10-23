@@ -980,7 +980,7 @@ afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previous
         expect(workflow.visualReportContract.routes.openRenderedReport).toContain('computer action:"open_browser"');
         expect(workflow.visualReportContract.certifiedRendererRecords[0]?.sections).toEqual(expect.arrayContaining(['evidence matrix', 'source map']));
         expect(workflow.visualReportContract.certifiedRendererRecords[0]?.renderUrl).toContain('secret=%3Credacted%3E');
-        expect(workflow.visualReportContract.certifiedRendererRecords[0]?.certification.publicationGuarantee).toContain('secret=[REDACTED]');
+        expect(workflow.visualReportContract.certifiedRendererRecords[0]?.certification.publicationGuarantee).toContain('secret=<redacted>');
         expect(workflow.visualReportContract.certifiedRendererRecords[0]?.certification.missingSignals).toEqual([]);
         expect(workflow.workflow.find((step) => step.id === 'collect-sources')?.status).toBe('ready');
         expect(workflow.workflow.find((step) => step.id === 'collect-sources')?.route).toContain('research action:"runner"');
