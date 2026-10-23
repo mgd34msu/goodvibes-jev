@@ -114,11 +114,18 @@ export function recordNativeExecutionArtifact(product, source) {
   return Object.freeze(artifact);
 }
 
-export function verifyNativeExecutionArtifact(product, source) {
+export function verifyNativeExecutionArtifact(product, source, { allowEarlierAttempt = false } = {}) {
   const expectedOwner = owner(product, source), members = nativeExecutionMembers(product, source.target), root = join(product, 'native');
   const retained = retainNativeExecutionFiles(root, [...members, { path: MANIFEST, mode: 0o644 }]);
   const stored = JSON.parse(retained.files.at(-1).bytes.toString('utf8'));
-  const actual = { ...expectedOwner, files: retained.files.slice(0, -1).map(({ path, sha256, mode, size }) => ({ path, sha256, mode, size })) };
+  // A partial rerun retains successful producers from this same source/run.
+  // Preserve their producer attempt; never relabel the receipt as this consumer.
+  if (allowEarlierAttempt) {
+    assert.match(stored?.runAttempt, /^[1-9][0-9]*$/, 'Exact native producer attempt required');
+    assert(BigInt(stored.runAttempt) <= BigInt(expectedOwner.runAttempt), 'Native producer attempt is newer than the consumer');
+  }
+  const actual = { ...expectedOwner, ...(allowEarlierAttempt ? { runAttempt: stored.runAttempt } : {}),
+    files: retained.files.slice(0, -1).map(({ path, sha256, mode, size }) => ({ path, sha256, mode, size })) };
   assert.deepEqual(stored, actual, 'Restored native execution artifact differs from source, run/attempt, target or bytes');
   inspectSqliteCompanion(product, source.target, retained, expectedOwner); retained.assertCurrent();
   return Object.freeze({ artifact: Object.freeze(actual), members, retained });
@@ -142,7 +149,7 @@ if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.ur
   const source = nativeExecutionSource(product, sourceCommit, headCommit);
   if (action === 'record') recordNativeExecutionArtifact(product, source);
   else {
-    const verified = verifyNativeExecutionArtifact(product, source);
+    const verified = verifyNativeExecutionArtifact(product, source, { allowEarlierAttempt: action === 'verify' });
     if (action === 'archive') {
       // Names are fixed by the actual source target, never supplied by JSON.
       execFileSync('tar', ['--format=ustar', '-czf', resolve(archive), ...[...verified.members.map(file => file.path), MANIFEST].map(path => `products/daemon/native/${path}`)], { cwd: resolve(product, '../..'), timeout: 30_000 });

@@ -20,7 +20,7 @@ const product = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const [sourceCommit, headCommit, ...extra] = process.argv.slice(2);
 assert(sourceCommit && headCommit && extra.length === 0, 'Usage: verify-native-execution.mjs <checkout SHA> <head SHA>');
 const source = nativeExecutionSource(product, sourceCommit, headCommit);
-const original = verifyNativeExecutionArtifact(product, source);
+const original = verifyNativeExecutionArtifact(product, source, { allowEarlierAttempt: true });
 const root = mkdtempSync(join(realpathSync(tmpdir()), 'daemon-native-execution-'));
 const artifacts = join(root, 'artifacts'), work = join(root, 'foreign-work'), home = join(root, 'home');
 const tree = join(root, 'tree'), daemon = join(root, 'selected-daemon');
@@ -265,7 +265,8 @@ try {
   await assert.rejects(fetch(`http://127.0.0.1:${port}/status`, { headers, signal: AbortSignal.timeout(1_000) }), 'Listener remains after clean shutdown');
   original.retained.assertCurrent(); relocated.assertCurrent();
   console.log(JSON.stringify({ proof: 'compiled-daemon-native-execution', target: source.target, sourceCommit, headCommit,
-    runId: source.runId, runAttempt: source.runAttempt, semanticQualification: 'synthetic-only', modelAcquisition: 'disabled',
+    runId: source.runId, runAttempt: source.runAttempt, producerRunAttempt: original.artifact.runAttempt,
+    semanticQualification: 'synthetic-only', modelAcquisition: 'disabled',
     status: 'running', malformedSettingsExit: malformed.code, nativeVectorAvailable: vector.vector.available, cleanShutdown: true, diagnostic }));
 } finally {
   try {

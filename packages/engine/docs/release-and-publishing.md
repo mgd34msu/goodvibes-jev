@@ -48,11 +48,11 @@ those checks requires preserving each consumer and release requirement.
 
 ### Automatic path (`RELEASE_ARMED`)
 
-An `auto-release` job runs after every gating job above succeeds, but only for
-a push to `main`, and only when the `RELEASE_ARMED` repository variable is
-`true`. Unset, or any other value, means CI finishes green without tagging or
-publishing, which is how work can accumulate across several merges before
-someone deliberately arms the next release.
+An `auto-release` job runs after every gating job above succeeds. It tags and
+publishes only for a push to `main` when the `RELEASE_ARMED` repository variable
+is `true`. Otherwise it reports that automatic release is disabled and
+completes successfully, so manual release verification can require every CI
+job to succeed without enabling automatic publishing.
 
 When armed and green, the job reads the version out of the root
 `package.json`, creates the annotated tag `v<version>` at that commit, and

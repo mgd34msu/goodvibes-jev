@@ -33,12 +33,14 @@ function admitRun(value: unknown, runId: string, owner: DaemonInstallOwner): Run
   return run;
 }
 function admitJobs(gh: RunGitHub, base: string, attempt: number): void {
-  const pages = JSON.parse(gh(['api', '--hostname', 'github.com', '--paginate', '--slurp', `${base}/attempts/${attempt}/jobs?per_page=100`])) as Array<{ jobs: Array<{ name: string; conclusion: string; status: string; run_attempt: number }> }>;
+  const pages = JSON.parse(gh(['api', '--hostname', 'github.com', '--paginate', '--slurp', `${base}/jobs?filter=latest&per_page=100`])) as Array<{ jobs: Array<{ name: string; conclusion: string; status: string; run_attempt: number }> }>;
   if (!Array.isArray(pages)) throw new Error('Missing CI job evidence');
   const jobs = pages.flatMap(page => page.jobs);
   for (const name of ['Product tests (daemon)', 'Daemon native artifact (isolated Linux)']) {
     const matching = jobs.filter(job => job.name === name);
-    if (matching.length !== 1 || matching[0]?.run_attempt !== attempt || matching[0].status !== 'completed' || matching[0].conclusion !== 'success') throw new Error(`CI qualification is missing or unsuccessful: ${name}`);
+    const job = matching[0];
+    if (matching.length !== 1 || !job || !Number.isSafeInteger(job.run_attempt) || job.run_attempt < 1 || job.run_attempt > attempt
+      || job.status !== 'completed' || job.conclusion !== 'success') throw new Error(`CI qualification is missing or unsuccessful: ${name}`);
   }
 }
 function artifactIdentity(gh: RunGitHub, base: string, owner: DaemonInstallOwner): number {

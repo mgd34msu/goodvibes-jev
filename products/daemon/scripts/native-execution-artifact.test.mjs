@@ -41,11 +41,25 @@ for (const target of NATIVE_EXECUTION_TARGETS) {
     assert.equal(f.artifact.kind, 'daemon-native-execution');
     assert(!verified.artifact.files.some(file => file.path === 'daemon-installation.json'));
   });
+  test(`${target} later consumers retain earlier producer provenance without rewriting or accepting future attempts`, () => {
+    const f = fixture(target), manifest = join(f.root, 'native-execution-artifact.json');
+    const original = readFileSync(manifest);
+    const verified = verifyNativeExecutionArtifact(f.product, { ...f.source, runAttempt: '3' }, { allowEarlierAttempt: true });
+    assert.deepEqual(verified.artifact, f.artifact); verified.retained.assertCurrent();
+    assert.deepEqual(readFileSync(manifest), original);
+    assert.throws(() => verifyNativeExecutionArtifact(f.product, { ...f.source, runAttempt: '1' }, { allowEarlierAttempt: true }));
+    for (const runAttempt of ['0', '01', '-1', '1.5', 'invalid', null]) {
+      writeFileSync(manifest, JSON.stringify({ ...f.artifact, runAttempt }));
+      assert.throws(() => verifyNativeExecutionArtifact(f.product, { ...f.source, runAttempt: '3' }, { allowEarlierAttempt: true }));
+    }
+  });
   for (const field of ['sourceCommit', 'sourceTree', 'headCommit', 'runId', 'runAttempt', 'target']) {
     test(`${target} refuses a different ${field} owner`, () => {
       const f = fixture(target);
       const changed = field === 'target' ? NATIVE_EXECUTION_TARGETS.find(value => value !== target) : field.startsWith('run') ? '3' : 'd'.repeat(40);
       assert.throws(() => verifyNativeExecutionArtifact(f.product, { ...f.source, [field]: changed }));
+      assert.throws(() => verifyNativeExecutionArtifact(f.product,
+        { ...f.source, runAttempt: '3', [field]: field === 'runAttempt' ? '1' : changed }, { allowEarlierAttempt: true }));
     });
   }
   for (const mutation of ['bytes', 'mode', 'missing', 'manifest-path', 'symlink', 'parent-aba', 'foreign-inode']) {
@@ -63,7 +77,10 @@ for (const target of NATIVE_EXECUTION_TARGETS) {
       if (mutation === 'parent-aba') { renameSync(f.root, f.root + '.old'); renameSync(f.root + '.old', f.root); }
       if (mutation === 'foreign-inode') { const bytes = readFileSync(full), mode = f.members.at(-2).mode; writeFileSync(full + '.foreign', bytes, { mode }); renameSync(full + '.foreign', full); }
       assert.throws(() => verified.retained.assertCurrent());
-      if (mutation !== 'parent-aba' && mutation !== 'foreign-inode') assert.throws(() => verifyNativeExecutionArtifact(f.product, f.source));
+      if (mutation !== 'parent-aba' && mutation !== 'foreign-inode') {
+        assert.throws(() => verifyNativeExecutionArtifact(f.product, f.source));
+        assert.throws(() => verifyNativeExecutionArtifact(f.product, { ...f.source, runAttempt: '3' }, { allowEarlierAttempt: true }));
+      }
     });
   }
 }

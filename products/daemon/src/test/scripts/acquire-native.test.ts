@@ -36,8 +36,9 @@ async function fixture() {
   return { root, source, archive, pack, run, jobs, artifact, calls, gh, downloaded: () => downloadDir, prefix: join(root, 'installed prefix') };
 }
 
-nativeTest('exact successful CI acquisition stages only the owned cohort then uses the verified installer', async () => {
-  const f = await fixture(); await acquireDaemonNative({ runId: '123', prefix: f.prefix, owner, gh: f.gh });
+for (const attempt of [1, 2]) nativeTest(`exact successful CI acquisition after ${attempt} attempt(s) stages only the owned cohort then uses the verified installer`, async () => {
+  const f = await fixture(); f.run.run_attempt = attempt; f.jobs[1]!.run_attempt = attempt;
+  await acquireDaemonNative({ runId: '123', prefix: f.prefix, owner, gh: f.gh });
   for (const path of DAEMON_CI_PAYLOADS) expect(readFileSync(join(f.prefix, path))).toEqual(readFileSync(join(f.source, 'native', path)));
   expect(JSON.parse(readFileSync(join(f.prefix, 'daemon-installation.json'), 'utf8')).version).toBe(owner.version);
   expect(f.calls.find(args => args[0] === 'run')).toEqual(['run', 'download', '123', '--repo', `https://github.com/${DAEMON_CI_REPOSITORY}`, '--name', 'daemon-native-linux-x64', '--dir', f.downloaded()!]);
@@ -45,7 +46,7 @@ nativeTest('exact successful CI acquisition stages only the owned cohort then us
 });
 
 nativeTest('wrong workflow/repository/head/run, skipped qualification and expired artifact refuse before acquisition', async () => {
-  for (const mutation of ['run', 'workflow', 'repo', 'head', 'pending', 'failed', 'job-skipped', 'job-missing', 'job-attempt', 'expired', 'artifact-head'] as const) {
+  for (const mutation of ['run', 'workflow', 'repo', 'head', 'pending', 'failed', 'job-skipped', 'job-missing', 'job-attempt', 'job-attempt-zero', 'expired', 'artifact-head'] as const) {
     const f = await fixture();
     if (mutation === 'run') f.run.id++;
     if (mutation === 'workflow') f.run.path = '.github/workflows/other.yml';
@@ -56,6 +57,7 @@ nativeTest('wrong workflow/repository/head/run, skipped qualification and expire
     if (mutation === 'job-skipped') f.jobs[1]!.conclusion = 'skipped';
     if (mutation === 'job-missing') f.jobs.pop();
     if (mutation === 'job-attempt') f.jobs[1]!.run_attempt = 2;
+    if (mutation === 'job-attempt-zero') f.jobs[1]!.run_attempt = 0;
     if (mutation === 'expired') f.artifact.expired = true;
     if (mutation === 'artifact-head') f.artifact.workflow_run.head_sha = owner.sourceCommit;
     await expect(acquireDaemonNative({ runId: '123', prefix: f.prefix, owner, gh: f.gh })).rejects.toThrow();

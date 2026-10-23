@@ -65,7 +65,8 @@ function runText(wf: Workflow, jobName: string): string {
 type JobResult = 'success' | 'failure' | 'cancelled' | 'skipped';
 
 /** Evaluate the boolean/comparison subset used by the publication guards. */
-function permitsPublication(job: Job, results: Record<string, JobResult>, event: string, mode = 'release', publishNpm = true): boolean {
+function permitsPublication(job: Job, results: Record<string, JobResult>, event: string, mode = 'release', publishNpm = true,
+  release = { ref: 'refs/heads/main', armed: false }): boolean {
   const condition = String(job.if ?? 'true');
   const status = {
     always: true,
@@ -76,9 +77,11 @@ function permitsPublication(job: Job, results: Record<string, JobResult>, event:
   const hasStatus = /\b(?:always|success|failure|cancelled)\s*\(\)/.test(condition);
   const expression = condition
     .replace(/\b(always|success|failure|cancelled)\s*\(\)/g, (_, name: keyof typeof status) => String(status[name]))
-    .replace(/\b(github\.event_name|github\.event\.inputs\.mode|vars\.PUBLISH_NPM|needs\.([\w-]+)\.result)\s*(==|!=)\s*'([^']*)'/g,
+    .replace(/\b(github\.event_name|github\.ref|github\.event\.inputs\.mode|vars\.PUBLISH_NPM|vars\.RELEASE_ARMED|needs\.([\w-]+)\.result)\s*(==|!=)\s*'([^']*)'/g,
       (_, field: string, dependency: string | undefined, operator: string, expected: string) => {
-        const actual = dependency ? results[dependency] : field === 'github.event_name' ? event : field === 'vars.PUBLISH_NPM' ? String(publishNpm) : mode;
+        const values: Record<string, string> = { 'github.event_name': event, 'github.ref': release.ref,
+          'github.event.inputs.mode': mode, 'vars.PUBLISH_NPM': String(publishNpm), 'vars.RELEASE_ARMED': String(release.armed) };
+        const actual = dependency ? results[dependency] : values[field];
         return String(operator === '==' ? actual === expected : actual !== expected);
       });
   const tokens = expression.match(/true|false|&&|\|\||!|\(|\)/g) ?? [];
@@ -653,14 +656,22 @@ describe('ci.yml: zero-touch auto-release', () => {
     }
   });
 
-  test('auto-release requires an armed push on main and successful prerequisites', () => {
-    const cond = String(ci.jobs!['auto-release']!.if);
-    expect(cond).toContain("github.ref == 'refs/heads/main'");
-    expect(cond).toContain("github.event_name == 'push'");
-    expect(cond).toContain("vars.RELEASE_ARMED == 'true'");
-    // GitHub supplies the default success() guard unless a status function
-    // replaces it. Neither failure/cancellation nor an OR may bypass arming.
-    expect(cond).not.toMatch(/\b(?:always|failure|cancelled)\s*\(|!\s*success\s*\(|\|\|/);
+  test('unarmed green CI completes without release effects; only an armed main push may publish', () => {
+    const job = ci.jobs!['auto-release']!;
+    const results: Record<string, JobResult> = Object.fromEntries(needsOf(job).map(name => [name, 'success']));
+    for (const event of ['push', 'pull_request']) for (const ref of ['refs/heads/main', 'refs/heads/feature']) for (const armed of [false, true]) {
+      const release = { ref, armed };
+      expect(permitsPublication(job, results, event, 'release', false, release)).toBe(true);
+      const enabled = event === 'push' && ref === 'refs/heads/main' && armed;
+      for (const step of steps(job)) {
+        expect(permitsPublication(step, results, event, 'release', false, release), String(step.name))
+          .toBe(step.name === 'Report automatic release disabled' ? !enabled : enabled);
+      }
+    }
+    for (const dependency of needsOf(job)) for (const result of ['failure', 'cancelled', 'skipped'] as const) {
+      const failed = { ...results, [dependency]: result };
+      expect(permitsPublication(job, failed, 'push', 'release', false, { ref: 'refs/heads/main', armed: true })).toBe(false);
+    }
   });
 
   test('auto-release grants contents:write and actions:write', () => {

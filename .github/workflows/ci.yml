@@ -1052,8 +1052,8 @@ jobs:
   # ---------------------------------------------------------------------------
   # Zero-touch release. Runs only after EVERY gating job above is green (its
   # `needs` covers all of them, so GitHub schedules it last and only on full
-  # success), and only for pushes to main. When the release commit's version has
-  # no tag yet, it creates the annotated tag at this SHA and dispatches
+  # success). Publication is limited to armed pushes to main. When the release
+  # commit's version has no tag yet, it creates the annotated tag and dispatches
   # release.yml at that tag with mode=release.
   #
   # Why the dispatch (not just the tag push): a tag pushed with GITHUB_TOKEN does
@@ -1071,9 +1071,9 @@ jobs:
     timeout-minutes: 10
     # RELEASE_ARMED holds the zero-touch release while a version accumulates
     # work across multiple pushes. Unset or any value other than 'true' means
-    # CI runs green without tagging or publishing; setting the repo variable
-    # to 'true' is the deliberate act that lets the next green push release.
-    if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.RELEASE_ARMED == 'true'
+    # this job succeeds without tagging or publishing. A skipped job would
+    # prevent the manual release's all-jobs-green verification from passing.
+    # Setting the repo variable to 'true' lets the next green main push release.
     needs:
       - validate
       - eval-gate
@@ -1097,12 +1097,18 @@ jobs:
       contents: write
       actions: write
     steps:
+      - name: Report automatic release disabled
+        if: vars.RELEASE_ARMED != 'true' || github.ref != 'refs/heads/main' || github.event_name != 'push'
+        run: echo "Automatic release is disabled for this run; verified manual release remains available."
       - name: Checkout
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.RELEASE_ARMED == 'true'
         uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
       - name: Read version from package.json
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.RELEASE_ARMED == 'true'
         id: version
         run: echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
       - name: Tag the release and dispatch release.yml (idempotent)
+        if: github.ref == 'refs/heads/main' && github.event_name == 'push' && vars.RELEASE_ARMED == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           VERSION: ${{ steps.version.outputs.version }}
