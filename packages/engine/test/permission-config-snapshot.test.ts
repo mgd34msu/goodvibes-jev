@@ -127,3 +127,21 @@ test('current stored read denials and live permission changes survive repeated n
   owner.set('permissions.tools.read', 'allow');
   expect(await permission.readAccess(path)).toBe('restricted');
 });
+
+
+test('autonomous preparation settles already-published config writes before taking its source snapshot', async () => {
+  const owner = config();
+  owner.set('permissions.mode', 'prompt');
+  const stop = owner.watchConfigFiles({ intervalMs: 60_000 });
+  try {
+    owner.set('display.theme', 'nord');
+    const permission = new PermissionManager(async () => { throw new Error('No prompt belongs to source preparation'); },
+      createPermissionConfigReader(owner), new PolicyRuntimeState());
+    await permission.prepareAutonomousOwner();
+    const preparation = permission.autonomousPreparation('settled-owner', () => ({ goal: 'Read the fixture after its own setting write', criteria: [] }));
+    owner.flushConfigFileChanges();
+    expect(() => preparation.assertCurrent()).not.toThrow();
+    owner.set('permissions.tools.read', 'deny');
+    expect(() => preparation.assertCurrent()).toThrow('Autonomous preparation authority changed');
+  } finally { stop(); }
+});

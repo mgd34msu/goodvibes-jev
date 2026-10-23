@@ -83,6 +83,8 @@ type AutonomousPermissionReading = Readonly<{
 
 
 export interface PermissionConfigReader {
+  /** Settle already-visible owner disk generations before capturing authority. Never called from a retained currentness check. */
+  flushPendingChanges?(): void;
   /** Coherent owner-held frame. Must read owned state without invoking observers or host callbacks. */
   getAutonomousSnapshot?(): Readonly<{ permissions: PermissionConfigSnapshot['permissions']; autoApprove: boolean; directory: string | null; incarnation?: number }>;
   isAutoApproveEnabled(): boolean;
@@ -114,13 +116,15 @@ function readDecisionOtlpConfig(configManager: Pick<ConfigManager, 'get'>): Deci
 const permissionConfigOwners = new WeakMap<PermissionConfigReader, object>();
 
 export function createPermissionConfigReader(
-  configManager: Pick<ConfigManager, 'get' | 'getRaw' | 'getWorkingDirectory'> & Partial<Pick<ConfigManager, 'getAutonomousPermissionSnapshot'>>,
+  configManager: Pick<ConfigManager, 'get' | 'getRaw' | 'getWorkingDirectory'> & Partial<Pick<ConfigManager, 'getAutonomousPermissionSnapshot' | 'flushConfigFileChanges'>>,
 ): PermissionConfigReader {
   // Bind the construction-owned accessor, not its result. Every check still
   // copies current permission state; unrelated configuration domains need not
   // be cloned for each original-owner/runtime path in a captured read sweep.
   const permissionSnapshot = configManager.getAutonomousPermissionSnapshot?.bind(configManager);
+  const flushPendingChanges = configManager.flushConfigFileChanges?.bind(configManager);
   const reader: PermissionConfigReader = {
+    ...(flushPendingChanges ? { flushPendingChanges } : {}),
     ...(permissionSnapshot ? { getAutonomousSnapshot: permissionSnapshot } : {}),
     isAutoApproveEnabled: () => isAutoApproveEnabled(configManager),
     getSnapshot: permissionSnapshot
@@ -417,7 +421,7 @@ export class PermissionManager {
     this.gate = { surfaceOf: currentTurnSurfaceId, ...gate };
   }
 
-  /** Wait for the existing rule owner before taking any autonomous authority snapshot. */
+  /** Settle the existing rule/config owners before taking a new authority snapshot. */
   async prepareAutonomousOwner(signal?: AbortSignal): Promise<void> {
     assertPermissionActive(signal);
     const owner = this.userRuleStore;
@@ -425,6 +429,8 @@ export class PermissionManager {
     // fallback. Older embedding stores retain their existing init contract.
     const ready = owner?.awaitReady ?? owner?.init;
     if (ready) await awaitPermission(() => ready.call(owner), signal);
+    assertPermissionActive(signal);
+    this.configReader.flushPendingChanges?.();
     assertPermissionActive(signal);
   }
 
