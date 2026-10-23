@@ -78,7 +78,9 @@ export async function enrichAndImproveHomeGraphSource(
   runtime: HomeGraphSelfImprovementRuntime,
   sourceId: string,
   spaceId: string,
+  signal?: AbortSignal,
 ): Promise<void> {
+  if (signal?.aborted) return;
   // Governor backpressure on the 0ms ingest tail: while background knowledge
   // work is paused (or refused at the critical tier) the LLM-backed enrichment
   // defers honestly, the source persists and the next sync/reindex enriches it.
@@ -91,15 +93,17 @@ export async function enrichAndImproveHomeGraphSource(
     logger.warn('Home Graph ingest enrichment refused by the memory governor', { spaceId, sourceId, reason: admission.reason });
     return;
   }
-  await runtime.semanticService.enrichSource(sourceId, { knowledgeSpaceId: spaceId });
+  await runtime.semanticService.enrichSource(sourceId, { knowledgeSpaceId: spaceId, signal });
+  if (signal?.aborted) return;
   if (!sourceHasSemanticFactCandidates(runtime.store, sourceId, spaceId)) return;
   // Structural candidates trigger refresh; the page reader decides usefulness.
   // Refresh this source's page
   // now; repair-accepted refreshes ride the governed run / next sync pump.
   const installationId = readHomeGraphInstallationIdFromSpace(spaceId);
   if (installationId) {
-    await refreshHomeGraphDevicePagesForSourceIds(runtime, spaceId, installationId, [sourceId]);
+    await refreshHomeGraphDevicePagesForSourceIds(runtime, spaceId, installationId, [sourceId], signal);
   }
+  if (signal?.aborted) return;
   // Self-improvement rides the governed background scheduler, a direct 0ms
   // per-ingest run would bypass the floor, coalescing, zero-gap backoff, and
   // the memory governor's pause (the incident's hot-loop shape).

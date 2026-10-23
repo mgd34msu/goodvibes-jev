@@ -284,3 +284,56 @@ test('canonical runtime close aborts and drains a real sync pump before closing 
     rmSync(root, { recursive: true, force: true });
   }
 }, 20_000);
+
+for (const operation of ['page', 'reset', 'dispose'] as const) {
+test(`${operation} cancels and drains ingest enrichment before publishing or deleting source evidence`, async () => {
+  const f = await answerFixture();
+  const entered = Promise.withResolvers<AbortSignal | undefined>();
+  const stopped = Promise.withResolvers<void>();
+  const release = Promise.withResolvers<void>();
+  const finished = Promise.withResolvers<void>();
+  // Isolate publication ordering from unrelated foreground fact generation.
+  const foreground = spyOn(f.semantic, 'enrichSources').mockResolvedValue([]);
+  const original = f.semantic.enrichSource.bind(f.semantic);
+  let drained = false, first = true;
+  const enrich = spyOn(f.semantic, 'enrichSource').mockImplementation(async (sourceId, options = {}) => {
+    if (!first) return original(sourceId, options);
+    first = false;
+    const signal = options.signal;
+    signal?.addEventListener('abort', () => stopped.resolve(), { once: true });
+    entered.resolve(signal);
+    await release.promise;
+    try { return await original(sourceId, options); }
+    finally { drained = true; finished.resolve(); }
+  });
+  try {
+    const ingested = await f.service.ingestNote({ installationId: 'tail-house', title: 'Reference manual',
+      body: 'The reference device includes local control through its front panel.',
+      target: { kind: 'device', id: 'reference-device', relation: 'has_manual' } });
+    const signal = await entered.promise;
+    expect(signal).toBeDefined();
+    if (!signal) throw new Error('Ingest enrichment has no native cancellation owner.');
+    const records = () => JSON.stringify({ sources: f.store.listSources(), nodes: f.store.listNodes(), edges: f.store.listEdges() });
+    const before = records();
+    const pending = operation === 'page'
+      ? f.service.refreshDevicePassport({ installationId: 'tail-house', deviceId: 'reference-device' })
+      : operation === 'reset' ? f.service.resetSpace({ installationId: 'tail-house' }) : f.service.dispose();
+    await stopped.promise;
+    expect(signal.aborted).toBe(true);
+    expect(drained).toBe(false);
+    release.resolve();
+    const result = await pending;
+    expect(drained).toBe(true);
+    if (operation === 'page') {
+      if (!result || !('artifact' in result)) throw new Error('Manual page did not publish its artifact.');
+      expect(f.artifactStore.get(result.artifact.id)).toBeDefined();
+    } else if (operation === 'reset') expect(f.store.getSource(ingested.source.id)).toBeNull();
+    else expect(records()).toBe(before);
+  } finally {
+    release.resolve();
+    await f.service.dispose();
+    if (!first) await finished.promise;
+    foreground.mockRestore(); enrich.mockRestore(); await f.store.close(); rmSync(f.root, { recursive: true, force: true });
+  }
+});
+}

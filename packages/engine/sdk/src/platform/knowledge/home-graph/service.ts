@@ -100,6 +100,9 @@ export class HomeGraphService {
   private resumeSyncSelfImprove = new Set<string>();
   private pendingAnswerEnrichment = new Map<string, Set<string>>();
   private scheduledAnswerEnrichment = new Set<string>();
+  private pendingIngestEnrichment = new Map<string, Set<string>>();
+  private scheduledIngestEnrichment = new Set<string>();
+  private ingestEnrichmentRuns = new Map<string, { readonly sourceId: string; readonly controller: AbortController; readonly run: Promise<void> }>();
   private answerEnrichmentRuns = new Map<string, {
     readonly controller: AbortController;
     readonly sourceIds: readonly string[];
@@ -133,7 +136,9 @@ export class HomeGraphService {
     this.autoLinkController.abort();
     this.cancelSyncSelfImprovement();
     this.cancelAnswerEnrichment();
-    await Promise.all([...this.syncSelfImproveRuns.values(), ...[...this.answerEnrichmentRuns.values()].map(tail => tail.run)]);
+    this.pendingIngestEnrichment.clear(); this.scheduledIngestEnrichment.clear();
+    await Promise.all([...this.syncSelfImproveRuns.values(), ...[...this.answerEnrichmentRuns.values()].map(tail => tail.run),
+      ...[...this.ingestEnrichmentRuns.values()].map(tail => tail.run)]);
   }
 
   async status(input: { readonly installationId?: string; readonly knowledgeSpaceId?: string } = {}): Promise<HomeGraphStatus> {
@@ -525,10 +530,14 @@ export class HomeGraphService {
     await this.store.init();
     const { spaceId } = resolveReadableHomeGraphSpace(this.store, input);
     if (input.dryRun !== true) {
+      const sync = this.syncSelfImproveRuns.get(spaceId);
       this.cancelSyncSelfImprovement(spaceId);
       const tail = this.answerEnrichmentRuns.get(spaceId)?.run;
       this.cancelAnswerEnrichment(spaceId);
-      await tail;
+      const ingest = this.ingestEnrichmentRuns.get(spaceId);
+      this.pendingIngestEnrichment.delete(spaceId); this.scheduledIngestEnrichment.delete(spaceId);
+      ingest?.controller.abort();
+      await Promise.all([sync, tail, ingest?.run]);
     }
     return resetHomeGraphSpace(this.store, this.artifactStore, input);
   }
@@ -623,14 +632,7 @@ export class HomeGraphService {
     assertOwned();
     // Owned repairs already run enrichment/promotion in their guarded caller.
     // Do not detach a second publisher from the owner when returning its receipt.
-    if (!ownership.deferSemanticEnrichment) scheduleBackground(() => {
-      void this.enrichAndImproveSource(source.id, input.spaceId).catch((error: unknown) => {
-        this.reportBackgroundError('homegraph-ingest-enrich', error, {
-          spaceId: input.spaceId,
-          sourceId: source.id,
-        });
-      });
-    });
+    if (!ownership.deferSemanticEnrichment) this.queueIngestEnrichment(input.spaceId, source.id);
     return {
       ok: true,
       spaceId: input.spaceId,
@@ -678,11 +680,17 @@ export class HomeGraphService {
       this.pendingAnswerEnrichment.set(spaceId, pending);
       tail.controller.abort();
     }
+    const ingest = this.ingestEnrichmentRuns.get(spaceId);
+    if (ingest) {
+      this.queueIngestEnrichment(spaceId, ingest.sourceId);
+      ingest.controller.abort();
+    }
     try {
       // Capture answer and page inputs only after the cancelled same-space
       // repair pump has finished its owned writes and cleanup.
       await background;
       await tail?.run;
+      await ingest?.run;
       return await operation();
     } finally {
       const remaining = (this.foregroundOperations.get(spaceId) ?? 1) - 1;
@@ -691,6 +699,7 @@ export class HomeGraphService {
         this.foregroundOperations.delete(spaceId);
         if (this.resumeSyncSelfImprove.delete(spaceId)) this.scheduleSyncSelfImprovement(spaceId, installationId);
         this.scheduleAnswerEnrichment(spaceId);
+        this.scheduleIngestEnrichment(spaceId);
       }
     }
   }
@@ -801,9 +810,34 @@ export class HomeGraphService {
     await enrichHomeGraphSpaceSources(this.requireSelfImprovementRuntime(), spaceId);
   }
 
-  private async enrichAndImproveSource(sourceId: string, spaceId: string): Promise<void> {
-    if (!this.options.semanticService) return;
-    await enrichAndImproveHomeGraphSource(this.requireSelfImprovementRuntime(), sourceId, spaceId);
+  private queueIngestEnrichment(spaceId: string, sourceId: string): void {
+    if (!this.options.semanticService || this.autoLinkController.signal.aborted) return;
+    const pending = this.pendingIngestEnrichment.get(spaceId) ?? new Set<string>();
+    pending.add(sourceId); this.pendingIngestEnrichment.set(spaceId, pending);
+    this.scheduleIngestEnrichment(spaceId);
+  }
+
+  private scheduleIngestEnrichment(spaceId: string): void {
+    if (!this.options.semanticService || this.autoLinkController.signal.aborted || this.foregroundOperations.has(spaceId)
+      || this.ingestEnrichmentRuns.has(spaceId) || this.scheduledIngestEnrichment.has(spaceId)
+      || !this.pendingIngestEnrichment.has(spaceId)) return;
+    this.scheduledIngestEnrichment.add(spaceId);
+    scheduleBackground(() => {
+      this.scheduledIngestEnrichment.delete(spaceId);
+      if (this.foregroundOperations.has(spaceId) || this.ingestEnrichmentRuns.has(spaceId)) return;
+      const pending = this.pendingIngestEnrichment.get(spaceId), sourceId = pending?.values().next().value;
+      if (sourceId === undefined) return;
+      pending!.delete(sourceId); if (pending!.size === 0) this.pendingIngestEnrichment.delete(spaceId);
+      const controller = new AbortController(), signal = AbortSignal.any([controller.signal, this.autoLinkController.signal]);
+      const run = enrichAndImproveHomeGraphSource(this.requireSelfImprovementRuntime(), sourceId, spaceId, signal)
+        .catch((error: unknown) => {
+          if (!signal.aborted) this.reportBackgroundError('homegraph-ingest-enrich', error, { spaceId, sourceId });
+        }).finally(() => {
+          if (this.ingestEnrichmentRuns.get(spaceId)?.run === run) this.ingestEnrichmentRuns.delete(spaceId);
+          this.scheduleIngestEnrichment(spaceId);
+        });
+      this.ingestEnrichmentRuns.set(spaceId, { sourceId, controller, run });
+    }, 0, this.autoLinkController.signal);
   }
 
   private requireSelfImprovementRuntime() {

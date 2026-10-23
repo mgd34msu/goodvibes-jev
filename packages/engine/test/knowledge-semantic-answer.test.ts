@@ -436,7 +436,8 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
       answerReadings.addExtractionValue(...extractionValueFixtureFor(extractionSource2.source, extractionSource2.extraction ?? null, 0.99));
     } finally { random.mockRestore(); }
     const originalSource = store.listSources().find((source) => source.title === 'Living Room TV manual')!;
-    const sourceSnapshot = structuredClone(originalSource);
+    const sourceIdentity = { id: originalSource.id, title: originalSource.title,
+      canonicalUri: originalSource.canonicalUri, artifactId: originalSource.artifactId };
 
     const answer = await service.ask({
       installationId: 'house',
@@ -446,8 +447,10 @@ describe('semantic knowledge/wiki enrichment: answer quality', () => {
     });
     const page = await service.refreshDevicePassport({ installationId: 'house', deviceId: 'tv' });
 
-    expect(store.getSource(originalSource.id)).toBe(originalSource);
-    expect(store.getSource(originalSource.id)).toEqual(sourceSnapshot);
+    // Enrichment can legitimately update status and metadata. Answer aliases
+    // must preserve the persisted source identity and original artifact/URI.
+    expect(store.getSource(originalSource.id)).toMatchObject(sourceIdentity);
+    expect(store.getSource(originalSource.id)?.sourceUri).toBe(originalSource.sourceUri);
     expect(answer.answer.sources.find((source) => source.id === originalSource.id)?.url)
       .toBe(originalSource.sourceUri ?? originalSource.canonicalUri);
     expect(answer.spaceId).toBe(homeAssistantKnowledgeSpaceId('house'));
