@@ -825,7 +825,16 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
               stateHash, readings: checked.readings, passed: accepted }), decisionIds);
             checked.recordAction(accepted ? 'Later owner changes preserve the original requested result; actual permissions, exact current owner/result identities and clean patch application still gate publication.'
               : 'Retain accepted work and newer owner edits; resolve the specific integration/evidence gap instead of repeating the unchanged publication.');
-            if (!accepted) { publicationRepairs.set(run, { evidence, decisionIds }); return null; }
+            if (!accepted) {
+              publicationRepairs.set(run, { evidence: { originalAssessment: evidence,
+                publicationChecks: JSON.parse(JSON.stringify(checked.readings)) as JsonValue,
+                remaining: Object.entries(checked.readings).filter(([, reading]) => reading.verdict !== 'no' || reading.outcome !== 'act')
+                  .map(([check, reading]) => ({ check, verdict: reading.verdict, outcome: reading.outcome,
+                    required: check === 'incompatible'
+                      ? 'Resolve the actual incompatibility between the proposed publication, original requirements and pending answer claims.'
+                      : 'Obtain the missing current-owner file evidence needed to assess the proposed publication.' })) }, decisionIds });
+              return null;
+            }
             publicationAssessments.set(run, { evidence, decisionIds });
             return owner.assertCurrent;
           } finally { addJudgmentUsage(contract.judgmentUsage, usage); }
@@ -833,6 +842,11 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         if (!admitted) return { status: 'failed', note: `not applied: later owner changes need focused integration verification; the work stays on branch ${branch}` };
         publication = admitted;
       } catch (recoveryError) {
+        if (recoveryError instanceof ContractPublicationConflictError) publicationRepairs.set(run, {
+          evidence: { conflictPaths: [...recoveryError.paths],
+            observation: 'The native three-way publication merge found conflicting owner/result edits. No owner files, staging or history were changed. Preserve both versions and resolve only the actual integration conflict.' },
+          decisionIds: [],
+        });
         return { status: 'failed', note: `not applied: ${summarizeError(recoveryError)}; the work stays on branch ${branch}` };
       }
     }

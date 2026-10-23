@@ -13,15 +13,11 @@ import {
 } from './input-authority.js';
 import { assertContractExecutionView, assertContractInputObjects, assertContractInputOwner } from './input-snapshot.js';
 import { publicationInputOwner, consumePublicationInput, type PublicationInputAdmission } from './publication-input.js';
+import { ContractPublicationConflictError } from './publication-conflict.js';
+export { ContractPublicationConflictError } from './publication-conflict.js';
 
 const applyTails = new Map<string, Promise<void>>();
 const MAX_METADATA_BYTES = 256 * 1024 * 1024;
-
-export class ContractPublicationConflictError extends Error {
-  constructor(readonly paths: readonly string[], options?: ErrorOptions) {
-    super('captured result patch does not fit the current owner; preserve both versions for focused integration', options);
-  }
-}
 
 function git(root: string, args: readonly string[], output?: number): Buffer {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GIT_')));
@@ -59,6 +55,7 @@ async function applyDelta(
     assertContractInputObjects(snapshot, root);
     assertContractExecutionView(snapshot, view, branch);
     const resultHead = git(view, ['rev-parse', 'HEAD']).toString('utf8').trim();
+    const publicationTree = publication?.publicationTree ?? resultHead;
     const raw = git(root, [
       'diff',
       '--raw',
@@ -105,7 +102,7 @@ async function applyDelta(
     // apply; compare only original result targets, never unrelated owner files.
     const outstanding = publication && paths.length > 0
       ? git(root, ['diff', '--name-only', '--no-color', '--no-ext-diff', '--no-textconv', '--no-renames', '-z',
-          owner.inputCommit, resultHead, '--', ...paths]).toString('utf8').split('\0').filter(Boolean)
+          owner.inputCommit, publicationTree, '--', ...paths]).toString('utf8').split('\0').filter(Boolean)
       : paths;
     if (outstanding.length === 0) {
       await assertContractInputAuthority(authority, view, signal);
@@ -127,8 +124,8 @@ async function applyDelta(
       '--no-ext-diff',
       '--no-textconv',
       '--no-renames',
-      snapshot.inputCommit,
-      resultHead,
+      publication ? owner.inputCommit : snapshot.inputCommit,
+      publicationTree,
       '--',
       ...outstanding,
     ], patchFd); } finally { closeSync(patchFd); }

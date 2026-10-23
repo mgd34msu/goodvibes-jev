@@ -52,6 +52,46 @@ for (const autoCommit of [false, true]) {
   }, 20_000);
 }
 
+test('a contract publishes independent changes in one file without repeating its accepted unit', async () => {
+  const goal = 'Update the README ending while preserving the existing heading and middle lines.';
+  const original = 'Original heading\nUnchanged line 0\nUnchanged line 1\nOriginal ending\n';
+  const owner = original.replace('Original heading', 'New owner heading');
+  const result = original.replace('Original ending', 'Updated ending');
+  const plan = oneUnitPlan(1);
+  plan.goal = goal;
+  plan.criteria = [{ id: 'c1', text: goal, quote: goal }];
+  plan.groups[0]!.goal = goal;
+  Object.assign(plan.groups[0]!.units[0]!, {
+    title: 'Update README ending', goal, brief: goal, files: ['README.md'],
+    criteria: [{ id: 'u1.c1', text: goal, serves: ['c1'] }],
+  });
+  const h = (harness = makeHarness({
+    plan,
+    contract: { isolation: 'worktree', autoCommit: false },
+    scripts: { u1: () => [{ files: { 'README.md': result }, text: 'Updated the README ending and preserved its heading and middle lines.' }] },
+    planner: {
+      async run() {
+        writeFileSync(join(h.root, 'README.md'), owner);
+        return { status: 'completed', output: plannerOutput(plan), elapsedMs: 0 };
+      },
+    },
+  }));
+  writeFileSync(join(h.root, 'README.md'), original);
+  const index = readFileSync(join(h.root, '.git/index'));
+  const head = git(h.root, 'rev-parse', 'HEAD');
+  const { contract } = startContract(h, { ask: goal });
+  await waitFor(() => terminal(h, contract.id), 'merged contract publication', 15_000);
+  const done = h.store.get(contract.id)!;
+  expect(done.status).toBe('passed');
+  expect(done.commit?.status).toBe('applied');
+  expect(done.units).toHaveLength(1);
+  expect(h.agentsOf('u1')).toHaveLength(1);
+  expect(done.fixRounds).toBe(0);
+  expect(readFileSync(join(h.root, 'README.md'), 'utf8')).toBe(owner.replace('Original ending', 'Updated ending'));
+  expect(readFileSync(join(h.root, '.git/index'))).toEqual(index);
+  expect(git(h.root, 'rev-parse', 'HEAD')).toBe(head);
+}, 20_000);
+
 test('conflicting later owner edit retains both owner and contract result without staging or history changes', async () => {
   const plan = oneUnitPlan(1);
   const h = (harness = makeHarness({

@@ -9,19 +9,25 @@ import { assertContractInputOwner, captureContractInput, type ContractInputSnaps
 import { currentFileObservations } from './current-file-observations.js';
 import { goalObligationSource } from './goal-obligation-proof.js';
 import { renderContractAnswer } from './answer.js';
+import { mergePublicationTree } from './publication-merge.js';
 
-export interface PublicationInputAdmission { readonly kind: 'publication-input-admission' }
+export interface PublicationInputAdmission { readonly kind: 'publication-input-admission'; readonly publicationTree: string }
 interface Admission {
   readonly contract: Contract;
   readonly original: ContractInputSnapshot;
   readonly owner: ContractInputSnapshot;
   readonly serializedOwner: string;
   readonly resultHead: string;
+  readonly publicationTree: string;
   readonly originalScope: string;
+  readonly acceptedEvidence: string;
   readonly assertCurrent: () => void;
   used: boolean;
 }
 const admissions = new WeakMap<PublicationInputAdmission, Admission>();
+const getAdmission = WeakMap.prototype.get, setAdmission = WeakMap.prototype.set, applyAdmission = Reflect.apply, freezeAdmission = Object.freeze;
+const readAdmission = (token: PublicationInputAdmission): Admission | undefined => applyAdmission(getAdmission, admissions, [token]) as Admission | undefined;
+const acceptedPublicationEvidence = (contract: Contract) => JSON.stringify([contract.answer ?? renderContractAnswer(contract), contract.checks.at(-1) ?? null]);
 
 function gitBytes(root: string, args: readonly string[]): Buffer {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => !key.toUpperCase().startsWith('GIT_')));
@@ -35,15 +41,15 @@ const git = (root: string, args: readonly string[]) => gitBytes(root, args).toSt
 
 /** Read the immutable bytes actually selected by the publication delta, after
  * original-owner and result-path permissions have both been checked. */
-function resultFile(root: string, head: string, path: string): JsonValue[] {
+function resultFile(root: string, head: string, path: string, identity: 'resultHead' | 'publicationTree' = 'resultHead'): JsonValue[] {
   const entry = git(root, ['ls-tree', '-z', head, '--', path]);
-  if (!entry) return [{ operation: 'read-publication-result', source: 'native-git-object', success: true, path, missing: true, resultHead: head }];
+  if (!entry) return [{ operation: 'read-publication-result', source: 'native-git-object', success: true, path, missing: true, [identity]: head }];
   const separator = entry.indexOf('\t');
   const [mode, kind, oid] = entry.slice(0, separator).split(' ');
   if (separator < 0 || entry.slice(separator + 1) !== `${path}\0` || kind !== 'blob' || !['100644', '100755'].includes(mode!))
     throw new Error('publication result has an unsupported file kind or ambiguous path');
   const bytes = gitBytes(root, ['cat-file', 'blob', oid!]), text = bytes.toString('utf8');
-  return [{ operation: 'read-publication-result', source: 'native-git-object', success: true, path, resultHead: head,
+  return [{ operation: 'read-publication-result', source: 'native-git-object', success: true, path, [identity]: head,
     bytes: bytes.length, sha256: createHash('sha256').update(bytes).digest('hex'),
     ...(bytes.includes(0) || !Buffer.from(text, 'utf8').equals(bytes) ? { binary: true } : { binary: false, text }) }];
 }
@@ -53,9 +59,10 @@ function resultFile(root: string, head: string, path: string): JsonValue[] {
 export async function admitPublicationInput(contract: Contract, filter: ReadAccessFilter | undefined, signal: AbortSignal,
   judge: (evidence: JsonValue & object) => Promise<(() => void) | null>): Promise<PublicationInputAdmission | null> {
   assertContractInputAdmission(contract);
-  const scope = goalObligationSource(contract), originalScope = hashState(scope);
+  const scope = goalObligationSource(contract), originalScope = hashState(scope), acceptedEvidence = acceptedPublicationEvidence(contract);
   const assertScope = () => {
     if (hashState(goalObligationSource(contract)) !== originalScope) throw new Error('original publication scope changed during assessment');
+    if (acceptedPublicationEvidence(contract) !== acceptedEvidence) throw new Error('accepted publication answer or check changed during assessment');
   };
   const original = contract.inputSnapshot, view = contract.worktreePath, branch = contract.branch;
   if (!original || !view || !branch || !filter) throw new Error('publication recovery requires its captured result and original-owner authority');
@@ -75,8 +82,15 @@ export async function admitPublicationInput(contract: Contract, filter: ReadAcce
   const authority = await createContractInputAuthority(contract, view, { signal, mutable: true, branch });
   let assertCurrent: () => void = () => signal.throwIfAborted();
   try {
+    const paths = [...new Set([...changed, ...targets])];
+    for (const path of paths) await authorizeContractInputPath(authority, path, filter, signal);
+    const publicationTree = owner.inputTree === original.inputTree ? git(view, ['rev-parse', `${resultHead}^{tree}`]).trim()
+      : await mergePublicationTree(original.sourceRoot, original.inputCommit, owner.inputCommit, resultHead, targets, signal);
+    const proposedPaths = git(original.sourceRoot, ['diff', '--name-only', '--no-ext-diff', '--no-textconv', '--no-renames', '-z',
+      owner.inputCommit, publicationTree, '--']).split('\0').filter(Boolean);
+    if (proposedPaths.some(path => !targets.includes(path))) throw new Error('Publication merge changes a path outside the accepted result.');
     const observations: JsonValue[] = [];
-    for (const path of [...new Set([...changed, ...targets])]) {
+    for (const path of paths) {
       await authorizeContractInputPath(authority, path, filter, signal);
       const currentOwner = currentFileObservations(original.sourceRoot, [path], { includeText: true });
       const expected = after.get(path);
@@ -88,7 +102,8 @@ export async function admitPublicationInput(contract: Contract, filter: ReadAcce
       observations.push({ path, ownerChanged: changed.includes(path), resultChanged: targets.includes(path),
         original: before.get(path) ? { kind: before.get(path)!.kind, mode: before.get(path)!.mode, digest: before.get(path)!.digest ?? null } : null,
         currentOwner,
-        acceptedResult: resultFile(original.sourceRoot, resultHead, path) });
+        acceptedResult: resultFile(original.sourceRoot, resultHead, path),
+        proposedPublication: resultFile(original.sourceRoot, publicationTree, path, 'publicationTree') });
     }
     await assertContractInputOwner(owner, signal);
     if (git(view, ['rev-parse', 'HEAD']).trim() !== resultHead) throw new Error('accepted result changed during publication recovery');
@@ -99,9 +114,9 @@ export async function admitPublicationInput(contract: Contract, filter: ReadAcce
       const qualified = await judge({ originalScope: scope,
         acceptedResult: { answer: contract.answer ?? renderContractAnswer(contract), check: contract.checks.at(-1) as unknown as JsonValue ?? null,
           resultHead, resultPaths: targets },
-        ownerChange: { originalInputTree: original.inputTree, currentOwnerTree: owner.inputTree, paths: changed,
+        ownerChange: { originalInputTree: original.inputTree, currentOwnerTree: owner.inputTree, proposedPublicationTree: publicationTree, paths: changed,
           observations, ownerHeadAdvanced: owner.ownerHead !== original.ownerHead },
-        meaning: 'Actual current-owner and accepted-result observations. Publication must preserve the current owner files, index and history. The result delta is still relative to the ORIGINAL captured input and will be applied only after Git verifies it fits the current owner. Original source, scope and accepted units are unchanged. This check judges whether the observed owner changes leave the requested result valid or require a focused integration repair; it does not execute publication or assume missing evidence.' });
+        meaning: 'Actual current-owner, accepted-result and proposed native-merged publication observations. The proposedPublication entries show the exact merged candidate to judge against every original obligation and accepted answer. Git computed this candidate from the ORIGINAL captured input, current owner and unchanged accepted result. A clean merge is not semantic approval. Publication applies only the current-owner-to-candidate delta on accepted result paths after Git verifies it fits; other owner files, index and history remain untouched. Original source, scope, accepted units and result branch are unchanged. This check must hold an invalidated behavior, stale answer claim or missing compatibility evidence; it does not execute publication.' });
       if (!qualified) return null;
       assertCurrent = qualified;
     }
@@ -110,17 +125,18 @@ export async function admitPublicationInput(contract: Contract, filter: ReadAcce
     await assertContractInputOwner(owner, signal);
     assertContractInputAdmission(contract);
     if (git(view, ['rev-parse', 'HEAD']).trim() !== resultHead) throw new Error('accepted result changed after publication assessment');
-    const token = Object.freeze({ kind: 'publication-input-admission' as const });
-    admissions.set(token, { contract, original, owner, serializedOwner: JSON.stringify(owner), resultHead,
-      originalScope, assertCurrent, used: false });
+    const token = freezeAdmission({ kind: 'publication-input-admission' as const, publicationTree });
+    applyAdmission(setAdmission, admissions, [token, { contract, original, owner, serializedOwner: JSON.stringify(owner), resultHead,
+      publicationTree, originalScope, acceptedEvidence, assertCurrent, used: false }]);
     return token;
   } finally { revokeContractInputAuthority(authority); }
 }
 
 export function publicationInputOwner(token: PublicationInputAdmission, contract: Contract): ContractInputSnapshot {
-  const admission = admissions.get(token);
+  const admission = readAdmission(token);
   if (!admission || admission.used || admission.contract !== contract || admission.original !== contract.inputSnapshot
-    || admission.originalScope !== hashState(goalObligationSource(contract)) || JSON.stringify(admission.owner) !== admission.serializedOwner)
+    || admission.publicationTree !== token.publicationTree || admission.originalScope !== hashState(goalObligationSource(contract))
+    || admission.acceptedEvidence !== acceptedPublicationEvidence(contract) || JSON.stringify(admission.owner) !== admission.serializedOwner)
     throw new Error('publication input admission is stale or belongs to another result');
   assertContractInputAdmission(contract); admission.assertCurrent();
   if (!contract.worktreePath || git(contract.worktreePath, ['rev-parse', 'HEAD']).trim() !== admission.resultHead)
@@ -130,5 +146,5 @@ export function publicationInputOwner(token: PublicationInputAdmission, contract
 
 export function consumePublicationInput(token: PublicationInputAdmission, contract: Contract): void {
   publicationInputOwner(token, contract);
-  admissions.get(token)!.used = true;
+  readAdmission(token)!.used = true;
 }
