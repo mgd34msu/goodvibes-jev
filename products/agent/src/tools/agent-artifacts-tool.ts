@@ -4,6 +4,8 @@ import { dirname, join } from 'node:path';
 import type { ArtifactDescriptor, ArtifactRecord, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import type { ToolRegistry, ToolExecuteOptions } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { ToolInputProjectionError } from '@goodvibes-jev/engine/sdk/platform/tools';
+import { captureOwnedJson } from '@goodvibes-jev/engine/sdk/platform/gate';
 import { agentArtifactEffectGuard, assertAgentArtifactBytes, captureAgentArtifactSource, captureAgentExportPath } from './agent-artifact-effect.ts';
 import {
   createZipArchive,
@@ -11,6 +13,7 @@ import {
   safeArtifactExportFilename,
   sanitizeArtifactMetadata,
   sanitizeArtifactSourceUri,
+  prepareArtifactMetadata,
   type ArtifactPackageEntry,
 } from './artifact-archive.ts';
 
@@ -185,14 +188,15 @@ function describeArtifact(artifact: ArtifactDescriptor, options: { readonly incl
     `  filename ${artifact.filename ?? '(none)'}`,
     `  created ${isoTime(artifact.createdAt)}`,
     `  purpose ${purpose || '(none)'}`,
-    `  source ${source || artifact.sourceUri || '(none)'}`,
+    `  source ${source || sanitizeArtifactSourceUri(artifact.sourceUri) || '(none)'}`,
     `  sha256 ${artifact.sha256}`,
     ...(options.includeRoute ? [`  inspect agent_artifacts mode:"show" artifactId:"${artifact.id}" includeContent:true`] : []),
     ...(options.includeRoute ? [`  export agent_artifacts mode:"export" artifactId:"${artifact.id}" destinationPath:"${exportPath}"`] : []),
   ];
 }
 
-function formatList(artifacts: readonly ArtifactDescriptor[], total: number, args: AgentArtifactsToolArgs): string {
+async function formatList(artifacts: readonly ArtifactDescriptor[], total: number, args: AgentArtifactsToolArgs,
+  options: Parameters<typeof prepareArtifactMetadata>[1]): Promise<string> {
   if (artifacts.length === 0) {
     return [
       'Agent artifact browser',
@@ -210,7 +214,10 @@ function formatList(artifacts: readonly ArtifactDescriptor[], total: number, arg
     '',
   ];
   for (const artifact of artifacts) {
-    lines.push(...describeArtifact(artifact, { includeRoute: true }), '');
+    const metadata = await prepareArtifactMetadata(artifact.metadata, options);
+    const protectedArtifact = { ...artifact, metadata: metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata)
+      ? metadata as Record<string, unknown> : {} };
+    lines.push(...describeArtifact(protectedArtifact, { includeRoute: true }), '');
   }
   if (artifacts.length > 1) {
     lines.push(
@@ -233,17 +240,20 @@ async function loadArtifact(store: AgentArtifactBrowserStore, artifactId: string
   return descriptor ? { descriptor } : null;
 }
 
-function formatShow(loaded: LoadedArtifact, args: AgentArtifactsToolArgs): string {
+async function formatShow(loaded: LoadedArtifact, args: AgentArtifactsToolArgs, options: Parameters<typeof prepareArtifactMetadata>[1]): Promise<string> {
+  const metadata = await prepareArtifactMetadata(loaded.descriptor.metadata, options);
+  const descriptor = { ...loaded.descriptor, metadata: metadata !== null && typeof metadata === 'object' && !Array.isArray(metadata)
+    ? metadata as Record<string, unknown> : {} };
   const previewBytes = clamp(readNumber(args.previewBytes, DEFAULT_PREVIEW_BYTES), 1, MAX_PREVIEW_BYTES);
   const lines = [
     'Agent artifact',
-    ...describeArtifact(loaded.descriptor, { includeRoute: false }),
+    ...describeArtifact(descriptor, { includeRoute: false }),
     `  expires ${loaded.descriptor.expiresAt ? isoTime(loaded.descriptor.expiresAt) : '(none)'}`,
     `  acquisition ${loaded.descriptor.acquisitionMode}`,
     `  fetch ${loaded.descriptor.fetchMode}`,
-    `  sourceUri ${loaded.descriptor.sourceUri ?? '(none)'}`,
+    `  sourceUri ${sanitizeArtifactSourceUri(loaded.descriptor.sourceUri) ?? '(none)'}`,
     '  metadata',
-    JSON.stringify(sanitizeArtifactMetadata(loaded.descriptor.metadata), null, 2).split('\n').map((line) => `    ${line}`).join('\n'),
+    JSON.stringify(metadata, null, 2).split('\n').map((line) => `    ${line}`).join('\n'),
     '',
     'Content',
     contentPreview(loaded.descriptor, loaded.buffer, previewBytes).split('\n').map((line) => `  ${line}`).join('\n'),
@@ -316,9 +326,10 @@ async function loadArtifactsForPackage(
   return loaded;
 }
 
-function buildArtifactPackagePayload(
+async function buildArtifactPackagePayload(
   loaded: readonly { readonly record: ArtifactRecord; readonly buffer: Buffer }[],
-): ArtifactPackagePayload {
+  options: Parameters<typeof prepareArtifactMetadata>[1],
+): Promise<ArtifactPackagePayload> {
   const usedFilenames = new Set<string>();
   const manifestArtifacts: Array<Record<string, unknown>> = [];
   const entries: ArtifactPackageEntry[] = [];
@@ -346,7 +357,7 @@ function buildArtifactPackagePayload(
       acquisitionMode: record.acquisitionMode,
       fetchMode: record.fetchMode,
       sourceUri: sanitizeArtifactSourceUri(record.sourceUri) ?? null,
-      metadata: sanitizeArtifactMetadata(record.metadata),
+      metadata: await prepareArtifactMetadata(record.metadata, options),
     });
   }
 
@@ -360,7 +371,7 @@ function buildArtifactPackagePayload(
     policy: {
       content: 'Exact saved artifact bytes copied into artifacts/.',
       transcript: 'Artifact contents are not printed by the export tool.',
-      metadata: 'Secret-like metadata keys and URL query parameters are redacted in this manifest.',
+      metadata: 'Unknown metadata roles and URL query values are withheld; declared text passes export screening.',
       retention: 'Original saved artifacts are retained in the Agent artifact store.',
     },
     artifacts: manifestArtifacts,
@@ -415,6 +426,7 @@ async function exportArtifactPackage(
   args: AgentArtifactsToolArgs,
   options: AgentArtifactsToolOptions,
   assertCurrent: () => void,
+  signal?: AbortSignal,
 ): Promise<string> {
   assertCurrent();
   if (!options.projectRoot) throw new Error('Artifact package export requires a projectRoot for path validation.');
@@ -438,7 +450,7 @@ async function exportArtifactPackage(
   const sources = loaded.map(source => captureAgentArtifactSource(store, source.record));
   const check = (path = resolvedPath) => { assertCurrent(); for (const source of sources) source(); target.assertCurrent(path); };
   check();
-  const payload = buildArtifactPackagePayload(loaded);
+  const payload = await buildArtifactPackagePayload(loaded, { signal, assertCurrent: check });
   await writeArtifactPackageDirectory(resolvedPath, payload, check, overwrite);
   const artifactDir = join(resolvedPath, 'artifacts');
 
@@ -459,6 +471,7 @@ async function exportArtifactArchive(
   args: AgentArtifactsToolArgs,
   options: AgentArtifactsToolOptions,
   assertCurrent: () => void,
+  signal?: AbortSignal,
 ): Promise<string> {
   assertCurrent();
   if (!options.projectRoot) throw new Error('Artifact archive export requires a projectRoot for path validation.');
@@ -482,7 +495,7 @@ async function exportArtifactArchive(
   const sources = loaded.map(source => captureAgentArtifactSource(store, source.record));
   const check = (path = resolvedPath) => { assertCurrent(); for (const source of sources) source(); target.assertCurrent(path); };
   check();
-  const payload = buildArtifactPackagePayload(loaded);
+  const payload = await buildArtifactPackagePayload(loaded, { signal, assertCurrent: check });
   const archive = createZipArchive(payload.entries);
   check();
   await mkdir(dirname(resolvedPath), { recursive: true });
@@ -592,26 +605,45 @@ export function createAgentArtifactsTool(
       try {
         if (mode === 'list') {
           if (!artifactStore.list) return failure('Artifact list is unavailable in this runtime.');
+          const originalArgs = JSON.stringify(captureOwnedJson(rawArgs));
           const limit = clamp(readNumber(args.limit, DEFAULT_LIST_LIMIT), 1, 100);
           const source = artifactStore.list(Math.max(limit * 4, limit));
           const filtered = source.filter((artifact) => matchesFilter(artifact, args));
-          return output(formatList(filtered.slice(0, limit), filtered.length, args));
+          const selected = filtered.slice(0, limit);
+          const sources = selected.map(artifact => captureAgentArtifactSource(artifactStore, artifact));
+          const assertListCurrent = () => {
+            executionOptions?.signal?.throwIfAborted(); for (const source of sources) source();
+            if (JSON.stringify(captureOwnedJson(rawArgs)) !== originalArgs) throw new ToolInputProjectionError('stale');
+          };
+          assertListCurrent();
+          const text = await formatList(selected, filtered.length, args, { signal: executionOptions?.signal, assertCurrent: assertListCurrent });
+          assertListCurrent();
+          return output(text);
         }
         if (mode === 'show') {
+          const originalArgs = JSON.stringify(captureOwnedJson(rawArgs));
           const artifactId = readString(args.artifactId);
           if (!artifactId) return failure('artifactId is required for mode:"show".');
           const loaded = await loadArtifact(artifactStore, artifactId, readBoolean(args.includeContent));
           if (!loaded) return failure(`Unknown artifact ${artifactId}. Use agent_artifacts mode:"list" to inspect available artifacts.`);
-          return output(formatShow(loaded, args));
+          const sourceCurrent = captureAgentArtifactSource(artifactStore, loaded.descriptor);
+          const assertShowCurrent = () => {
+            executionOptions?.signal?.throwIfAborted(); sourceCurrent();
+            if (JSON.stringify(captureOwnedJson(rawArgs)) !== originalArgs) throw new ToolInputProjectionError('stale');
+          };
+          assertShowCurrent();
+          const text = await formatShow(loaded, args, { signal: executionOptions?.signal, assertCurrent: assertShowCurrent });
+          assertShowCurrent();
+          return output(text);
         }
         if (mode === 'export') {
           return output(await exportArtifactToFile(artifactStore, args, options, assertCurrent));
         }
         if (mode === 'package') {
-          return output(await exportArtifactPackage(artifactStore, args, options, assertCurrent));
+          return output(await exportArtifactPackage(artifactStore, args, options, assertCurrent, executionOptions?.signal));
         }
         if (mode === 'archive') {
-          return output(await exportArtifactArchive(artifactStore, args, options, assertCurrent));
+          return output(await exportArtifactArchive(artifactStore, args, options, assertCurrent, executionOptions?.signal));
         }
         return failure(`Unknown agent_artifacts mode: ${mode || '<missing>'}. Use mode:"list", mode:"show", mode:"export", mode:"package", or mode:"archive".`);
       } catch (error) {

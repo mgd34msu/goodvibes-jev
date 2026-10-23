@@ -1,5 +1,6 @@
 import { deflateRawSync } from 'node:zlib';
 import type { ArtifactDescriptor } from '@goodvibes-jev/engine/sdk/platform/artifacts';
+import { redactStructuredDataAsync, type StructuredRedactionOptions } from '@goodvibes-jev/engine/sdk/platform/utils';
 
 export interface ArtifactPackageEntry {
   readonly path: string;
@@ -7,6 +8,14 @@ export interface ArtifactPackageEntry {
 }
 
 const SENSITIVE_METADATA_KEY = /token|secret|password|authorization|credential|api[-_]?key/i;
+
+/** Apply canonical field withholding and semantic text egress to outbound metadata. */
+export async function prepareArtifactMetadata(value: unknown, options: StructuredRedactionOptions = {}): Promise<unknown> {
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  const result = await redactStructuredDataAsync(value, { ...options, purpose: 'export' });
+  options.signal?.throwIfAborted(); options.assertCurrent?.();
+  return result;
+}
 
 export function sanitizeArtifactMetadata(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(sanitizeArtifactMetadata);
@@ -21,12 +30,15 @@ export function sanitizeArtifactSourceUri(value: string | undefined): string | u
   if (!value) return undefined;
   try {
     const url = new URL(value);
-    for (const key of [...url.searchParams.keys()]) {
-      if (SENSITIVE_METADATA_KEY.test(key)) url.searchParams.set(key, '<redacted>');
-    }
+    if (!['https:', 'http:'].includes(url.protocol)) return '[REDACTED]';
+    url.username = '';
+    url.password = '';
+    // Parameter names cannot establish that their values are public.
+    for (const key of [...url.searchParams.keys()]) url.searchParams.set(key, '[REDACTED]');
+    if (url.hash) url.hash = '[REDACTED]';
     return url.toString();
   } catch {
-    return value.replace(/([?&\s](?:token|secret|password|authorization|credential|api[-_]?key)=)[^\s&]+/gi, '$1<redacted>');
+    return '[REDACTED]';
   }
 }
 

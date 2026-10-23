@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { ArtifactRecord } from '@goodvibes-jev/engine/sdk/platform/artifacts';
-import { createZipArchive, packageArtifactFilename, sanitizeArtifactMetadata, sanitizeArtifactSourceUri, type ArtifactPackageEntry } from './artifact-archive.ts';
+import { createZipArchive, packageArtifactFilename, prepareArtifactMetadata, sanitizeArtifactSourceUri, type ArtifactPackageEntry } from './artifact-archive.ts';
 import type { AgentModelCompareArtifactStore, LoadedComparisonHandoff, SavedComparisonArtifact } from './agent-model-compare-types.ts';
 import { MAX_HANDOFF_ARTIFACT_BYTES, MAX_HANDOFF_DIFF_INPUT_LINES, MAX_HANDOFF_DIFF_ROWS, MAX_HANDOFF_DIFF_SECTION_PREVIEW_CHARS } from './agent-model-compare-types.ts';
 import { isModelCompareHandoffArtifact, isModelCompareRouteDecisionArtifact, toSavedComparisonArtifact } from './agent-model-compare-run.ts';
@@ -344,10 +344,10 @@ export function findRouteDecisionArtifactIdsForHandoff(
   return matches;
 }
 
-export function buildComparisonHandoffArchivePayload(input: {
+export async function buildComparisonHandoffArchivePayload(input: {
   readonly handoff: LoadedComparisonHandoff;
   readonly artifacts: readonly LoadedHandoffArchiveArtifact[];
-}): ComparisonHandoffArchivePayload {
+}, options: Parameters<typeof prepareArtifactMetadata>[1] = {}): Promise<ComparisonHandoffArchivePayload> {
   const usedFilenames = new Set<string>();
   const entries: ArtifactPackageEntry[] = [];
   const manifestArtifacts: Array<Record<string, unknown>> = [];
@@ -379,7 +379,7 @@ export function buildComparisonHandoffArchivePayload(input: {
       acquisitionMode: artifact.record.acquisitionMode,
       fetchMode: artifact.record.fetchMode,
       sourceUri: sanitizeArtifactSourceUri(artifact.record.sourceUri) ?? null,
-      metadata: sanitizeArtifactMetadata(artifact.record.metadata),
+      metadata: await prepareArtifactMetadata(artifact.record.metadata, options),
     });
   }
 
@@ -404,7 +404,7 @@ export function buildComparisonHandoffArchivePayload(input: {
     policy: {
       content: 'Exact saved artifact bytes copied into artifacts/.',
       transcript: 'Artifact contents are not printed by the compare tool.',
-      metadata: 'Secret-like metadata keys and URL query parameters are redacted in this manifest.',
+      metadata: 'Unknown metadata roles and URL query values are withheld; declared text passes export screening.',
       routeMutation: 'No selected model route is changed by this archive.',
       retention: 'Original saved artifacts are retained in the Agent artifact store.',
     },

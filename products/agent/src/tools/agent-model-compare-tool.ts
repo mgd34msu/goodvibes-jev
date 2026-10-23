@@ -587,7 +587,10 @@ export function createAgentModelCompareTool(sourceDeps: AgentModelCompareToolDep
           }
 
           const artifacts = await loadHandoffArchiveArtifacts(deps.artifactStore, handoff, routeDecisionArtifactIds);
-          const payload = buildComparisonHandoffArchivePayload({ handoff, artifacts });
+          const payload = await buildComparisonHandoffArchivePayload({ handoff, artifacts }, {
+            signal: options?.signal, assertCurrent: operation.assertWrite,
+          });
+          operation.assertWrite();
           const archive = createZipArchive(payload.entries);
           const artifact = await saveComparisonHandoffArchiveArtifact({
             artifactStore: deps.artifactStore,

@@ -4,6 +4,9 @@ import { describe, expect, test } from 'bun:test';
 import { existsSync, readFileSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
+import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
+import { fakePort } from '@goodvibes-jev/judgment/testing';
+import { authoredPrivacyAnswer, errorText } from '../helpers/authored-diagnostic-readings.ts';
 import type { ArtifactDescriptor, ArtifactRecord, ArtifactStore } from '@goodvibes-jev/engine/sdk/platform/artifacts';
 import { ToolRegistry } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { createAgentArtifactsTool, registerAgentArtifactsTool } from '../../tools/agent-artifacts-tool.ts';
@@ -62,6 +65,64 @@ class ArtifactBrowserTestStore implements Partial<Pick<ArtifactStore, 'get' | 'l
     return { record, buffer };
   }
 }
+
+test('artifact metadata withholds unknown roles and checks declared text without transmitting recovery material', async () => {
+  const material = 'synthetic violet lantern recovery material';
+  const description = 'An ordinary sample artifact.';
+  const store = new ArtifactBrowserTestStore();
+  store.add({ id: 'metadata-role-fixture', metadata: { accountRecoveryPhrase: material, purpose: material, description } });
+  const privacy = authoredPrivacyAnswer({ parts: [[errorText(description)]] });
+  const readings = fakePort((name, question, state) => {
+    const answer = privacy(name, question, state);
+    if (answer !== undefined) return answer;
+    throw new Error(`Unexpected metadata fixture reading: ${name}`);
+  });
+  const previous = installJudgmentPort(readings.port);
+  try {
+    for (const mode of ['show', 'list']) {
+      const result = await createAgentArtifactsTool(store).execute({ mode, artifactId: 'metadata-role-fixture' });
+      expect(result.success).toBe(true);
+      expect(result.output).not.toContain(material);
+      if (mode === 'show') {
+        expect(result.output).toContain('[REDACTED]');
+        expect(result.output).toContain(description);
+      }
+    }
+    expect(readings.requests.length).toBeGreaterThan(0);
+    expect(readings.requests.some(request => request.context?.battery === 'engine.redaction.field-kind')).toBe(false);
+    expect(JSON.stringify(readings.requests)).not.toContain(material);
+  } finally { installJudgmentPort(previous); }
+});
+
+for (const mode of ['show', 'list']) for (const invalidation of ['source', 'abort'])
+  test(`artifact ${mode} refuses metadata invalidated by ${invalidation} during screening`, async () => {
+    const description = 'A retained sample description.';
+    const store = new ArtifactBrowserTestStore();
+    const record = store.add({ id: 'retained-metadata-fixture', metadata: { description } });
+    const controller = new AbortController();
+    let release!: () => void;
+    let entered!: () => void;
+    const held = new Promise<void>(resolve => { release = resolve; });
+    const arrival = new Promise<void>(resolve => { entered = resolve; });
+    const privacy = authoredPrivacyAnswer({ parts: [[errorText(description)]] });
+    const readings = fakePort(async (name, question, state) => {
+      entered(); await held;
+      const answer = privacy(name, question, state);
+      if (answer === undefined) throw new Error(`Unexpected retained metadata reading: ${name}`);
+      return answer;
+    });
+    const previous = installJudgmentPort(readings.port);
+    try {
+      const pending = createAgentArtifactsTool(store).execute({ mode, artifactId: record.id }, { signal: controller.signal });
+      await arrival;
+      if (invalidation === 'source') record.metadata.description = 'Changed after screening started.';
+      else controller.abort();
+      release();
+      const result = await pending;
+      expect(result.success).toBe(false);
+      expect(result.output).toBeUndefined();
+    } finally { release(); installJudgmentPort(previous); }
+  });
 
 function unzipLocalEntries(buffer: Buffer): Map<string, Buffer> {
   const entries = new Map<string, Buffer>();
@@ -146,7 +207,7 @@ describe('agent_artifacts tool', () => {
     expect(result.success).toBe(true);
     expect(result.output).toContain('Agent artifact');
     expect(result.output).toContain('report.md');
-    expect(result.output).toContain('"apiKey": "<redacted>"');
+    expect(result.output).toContain('"apiKey": "[REDACTED]"');
     expect(result.output).toContain('First line');
     expect(result.output).toContain('more)');
     expect(result.output).not.toContain('secret-value');
@@ -269,8 +330,8 @@ describe('agent_artifacts tool', () => {
         mimeType: 'text/markdown',
         filename: '../report.md',
         text: '# Report\n\nBody',
-        sourceUri: 'https://example.test/report?token=secret-token&ok=1',
-        metadata: { purpose: 'research', apiKey: 'secret-value', nested: { password: 'nested-secret' } },
+        sourceUri: 'https://fixture-user:fixture-password@example.test/report?token=secret-token&recovery=unknown-query-secret&ok=1',
+        metadata: { purpose: 'research', apiKey: 'secret-value', accountRecoveryPhrase: 'synthetic recovery phrase', nested: { password: 'nested-secret' } },
       });
       store.add({
         id: 'artifact-image',
@@ -299,9 +360,13 @@ describe('agent_artifacts tool', () => {
         readonly artifacts: Array<{ readonly id: string; readonly file: string; readonly metadata: Record<string, unknown>; readonly sourceUri: string }>;
       };
       expect(manifest.artifacts.map((entry) => entry.id)).toEqual(['artifact-report', 'artifact-image']);
-      expect(manifest.artifacts[0]?.metadata.apiKey).toBe('<redacted>');
-      expect((manifest.artifacts[0]?.metadata.nested as Record<string, unknown>).password).toBe('<redacted>');
-      expect(manifest.artifacts[0]?.sourceUri).toContain('token=%3Credacted%3E');
+      expect(manifest.artifacts[0]?.metadata.apiKey).toBe('[REDACTED]');
+      expect(manifest.artifacts[0]?.metadata.accountRecoveryPhrase).toBe('[REDACTED]');
+      expect((manifest.artifacts[0]?.metadata.nested as Record<string, unknown>).password).toBe('[REDACTED]');
+      expect(manifest.artifacts[0]?.sourceUri).toContain('token=%5BREDACTED%5D');
+      expect(JSON.stringify(manifest)).not.toContain('fixture-password');
+      expect(JSON.stringify(manifest)).not.toContain('unknown-query-secret');
+      expect(JSON.stringify(manifest)).not.toContain('synthetic recovery phrase');
       const reportFile = manifest.artifacts.find((entry) => entry.id === 'artifact-report')?.file;
       const imageFile = manifest.artifacts.find((entry) => entry.id === 'artifact-image')?.file;
       expect(reportFile).toBeTruthy();
@@ -379,8 +444,8 @@ describe('agent_artifacts tool', () => {
         readonly artifacts: Array<{ readonly id: string; readonly file: string; readonly metadata: Record<string, unknown>; readonly sourceUri: string }>;
       };
       expect(manifest.artifacts.map((entry) => entry.id)).toEqual(['artifact-report', 'artifact-image']);
-      expect(manifest.artifacts[0]?.metadata.apiKey).toBe('<redacted>');
-      expect(manifest.artifacts[0]?.sourceUri).toContain('token=%3Credacted%3E');
+      expect(manifest.artifacts[0]?.metadata.apiKey).toBe('[REDACTED]');
+      expect(manifest.artifacts[0]?.sourceUri).toContain('token=%5BREDACTED%5D');
       const reportFile = manifest.artifacts.find((entry) => entry.id === 'artifact-report')?.file;
       const imageFile = manifest.artifacts.find((entry) => entry.id === 'artifact-image')?.file;
       expect(entries.get(reportFile ?? '')?.toString('utf-8')).toContain('# Report');
