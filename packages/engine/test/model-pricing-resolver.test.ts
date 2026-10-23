@@ -17,6 +17,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { ProviderRegistry } from '../sdk/src/platform/providers/registry.js';
+import { buildProviderNativeModelDefinition } from '../sdk/src/platform/providers/live-model-discovery.js';
+import { resolvePricing, setModelPricingResolver, setPricingSource } from '../sdk/src/platform/providers/session-cost.js';
 import {
   getCatalogCachePath,
   getCatalogTmpPath,
@@ -92,6 +94,32 @@ function makeCatalogModel(
     maxOutputTokens: 16_384,
   };
 }
+
+test('a free-looking model ID needs published pricing and cannot override the owner price', () => {
+  const id = 'synthetic-variant:free';
+  const root = scratchDir();
+  try {
+    setModelPricingResolver(null); setPricingSource(null);
+    expect(buildProviderNativeModelDefinition('custom', id).tier).not.toBe('free');
+    expect(getCostFromPricingCatalog(id, { models: [] })).toBeNull();
+    expect(resolvePricing(id).priced).toBe(false);
+    const paid = makeCatalogModel(id, 'openai', { input: 3, output: 12 });
+    expect(getCostFromPricingCatalog(id, { models: [paid] })).toEqual({ input: 3, output: 12 });
+    const registry = registryWithCatalog(root, [paid], {
+      'pricing.modelPrices': { [`openai:${id}`]: { input: 1.5, output: 6 } },
+    });
+    setModelPricingResolver(model => registry.resolveModelPricing(model, 'openai'));
+    expect(resolvePricing(id)).toEqual({ pricing: { input: 1.5, output: 6 }, priced: true, source: 'user' });
+    setModelPricingResolver(null);
+    const free = makeCatalogModel(id, 'openrouter', { input: 0, output: 0 }, 'free');
+    setPricingSource(() => [free]);
+    expect(getCostFromPricingCatalog(id, { models: [free] })).toEqual({ input: 0, output: 0 });
+    expect(resolvePricing(id)).toEqual({ pricing: { input: 0, output: 0 }, priced: true, source: 'catalog' });
+  } finally {
+    setModelPricingResolver(null); setPricingSource(null);
+    rmSync(root, { recursive: true, force: true });
+  }
+});
 
 /** Registry with the given catalog models loaded from a warm disk cache. */
 function registryWithCatalog(

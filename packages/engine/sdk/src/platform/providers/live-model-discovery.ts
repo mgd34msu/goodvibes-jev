@@ -433,10 +433,6 @@ export function buildProviderNativeModelDefinition(providerId: string, modelId: 
     contextWindow: knownFallbackContextWindow(providerId, modelId),
     contextWindowProvenance: 'fallback',
     selectable: true,
-    // OpenRouter documents the ':free' suffix for its no-cost variants, a
-    // fixed id convention. Any other model carries no capability label until
-    // routing.model-tier reads it.
-    ...(modelId.endsWith(':free') ? { tier: 'free' as const } : {}),
     // Endpoint catalog facts take precedence over interpreted family fallbacks.
     reasoningEffort: resolveReasoningEffortSpec({ provider: providerId, modelId }),
   };

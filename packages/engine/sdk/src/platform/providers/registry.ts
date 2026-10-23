@@ -641,7 +641,6 @@ export class ProviderRegistry {
     }
     const provider = this.tryGet(providerId);
     if (!provider || !provider.models.includes(resolvedModelId)) return null;
-    const isFree = resolvedModelId.endsWith(':free');
     return this.contextWindowOverrideStore().apply({
       id: resolvedModelId,
       provider: providerId,
@@ -652,7 +651,7 @@ export class ProviderRegistry {
       contextWindow: knownFallbackContextWindow(providerId, resolvedModelId),
       contextWindowProvenance: 'fallback', contextWindowOrigin: { kind: 'family_default' },
       selectable: true,
-      tier: isFree ? 'free' : 'standard',
+      tier: 'standard',
     });
   }
 

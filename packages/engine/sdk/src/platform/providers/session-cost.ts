@@ -177,9 +177,6 @@ interface PricingQuote {
 
 /** Resolve once so an amount and its provenance always describe the same quote. */
 function resolvePricingQuote(modelId: string): PricingQuote {
-  if (modelId.endsWith(':free')) {
-    return { metadata: { pricing: { input: 0, output: 0 }, priced: true, source: 'catalog' } };
-  }
   const resolved = modelPricingResolver?.(modelId);
   if (resolved?.status === 'priced') {
     return {

@@ -91,9 +91,6 @@ export function getCostFromPricingCatalog(
   modelLimitsService?: Pick<ModelLimitsService, 'getPricingForModel'>,
   opts: { debug?: boolean } = {},
 ): CatalogModelPricing | null {
-  if (modelId.endsWith(':free')) {
-    return { input: 0, output: 0 };
-  }
   const exact = catalog.models.find((model) => model.id === modelId);
   if (exact) {
     if (exact.tier === 'free') return { input: 0, output: 0 };
