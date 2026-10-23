@@ -85,7 +85,12 @@ function harness() {
     create: (owned = true, triggerFixSession = false) => owned ? withExternalOperationSource(operation, () => invoke('ci.watches.create', { repo: 'fixture/project', ref: 'main', deliveryChannel: 'web', triggerFixSession })) : invoke('ci.watches.create', { repo: 'fixture/project', ref: 'main', deliveryChannel: 'web', triggerFixSession }),
     counts: () => ({ humanAsks, starts, created }), duringCreate(value: () => void) { beforeCreate = value; },
     rejectedOwnerChecks: () => rejectedOwnerChecks,
-    reject() { config.set('permissions.mode', 'custom'); config.set('permissions.tools.agent', 'deny'); }, hook(value: typeof beforeDecision) { beforeDecision = value; }, changeSource() { goal = 'A different scope'; },
+    reject() {
+      config.set('permissions.mode', 'custom'); config.set('permissions.tools.agent', 'deny');
+      // Establish the completed policy before creating the next operation. A
+      // pending watcher reload correctly cancels an operation already in flight.
+      config.flushConfigFileChanges();
+    }, hook(value: typeof beforeDecision) { beforeDecision = value; }, changeSource() { goal = 'A different scope'; },
   };
 }
 test('actual CI composition admits default red watch without human offer', async () => {
@@ -135,9 +140,10 @@ test('changed exact CI head/run/jobs cannot claim old repair', async () => {
   expect(h.counts()).toEqual({ humanAsks: 0, starts: 0, created: 0 });
 });
 test('explicit policy denial survives an act-capable Jev', async () => {
-  const h = harness(); h.config.set('permissions.mode', 'custom'); h.config.set('permissions.tools.agent', 'deny');
+  const h = harness(); h.reject();
   const { watch } = await h.create(true, true) as { watch: { id: string } };
-  await h.invoke('ci.watches.run', { watchId: watch.id }); expect(h.counts()).toEqual({ humanAsks: 0, starts: 0, created: 0 });
+  expect(await h.invoke('ci.watches.run', { watchId: watch.id })).toMatchObject({ fixSessionError: 'CI repair denied by owner policy (config_deny)' });
+  expect(h.counts()).toEqual({ humanAsks: 0, starts: 0, created: 0 });
 });
 test('self-minted source remains usable after triggering tool scope closes', async () => {
   const h = harness(); const watchId = await h.push(); expect(h.counts().starts).toBe(0);
