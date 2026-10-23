@@ -4,7 +4,6 @@ import { judgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/er
 import { ToolRegistry, assertCurrentToolExecution } from '@goodvibes-jev/engine/sdk/platform/tools';
 import { PermissionManager, type PermissionConfigReader } from '@goodvibes-jev/engine/sdk/platform/permissions';
 import { DEFAULT_CONFIG, type GoodVibesConfig } from '@goodvibes-jev/engine/sdk/platform/config';
-import { ActivityLogger, fieldKind } from '@goodvibes-jev/engine/sdk/platform/utils';
 import { PolicyRuntimeState } from '@/runtime/index.ts';
 import type { Tool } from '@goodvibes-jev/engine/sdk/platform/types';
 import { SqliteDecisionLog, withDecisionLog } from '@goodvibes-jev/judgment';
@@ -28,44 +27,15 @@ const installJudgmentPort = requestDiagnostics.installPort;
 
 afterAll(cleanupResearchScreeningFixtures);
 let previous: ReturnType<typeof installJudgmentPort>;
-const metadataLoggers: ActivityLogger[] = [];
 beforeEach(() => { requestDiagnostics.beginFixture(); previous = installJudgmentPort(undefined); });
 afterEach(() => {
-  for (const logger of metadataLoggers.splice(0)) logger.dispose();
   installJudgmentPort(previous);
   requestDiagnostics.endFixture();
 });
 
-function nativeMetadataReading() {
-  const logger = new ActivityLogger();
-  metadataLoggers.push(logger);
-  logger.debug('Synthetic catalog metadata', { battery: 'Synthetic catalog operation' });
-}
-
-type ObservedRequest = ReturnType<typeof fakePort>['requests'][number];
-
-/** Only the native reader's complete public field-name request is ancillary. */
-function isMetadataPrivacyRequest(request: ObservedRequest): boolean {
-  if (request.context?.battery !== fieldKind.name) return false;
-  expect(request.model).toBe(fieldKind.model);
-  expect(request.context).toEqual({ battery: fieldKind.name, batteryVersion: fieldKind.version,
-    pattern: 'battery', site: fieldKind.name });
-  expect(request.questions).toEqual({ kind: fieldKind.items.kind.question });
-  expect(request.state).toEqual({ field: 'battery' });
-  return true;
-}
-
-function operationRequests(requests: readonly ObservedRequest[]): ObservedRequest[] {
-  return requests.filter(request => !isMetadataPrivacyRequest(request));
-}
-
 function readings(fits: Readonly<Record<string, number>>) {
   return requestDiagnostics.track(fakePort((name, question, state) => {
     if (name === 'match') return noulAnswer(fits[(state as unknown as { candidate: { name: string } }).candidate.name] ?? 0.01);
-    if (question === fieldKind.items.kind.question) {
-      expect(state).toEqual({ field: 'battery' });
-      return choiceAnswer(question, 'other', 0.999);
-    }
     if (question.type === 'choice') return choiceAnswer(question, name === 'disposition' ? 'act' : name === 'kind' ? 'read' : name === 'hazard' ? 'none' : 'generic', 0.999);
     return noulAnswer(0.001);
   }), 'readings');
@@ -118,22 +88,6 @@ function suspended() {
   const gate = new Promise<void>(resolve => { release = resolve; });
   return { start, release, started, gate };
 }
-
-test('native metadata attribution retains unexpected questions and complete private payloads', async () => {
-  const fake = readings({}), wait = suspended();
-  installJudgmentPort({ ...fake.port, async ask(request) {
-    const result = await fake.port.ask(request); wait.start(); return result;
-  } });
-  nativeMetadataReading(); await wait.started;
-  const request = fake.requests[0];
-  if (!request) throw new Error('The actual logger did not request field-name privacy.');
-  expect(fake.requests).toHaveLength(1);
-  expect(operationRequests(fake.requests)).toHaveLength(0);
-  expect(() => operationRequests([{ ...request, state: { field: 'battery', unusedPrivatePayload: 'synthetic-private-payload' } }])).toThrow();
-  expect(() => operationRequests([{ ...request, questions: { kind: { ...fieldKind.items.kind.question, instructions: 'Unrelated native question' } } }])).toThrow();
-  expect(() => operationRequests([{ ...request, state: { field: 'unusedPrivateContext' } }])).toThrow();
-  expect(operationRequests([{ ...request, context: { ...request.context, battery: 'unrelated-native-reader' } }])).toHaveLength(1);
-});
 
 test.each(['private-extra', 'accessor-extra', 'hidden-extra'] as const)('canonical catalog response admission refuses %s before publishing a match', async kind => {
   let touched = 0, published = 0;
@@ -231,14 +185,13 @@ describe('P11 actual catalog consumers', () => {
     const privateText = 'synthetic-private-comms-payload';
     const screening = researchScreeningFixture({ spans: exactSensitiveSpans([privateText]) });
     const f = fixture(screening.owner); const fake = readings({}); installJudgmentPort(fake.port);
-    nativeMetadataReading();
     registerAgentHarnessTool(f.registry, f.commands, f.context);
     await expect(f.registry.prepareCall(`private-comms-${mode}`, 'agent_harness', {
       mode, draftId: 'isolated-draft', channelProfile: 'isolated-profile', routeKey: 'isolated-route',
       body: 'Public draft', unusedPrivateContext: privateText, confirm: true, explicitUserRequest: 'Caller annotation',
     })).rejects.toThrow();
     expect(JSON.stringify(screening.calls)).toContain(privateText);
-    expect(operationRequests(fake.requests)).toHaveLength(0);
+    expect(fake.requests).toHaveLength(0);
     expect(JSON.stringify(fake.requests)).not.toContain(privateText); expect(f.executed).toEqual([]);
   });
 
@@ -436,9 +389,8 @@ test.each(['commands', 'tools'] as const)('actual %s detail rejects replaced cat
   if (mode === 'commands') Object.defineProperty(f.commands.get('opaque_operation')!, 'name', { get() { accessed++; return 'opaque_operation'; } });
   else Object.defineProperty(f.registry.list()[0]!, 'definition', { get() { accessed++; return {}; } });
   const fake = readings({ opaque_operation: 0.99 }); installJudgmentPort(fake.port);
-  nativeMetadataReading();
   await expect(f.harness.execute({ mode: mode === 'commands' ? 'command' : 'tool', query: 'search inbox' })).rejects.toThrow();
-  expect(accessed).toBe(0); expect(operationRequests(fake.requests)).toHaveLength(0);
+  expect(accessed).toBe(0); expect(fake.requests).toHaveLength(0);
 });
 
 test.each(['default', 'enum'] as const)('full declared credential schema %s is refused before local projection and hosted ranking', async field => {
@@ -463,14 +415,12 @@ test('real large host catalog keeps canonical eight-request backpressure and can
   let active = 0, maxActive = 0, dispatched = 0;
   const fake = readings({ 'services.status': 0.99 });
   installJudgmentPort({ ...fake.port, ask: async request => {
-    if (isMetadataPrivacyRequest(request)) return fake.port.ask(request);
     expect(request.context?.battery).toBe('engine.tools.registry-rank');
     expect(request.context?.site).toBe('agent.harness.operator-methods');
     active++; dispatched++; maxActive = Math.max(maxActive, active);
     if (dispatched === 8) wait.start();
     try { await wait.gate; return await fake.port.ask(request); } finally { active--; }
   } });
-  nativeMetadataReading();
   const pending = f.host.execute({ action: 'methods', query: 'search inbox', limit: 1 }, { signal: controller.signal });
   try {
     await Promise.race([wait.started, pending.then(() => { throw new Error('The real catalog completed before eight rank requests'); })]);

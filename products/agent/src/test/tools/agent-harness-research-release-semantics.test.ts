@@ -33,8 +33,8 @@ const schemaQuestion = noul('Read the complete candidate evidence. Does its expl
 const selectFit = 'Does this existing candidate actually represent the record requested by the complete query, including its purpose, state, and supplied evidence? A shared word or a suggested action is insufficient.';
 const selectionQuestions = {
   pick: choice('The context contains the complete lookup query and available catalog records. Select the one candidate the query means. Read its complete meaning and evidence, rather than matching shared words. Choose none if no record fits or the query does not distinguish one record. Candidate IDs are local indexes. Selecting a record grants no permission and does not execute any route.', { '0': null, '1': null, none: 'None of the candidates does what is needed.' }),
-  fits_0: noul({ question: selectFit, candidate: '`candidates[0]` (id "0")' }),
-  fits_1: noul({ question: selectFit, candidate: '`candidates[1]` (id "1")' }),
+  fits_0: noul({ question: 'Apply the complete selectionFitInstructions in state to this exact candidate.', candidate: '`candidates[0]` (id "0")' }),
+  fits_1: noul({ question: 'Apply the complete selectionFitInstructions in state to this exact candidate.', candidate: '`candidates[1]` (id "1")' }),
 };
 function installRanks(query: string, candidates: readonly RecordRow[], probabilities: readonly number[]) {
   const exact = new Map(candidates.map((row, index) => [JSON.stringify({ query, candidate: {
@@ -50,7 +50,7 @@ function installRanks(query: string, candidates: readonly RecordRow[], probabili
 function installSelection(query: string, candidates: readonly RecordRow[], selected: string, confidence = 0.99) {
   const state = { context: { query }, candidates: candidates.map((row, index) => ({ id: String(index),
     content: JSON.stringify({ ...describeRow(row), record: row }),
-  })) };
+  })), selectionFitInstructions: selectFit };
   const port = fakePort((name, question, input) => {
     if (JSON.stringify(input) !== JSON.stringify(state)) throw new Error('Unexpected complete synthetic detail state');
     if (name === 'pick' && JSON.stringify(question) === JSON.stringify(selectionQuestions.pick)) return choiceAnswer(question, selected, confidence);

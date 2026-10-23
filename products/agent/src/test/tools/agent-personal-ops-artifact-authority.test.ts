@@ -25,14 +25,14 @@ beforeEach(() => {
   decisions = new SqliteDecisionLog(':memory:');
   const answers = fakePort((name, question) => {
     if (question.type === 'choice') {
-      if (name === 'kind' && Object.hasOwn(question.criteria, 'secret')) {
-        onPrivacyRead?.(); return choiceAnswer(question, 'other', 0.999);
-      }
       const value = name === 'disposition' ? 'act' : name === 'kind' ? 'read' : name === 'family' || name === 'capability' ? 'generic' : undefined;
       if (value === undefined || !Object.hasOwn(question.criteria, value)) throw new Error(`Unexpected synthetic choice ${name}`);
       return choiceAnswer(question, value, 0.999);
     }
-    if (question.type === 'noul') return noulAnswer(0.001);
+    if (question.type === 'noul') {
+      if (name === 'lineHasCredential') onPrivacyRead?.();
+      return noulAnswer(0.001);
+    }
     throw new Error(`Unexpected synthetic question ${name}`);
   });
   previous = installJudgmentPort(withDecisionLog(answers.port, decisions));
