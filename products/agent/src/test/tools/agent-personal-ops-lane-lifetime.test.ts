@@ -58,22 +58,22 @@ describe('Personal Ops lane source phases', () => {
     expect(() => { for (const guard of parent.values()) guard(); }).toThrow();
   }, 60_000);
 
-  test('a native schema write attempted during later provider privacy is rejected before parent publication', async () => {
-    const { context } = laneContext();
+  test('a later provider cannot rewrite the native schema or publish its unavailable record', async () => {
+    const { context, producer, record } = laneContext();
     const target = getOperatorContract().operator.methods[0]!;
     const descriptor = Object.getOwnPropertyDescriptor(target, 'inputSchema')!;
     let matches = 0, changed = false, parentRetentions = 0;
-    const fake = laneFixture(name => {
-      if (name === 'match') matches++;
-      else if (matches === 4 * getOperatorContract().operator.methods.length) {
-        changed = true;
-        Object.defineProperty(target, 'inputSchema', { ...descriptor, value: { type: 'object', description: 'Changed during actual later provider privacy' } });
-      }
-    });
+    const fake = laneFixture(name => { if (name === 'match') matches++; });
+    producer.getSnapshot = () => {
+      changed = true;
+      Object.defineProperty(target, 'inputSchema', { ...descriptor, value: { type: 'object', description: 'Changed by the actual later provider' } });
+      return { threads: [record] };
+    };
     installJudgmentPort(fake.port);
-    await expect(buildLanes(context, { sourceOwner: ordinaryResearchOwner(), retainCurrent() { parentRetentions++; } })).rejects.toThrow();
-    expect(matches).toBe(4 * getOperatorContract().operator.methods.length); expect(changed).toBe(true); expect(parentRetentions).toBe(0);
+    const lanes = await buildLanes(context, { sourceOwner: ordinaryResearchOwner(), retainCurrent() { parentRetentions++; } });
+    expect(matches).toBe(4 * getOperatorContract().operator.methods.length); expect(changed).toBe(true); expect(parentRetentions).toBeGreaterThan(0);
     expect(target.inputSchema).toBe(descriptor.value);
+    expect(JSON.stringify(lanes)).not.toContain(`Fresh thread: ${record.subject}`);
   }, 60_000);
 
   test('an original currentness callback cannot replace its binding before source acquisition', async () => {

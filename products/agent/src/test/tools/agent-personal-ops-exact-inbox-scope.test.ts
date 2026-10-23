@@ -164,19 +164,17 @@ describe('Personal Ops exact native inbox contract dependencies', () => {
     expect(source.counters.calls).toBe(0);
   }, 60_000);
 
-  test('query and target reads retain full populations and the same selected record boundary', async () => {
+  test.each([{ query: readId }, { target: readId }, { recordId: readId, query: 'synthetic extra lookup' }])('record lookup %j retains full populations and the exact selected record boundary', async lookup => {
     const source = fixture();
     const exactReader = reader(source); installJudgmentPort(exactReader.fake.port);
     const exact = await runPersonalOpsRead(source.context, { laneId: 'inbox', recordId: readId,
       fields: { reference: 'synthetic-thread' } }, readingOptions());
     expect(exact).toMatchObject({ status: 'needs_admission' });
-    for (const lookup of [{ query: readId }, { target: readId }, { recordId: readId, query: 'synthetic extra lookup' }]) {
       const fullReader = reader(source); installJudgmentPort(fullReader.fake.port);
       expect(await runPersonalOpsRead(source.context, { laneId: 'inbox', ...lookup,
         fields: { reference: 'synthetic-thread' } }, readingOptions())).toEqual(exact);
       expect(fullReader.seen.size).toBe(fullReader.native.length);
       expect([...fullReader.seen.values()].every(count => count === 4)).toBe(true);
-    }
     expect(source.counters.calls).toBe(0);
   }, 60_000);
 

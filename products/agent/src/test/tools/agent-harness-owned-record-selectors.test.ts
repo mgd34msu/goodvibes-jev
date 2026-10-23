@@ -163,7 +163,7 @@ describe('owned canonical route and record selectors', () => {
       const f = fixture(), fake = readings({ [seam.chosen]: 0.999 }), store = createRuntimeStore(), dispatch = createDomainDispatch(store);
       const original: RuntimeTask = { id: 'native-task', kind: 'exec', title: 'Complete native original', status: 'queued', owner: 'native-test', cancellable: true, childTaskIds: [], queuedAt: 4001 };
       dispatch.syncRuntimeTask(original);
-      const model = createStoreBackedUiReadModel(store, () => ({ records: [...store.getState().tasks.tasks.values()].map(task => ({ ...nativeRecord(task.title), nativeTask: task })) }));
+      const model = createStoreBackedUiReadModel(store, () => ({ records: [...store.getState().tasks.tasks.values()].map(task => ({ ...nativeRecord(task.title), tasks: [task] })) }));
       seam.mount(f, model); installJudgmentPort(fake.port); const guards: Array<() => void> = [];
       await seam.run(f, { ...options(), retainCurrent: (guard: () => void) => { guards.push(guard); } });
       dispatch.dispatchAgentEvent({ type: 'AGENT_SPAWNING', agentId: 'unrelated-native-domain', task: 'Unrelated domain' });
@@ -269,8 +269,7 @@ describe('owned canonical route and record selectors', () => {
     });
     test(`${entry.kind} preserves exact IDs and literal lists when semantic matching is unavailable`, async () => {
       const f = fixture();
-      await expect(entry.summary(f, { query: 'mail' }, options())).rejects.toBeInstanceOf(
-        entry.kind === 'orchestration' ? ToolInputProjectionError : JudgmentPortMissingError);
+      await expect(entry.summary(f, { query: 'mail' }, options())).rejects.toBeInstanceOf(JudgmentPortMissingError);
       if (entry.kind === 'orchestration') installJudgmentPort(recordSupportReadings().port);
       const literalOptions = entry.kind === 'orchestration' ? options() : {};
       expect((await entry.summary(f, {}, literalOptions)).total).toBeGreaterThan(0);
@@ -506,7 +505,7 @@ describe('owned canonical route and record selectors', () => {
       metadata: { purpose: 'connected-host-remote-runner-closeout-receipt', runnerId: 'opaque-worker',
         summary: index === 0 ? 'Complete oldest receipt outside the former shortlist' : `Complete native receipt ${index}` },
     }));
-    Object.defineProperty(receipts[0]!, 'hiddenEvidence', { value: 'Complete hidden native receipt evidence', enumerable: false });
+    Object.defineProperty(receipts[0]!, 'description', { value: 'Complete hidden native receipt evidence', enumerable: false });
     Object.assign(f.context.platform, { artifactStore: { list: () => receipts } });
     const fake = readings({ 'opaque-worker': 0.999 }); installJudgmentPort(fake.port);
     expect(await describeAgentOrchestrationAgent(f.context, { query: 'mail' }, options())).toMatchObject({ status: 'found' });
