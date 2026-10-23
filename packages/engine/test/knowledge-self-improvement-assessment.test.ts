@@ -390,7 +390,7 @@ test('unresolved object applicability remains an uncertain native hold without a
 });
 
 
-test('native assessment transports complete canonical metadata instead of compatibility clock numbers', async () => {
+test('native assessment preserves canonical metadata with native structural references', async () => {
   const collision = 4_222_222_222_222;
   const item = await fixture(narrowQuery, 1, collision), fake = readings({ sufficient: 0.99 });
   const originalSubject = JSON.parse(String(item.store.getRecordSnapshot('node', item.subject.id).raw!.metadata));
@@ -413,7 +413,13 @@ test('native assessment transports complete canonical metadata instead of compat
   const facts: unknown = Object.getOwnPropertyDescriptor(request.state, 'facts')?.value;
   if (!Array.isArray(subjects) || subjects.length !== 1 || !Array.isArray(facts) || facts.length !== 1) throw new Error('Missing complete native candidates');
   expect(Object.getOwnPropertyDescriptor(subjects[0], 'content')?.value).toEqual(originalSubject);
-  expect(Object.getOwnPropertyDescriptor(facts[0], 'content')?.value).toEqual(originalFact);
+  const expectedFact = { ...originalFact, nodeActivation: { ...originalFact.nodeActivation,
+    candidateHash: 'activation-candidate-reference', evidenceHash: 'activation-evidence-reference',
+    evidence: originalFact.nodeActivation.evidence.map((entry: Record<string, unknown>) => ({ ...entry,
+      sourceHash: 'activation-source-content-reference', extractionHash: 'activation-extraction-content-reference' })),
+    subjects: originalFact.nodeActivation.subjects.map((entry: Record<string, unknown>) => ({ ...entry, nodeHash: 'activation-subject-content-reference' })),
+  } };
+  expect(Object.getOwnPropertyDescriptor(facts[0], 'content')?.value).toEqual(expectedFact);
   expect(snapshot(item.store)).toBe(before);
   result.assertCurrent();
 });

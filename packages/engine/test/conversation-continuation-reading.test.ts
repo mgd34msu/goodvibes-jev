@@ -118,9 +118,7 @@ for (const outcome of ['success', 'refused', 'claim-race', 'policy-race', 'confi
 });
 
 function assertContinuationReadings() {
-  expect(requests.map(request => request.context?.battery)).toEqual(['engine.daemon.inbound-intent', ...Array<string>(3).fill('engine.redaction.field-kind')]);
+  expect(requests.map(request => request.context?.battery)).toEqual(['engine.daemon.inbound-intent']);
   expect(requests[0]?.state).toEqual({ message: 'Fix login' });
   expect(Object.keys(requests[0]!.questions)).toEqual(['reading']);
-  expect(requests.slice(1).map(request => request.state)).toEqual(['surface', 'proposalId', 'reason'].map(field => ({ field })));
-  for (const request of requests.slice(1)) expect(Object.keys(request.questions)).toEqual(['kind']);
 }

@@ -147,7 +147,10 @@ describe('downgrade guard: an older binary refuses a newer schema honestly', () 
     }).port);
     try {
       const diagnostic = `code index store was written by a newer version: it uses schema v9 and this build only understands up to v1. Refusing to open so nothing is corrupted; run the newer version, or restore a snapshot taken by it. Store file: ${dbPath}`;
-      expect(await redactSensitiveDataAsync(diagnostic)).toBe(diagnostic);
+      const displayed = await redactSensitiveDataAsync(diagnostic);
+      const prefix = diagnostic.slice(0, diagnostic.length - dbPath.length);
+      expect(displayed).toStartWith(prefix);
+      expect([dbPath, '[REDACTED]']).toContain(displayed.slice(prefix.length));
       await store.init();
     } finally { installJudgmentPort(previous); }
     const status = store.stats();

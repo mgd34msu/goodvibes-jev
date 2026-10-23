@@ -156,7 +156,7 @@ describe('an absent optional dependency does not take the process down', () => {
     expect(run.stdout).toContain('INIT_SURVIVED');
     expect(run.stdout).toContain('AVAILABLE=false');
     expect(run.stdout).toContain('jsdom is not installed');
-    expect(run.stdout).toContain('optional dependency of @pellux/goodvibes-sdk');
+    expect(run.stdout).toContain('optional dependency of @goodvibes-jev/engine');
   });
 
   test('extraction still answers, by the lightweight path, carrying the reason', () => {
@@ -267,7 +267,7 @@ describe('an absent optional client package does not take the process down', () 
     const reasons = lazyRun.stdout.split('\n').filter((line) => line.includes('is not installed'));
     expect(reasons.length).toBeGreaterThanOrEqual(7);
     for (const reason of reasons) {
-      expect(reason).toContain('optional dependency of @pellux/goodvibes-sdk');
+      expect(reason).toContain('optional dependency of @goodvibes-jev/engine');
     }
   });
 });

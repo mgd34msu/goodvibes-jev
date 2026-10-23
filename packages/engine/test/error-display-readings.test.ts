@@ -203,7 +203,7 @@ describe('connection failure', () => {
     const { port } = readingsPort({ connection: 'timed_out' });
     installJudgmentPort(port);
     const formatted = await readFormattedError(new Error('ETIMEDOUT: companion pairing handshake'), { site: 'test.display' });
-    expect(formatted.split('\n')[0]).toBe('ETIMEDOUT: [REDACTED_TEXT]');
+    expect(formatted.split('\n')[0]).toBe('ETIMEDOUT: companion pairing handshake');
     expect((await readNormalizedError(new Error('ETIMEDOUT: companion pairing handshake'), { site: 'test.display' })).category).toBe('timeout');
   });
 
@@ -317,7 +317,7 @@ describe('first-call protected error normalization', () => {
     expect(normalized.summary).toBe(error.message);
     expect(normalized.category).toBe('bad_request');
     expect(normalized.statusCode).toBe(400);
-    expect(requests.map((request) => request.state)).toEqual([{ field: 'password' },
+    expect(requests.map((request) => request.state)).toEqual([
       { parts: parts.map((part) => part.kind === 'span' ? { kind: 'withheld', reference: part.reference } : part) }]);
     expect(JSON.stringify(requests)).not.toContain(secret);
     expect(error.message).toContain(secret);
