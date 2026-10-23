@@ -830,7 +830,9 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
                 publicationChecks: JSON.parse(JSON.stringify(checked.readings)) as JsonValue,
                 remaining: Object.entries(checked.readings).filter(([, reading]) => reading.verdict !== 'no' || reading.outcome !== 'act')
                   .map(([check, reading]) => ({ check, verdict: reading.verdict, outcome: reading.outcome,
-                    required: check === 'incompatible'
+                    required: reading.outcome !== 'act'
+                      ? 'This check remains unsettled. Verify this specific compatibility question from the supplied observations or a targeted read. Do not assume a defect or repeat accepted work.'
+                      : check === 'incompatible'
                       ? 'Resolve the actual incompatibility between the proposed publication, original requirements and pending answer claims.'
                       : 'Obtain the missing current-owner file evidence needed to assess the proposed publication.' })) }, decisionIds });
               return null;

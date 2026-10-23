@@ -5,6 +5,7 @@ import { runtimeEventOfNotice } from '../../sdk/src/platform/runtime/bootstrap-r
 import { makeHarness, oneUnitPlan, startContract, waitFor, type Harness } from './runner-support.js';
 import { finishes, git, terminal } from './steps-support.js';
 import { plannerOutput } from './plan-support.js';
+import { noulAnswer } from '@goodvibes-jev/judgment/testing';
 
 let harness: Harness | undefined;
 afterEach(() => {
@@ -90,6 +91,36 @@ test('a contract publishes independent changes in one file without repeating its
   expect(readFileSync(join(h.root, 'README.md'), 'utf8')).toBe(owner.replace('Original ending', 'Updated ending'));
   expect(readFileSync(join(h.root, '.git/index'))).toEqual(index);
   expect(git(h.root, 'rev-parse', 'HEAD')).toBe(head);
+}, 20_000);
+
+test('an unsettled publication reading asks for verification without inventing an incompatibility', async () => {
+  const plan = oneUnitPlan(1);
+  let planningCalls = 0, repairPrompt = '';
+  const h = (harness = makeHarness({
+    plan, contract: { isolation: 'worktree', autoCommit: false },
+    scripts: { u1: finishes('export const parse = 42;') },
+    port: ({ name }) => name === 'incompatible' ? noulAnswer(0.4) : undefined,
+    planner: {
+      async run(request) {
+        if (++planningCalls === 1) {
+          writeFileSync(join(h.root, 'README.md'), 'Later owner note.\n');
+          return { status: 'completed', output: plannerOutput(plan), elapsedMs: 0 };
+        }
+        repairPrompt = request.userPrompt;
+        if (!request.signal?.aborted) await new Promise<void>(resolve => request.signal!.addEventListener('abort', () => resolve(), { once: true }));
+        return { status: 'cancelled', output: '', elapsedMs: 0 };
+      },
+    },
+  }));
+  const { contract } = startContract(h);
+  await waitFor(() => repairPrompt.length > 0, 'specific publication verification prompt', 15_000);
+  h.runner.cancel(contract.id, 'Finished inspecting the held publication repair prompt.');
+  await h.runner.join(contract.id);
+  expect(repairPrompt).toContain('This check remains unsettled');
+  expect(repairPrompt).toContain('Do not assume a defect');
+  expect(existsSync(join(h.root, 'src/csv.ts'))).toBe(false);
+  expect(readFileSync(join(h.root, 'README.md'), 'utf8')).toBe('Later owner note.\n');
+  expect(h.agentsOf('u1')).toHaveLength(1);
 }, 20_000);
 
 test('conflicting later owner edit retains both owner and contract result without staging or history changes', async () => {

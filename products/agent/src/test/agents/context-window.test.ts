@@ -25,7 +25,7 @@ import { getTestAgentOrchestrator, getTestProviderRegistry, resetTestRuntimeServ
 function makeRecord(overrides: Partial<AgentRecord> = {}): AgentRecord {
   return {
     id: 'g01-test-01',
-    task: 'Write a hello world program',
+    task: 'Reply with a short confirmation.',
     template: 'general',
     tools: [],
     status: 'pending',
@@ -94,16 +94,22 @@ async function withMockProvider<T>(
 ): Promise<T> {
   const reg = getTestProviderRegistry();
   const readDiagnostic = authoredPrivacyAnswer({ parts: [[errorText('401 Unauthorized')]] });
-  const previousPort = installJudgmentPort(fakePort((name, question, state) => {
+  const diagnostics = fakePort((name, question, state) => {
     const diagnostic = readDiagnostic(name, question, state);
     if (diagnostic !== undefined) return diagnostic;
-    const error = String(state);
+    const error = typeof state === 'string' ? state : JSON.stringify(state);
     if (name === 'category') return choiceAnswer(question, error.includes('401') ? 'authentication' : 'bad_request', 0.99);
     if (name === 'connection_failure') return choiceAnswer(question, 'none', 0.99);
     if (name === 'context_exceeded') return noulAnswer(/context|prompt is too long/i.test(error) ? 0.99 : 0.01);
     if (['billing', 'rate_limited', 'transient_network', 'provider_unusable', 'before_response'].includes(name)) return noulAnswer(0.01);
     throw new Error(`Unexpected synthetic error reading: ${name}`);
-  }).port);
+  });
+  const completion = fakePort(() => noulAnswer(0.01));
+  const previousPort = installJudgmentPort({ model: diagnostics.port.model, ask(request) {
+    if (['engine.core.response-completion', 'engine.core.execution-assurance', 'engine.core.delegation-consolidation']
+      .includes(String(request.context?.battery))) return completion.port.ask(request);
+    return diagnostics.port.ask(request);
+  } });
   const origGetForModel = reg.getForModel.bind(reg);
   const origGetCurrentModel = reg.getCurrentModel.bind(reg);
   reg.getForModel = mock(() => provider);
@@ -223,7 +229,7 @@ describe('AgentOrchestrator context-window awareness', () => {
     // The system prompt alone (~250-400 tokens) + task message (~200 tokens)
     // = ~450-600 tokens. 85% of 1000 = 850. We need more.
     // Use a long task (~1600 chars ≈ 400 tokens) to push over 850.
-    const longTask = 'Analyse the codebase thoroughly. '.repeat(50); // ~1650 chars ≈ 413 tokens
+    const longTask = 'Reply with a short confirmation. Context: a harmless note. '.repeat(50);
 
     let responseIdx = 0;
     const provider: LLMProvider = {
