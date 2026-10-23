@@ -1,57 +1,17 @@
 import { z } from '@goodvibes-jev/bash-zod';
-export declare const ConfigSchema: z.ZodObject<{
-    backgroundAnalysisMaxFiles: z.ZodDefault<z.ZodNumber>;
-    enableSourceErrorDiagnostics: z.ZodDefault<z.ZodBoolean>;
-    globPattern: z.ZodDefault<z.ZodString>;
-    explainshellEndpoint: z.ZodDefault<z.ZodString>;
-    logLevel: z.ZodDefault<z.ZodEnum<["debug", "info", "warning", "error"]>>;
-    includeAllWorkspaceSymbols: z.ZodDefault<z.ZodBoolean>;
-    shellcheckArguments: z.ZodDefault<z.ZodEffects<z.ZodArray<z.ZodString, "many">, string[], unknown>>;
-    shellcheckPath: z.ZodDefault<z.ZodString>;
-    shfmt: z.ZodDefault<z.ZodObject<{
-        path: z.ZodDefault<z.ZodString>;
-        ignoreEditorconfig: z.ZodDefault<z.ZodBoolean>;
-        languageDialect: z.ZodDefault<z.ZodEnum<["auto", "bash", "posix", "mksh", "bats"]>>;
-        binaryNextLine: z.ZodDefault<z.ZodBoolean>;
-        caseIndent: z.ZodDefault<z.ZodBoolean>;
-        funcNextLine: z.ZodDefault<z.ZodBoolean>;
-        keepPadding: z.ZodDefault<z.ZodBoolean>;
-        simplifyCode: z.ZodDefault<z.ZodBoolean>;
-        spaceRedirects: z.ZodDefault<z.ZodBoolean>;
-    }, "strip", z.ZodTypeAny, {
-        path: string;
-        ignoreEditorconfig: boolean;
-        languageDialect: "bash" | "auto" | "posix" | "mksh" | "bats";
-        binaryNextLine: boolean;
-        caseIndent: boolean;
-        funcNextLine: boolean;
-        keepPadding: boolean;
-        simplifyCode: boolean;
-        spaceRedirects: boolean;
-    }, {
-        path?: string | undefined;
-        ignoreEditorconfig?: boolean | undefined;
-        languageDialect?: "bash" | "auto" | "posix" | "mksh" | "bats" | undefined;
-        binaryNextLine?: boolean | undefined;
-        caseIndent?: boolean | undefined;
-        funcNextLine?: boolean | undefined;
-        keepPadding?: boolean | undefined;
-        simplifyCode?: boolean | undefined;
-        spaceRedirects?: boolean | undefined;
-    }>>;
-}, "strip", z.ZodTypeAny, {
-    globPattern: string;
-    enableSourceErrorDiagnostics: boolean;
-    includeAllWorkspaceSymbols: boolean;
+export interface Config {
     backgroundAnalysisMaxFiles: number;
+    enableSourceErrorDiagnostics: boolean;
+    globPattern: string;
     explainshellEndpoint: string;
-    logLevel: "debug" | "info" | "warning" | "error";
+    logLevel: 'debug' | 'info' | 'warning' | 'error';
+    includeAllWorkspaceSymbols: boolean;
     shellcheckArguments: string[];
     shellcheckPath: string;
     shfmt: {
         path: string;
         ignoreEditorconfig: boolean;
-        languageDialect: "bash" | "auto" | "posix" | "mksh" | "bats";
+        languageDialect: 'auto' | 'bash' | 'posix' | 'mksh' | 'bats';
         binaryNextLine: boolean;
         caseIndent: boolean;
         funcNextLine: boolean;
@@ -59,28 +19,12 @@ export declare const ConfigSchema: z.ZodObject<{
         simplifyCode: boolean;
         spaceRedirects: boolean;
     };
-}, {
-    globPattern?: string | undefined;
-    enableSourceErrorDiagnostics?: boolean | undefined;
-    includeAllWorkspaceSymbols?: boolean | undefined;
-    backgroundAnalysisMaxFiles?: number | undefined;
-    explainshellEndpoint?: string | undefined;
-    logLevel?: "debug" | "info" | "warning" | "error" | undefined;
+}
+type ConfigInput = Partial<Omit<Config, 'shellcheckArguments' | 'shfmt'>> & {
     shellcheckArguments?: unknown;
-    shellcheckPath?: string | undefined;
-    shfmt?: {
-        path?: string | undefined;
-        ignoreEditorconfig?: boolean | undefined;
-        languageDialect?: "bash" | "auto" | "posix" | "mksh" | "bats" | undefined;
-        binaryNextLine?: boolean | undefined;
-        caseIndent?: boolean | undefined;
-        funcNextLine?: boolean | undefined;
-        keepPadding?: boolean | undefined;
-        simplifyCode?: boolean | undefined;
-        spaceRedirects?: boolean | undefined;
-    } | undefined;
-}>;
-export type Config = z.infer<typeof ConfigSchema>;
+    shfmt?: Partial<Config['shfmt']>;
+};
+export declare const ConfigSchema: z.ZodType<Config, ConfigInput>;
 export declare function getConfigFromEnvironmentVariables(): {
     config: Config;
     environmentVariablesUsed: string[];

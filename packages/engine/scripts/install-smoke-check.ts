@@ -153,7 +153,7 @@ let bashManifest;
 try { bashManifest = engineRequire.resolve('bash-language-server/package.json'); }
 catch { bashManifest = join(packageRoot, 'vendor/bash-language-server/package.json'); }
 const bashRequire = createRequire(bashManifest);
-if (bashRequire('@goodvibes-jev/bash-zod/package.json').version !== '3.24.2' ||
+if (bashRequire('@goodvibes-jev/bash-zod/package.json').version !== '4.6.6' ||
     bashRequire('@goodvibes-jev/bash-web-tree-sitter/package.json').version !== '0.24.5') {
   throw new Error('packaged Bash dependency aliases resolved the wrong versions');
 }

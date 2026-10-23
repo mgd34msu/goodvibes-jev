@@ -120,7 +120,7 @@
     "publint": "0.3.18",
     "typescript": "6.0.3",
     "wrangler": "4.87.0",
-    "zod": "4.4.3"
+    "zod": "4.6.6"
   },
   "dependencies": {
     "brace-expansion": "^5.0.9",
@@ -135,6 +135,7 @@
     "eslint-plugin-jsx-a11y@6.10.2": "Adapt two legacy default imports to the named minimatch function while preserving the patched minimatch 10.x override and all accessibility rules. Bun 1.3.14 does not support scoped overrides; remove this patch when the plugin supports minimatch 10.x."
   },
   "overrides": {
+    "zod": "4.6.6",
     "fast-uri": "^3.1.5",
     "fast-xml-parser": "5.7.1",
     "google-auth-library": "10.6.2",
@@ -150,6 +151,7 @@
     "ip-address": "^10.4.0"
   },
   "overridesRationale": {
+    "zod": "Require 4.6.6 to close GHSA-mrhx-c7xc-m3w5 across existing Zod 4 consumers, including the compatible range retained by eslint-plugin-react-hooks. The vendored Bash server also uses 4.6.6, with its nested configuration defaults preserved during migration.",
     "sharp": "Require 0.35.5 or later in the 0.35.x line to close GHSA-wq5f-xc86-pv6w (librsvg CVE-2026-96889). The prebuilt sharp-libvips 1.3.4 artifacts include patched librsvg 2.63.2. Miniflare 4.20260430.0, used directly and by Wrangler 4.87.0, still requests vulnerable sharp ^0.34.5; remove this override when the dependency graph requires a patched release.",
     "bash-language-server": "Vendored to keep shell language support while preserving a clean high-severity audit surface for the bundled Bash LSP dependency graph.",
     "fast-xml-parser": "Pinned to the audited 5.x parser release used by transitive Google/Cloud tooling.",

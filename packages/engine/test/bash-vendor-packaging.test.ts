@@ -14,7 +14,7 @@ describe('packaged engine Bash dependencies', () => {
     expect(staged.optionalDependencies?.['web-tree-sitter']).toBe('0.26.8');
     expect(staged.optionalDependencies?.unrelated).toBe('1.0.0');
     expect(staged.optionalDependencies?.['bash-language-server']).toBe('file:vendor/bash-language-server');
-    expect(staged.optionalDependencies?.['@goodvibes-jev/bash-zod']).toBe('npm:zod@3.24.2');
+    expect(staged.optionalDependencies?.['@goodvibes-jev/bash-zod']).toBe('npm:zod@4.6.6');
     expect(staged.optionalDependencies?.['@goodvibes-jev/bash-web-tree-sitter']).toBe('npm:web-tree-sitter@0.24.5');
     const vendor = JSON.parse(readFileSync(new URL('../../../vendor/bash-language-server/package.json', import.meta.url), 'utf8')) as { dependencies: Record<string, string> };
     for (const [name, version] of Object.entries(vendor.dependencies)) {

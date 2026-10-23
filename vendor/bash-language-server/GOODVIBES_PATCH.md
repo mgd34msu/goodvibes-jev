@@ -42,11 +42,14 @@ Patch:
   are packaged as source with explicit relative imports between them. Their
   non-vendored leaf dependencies are declared on this package. Braces adds
   finite parser/AST depth checks; see the nested GOODVIBES_PATCH files.
-- Bash's original zod 3.24.2 and web-tree-sitter 0.24.5 dependencies use the
-  npm aliases `@goodvibes-jev/bash-zod` and
-  `@goodvibes-jev/bash-web-tree-sitter`. Runtime and declaration-file imports
-  both use these names, preserving versions independently of the engine's
-  zod 4.4.3 and tree-sitter 0.26.8 dependencies.
+- Bash uses Zod 4.6.6 through `@goodvibes-jev/bash-zod`, closing
+  [GHSA-mrhx-c7xc-m3w5](https://github.com/advisories/GHSA-mrhx-c7xc-m3w5).
+  Nested shfmt defaults use `prefault({})` to preserve the previous parsed
+  defaults under Zod 4. Declaration files retain the same config and diagnostic
+  data shapes with Zod 4 schema types.
+- The original web-tree-sitter 0.24.5 dependency retains its
+  `@goodvibes-jev/bash-web-tree-sitter` alias, independently of the engine's
+  tree-sitter 0.26.8 dependency. Runtime and declaration imports use the alias.
 
 Reason:
 

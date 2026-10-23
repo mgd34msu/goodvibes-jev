@@ -12,6 +12,8 @@
 
 - Release borrowed model-setting subscriptions when runtime startup fails or the runtime shuts down.
 
+- Update Zod to 4.6.6 to address constrained-collection memory exhaustion (GHSA-mrhx-c7xc-m3w5).
+
 - Recover bounded private SQLite allocation collisions without treating a healthy persisted database as corrupt.
 
 - Cancel and drain Home Graph ingest enrichment before foreground publication, reset, or shutdown, retaining pending work for later enrichment.

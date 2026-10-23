@@ -46,7 +46,7 @@ function assertBundledBashLspMitigationManifest(manifest: PackageManifestLike, l
   if (manifest.dependencies?.['bash-language-server'] !== undefined) {
     throw new Error(`${label} must not duplicate bash-language-server in dependencies`);
   }
-  if (manifest.optionalDependencies?.['@goodvibes-jev/bash-zod'] !== 'npm:zod@3.24.2' ||
+  if (manifest.optionalDependencies?.['@goodvibes-jev/bash-zod'] !== 'npm:zod@4.6.6' ||
       manifest.optionalDependencies?.['@goodvibes-jev/bash-web-tree-sitter'] !== 'npm:web-tree-sitter@0.24.5') {
     throw new Error(`${label} must preserve Bash's dependency aliases at the installable engine layer`);
   }

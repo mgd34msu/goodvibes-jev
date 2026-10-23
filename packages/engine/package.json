@@ -1459,7 +1459,7 @@
     "smol-toml": "1.9.1",
     "tar": "7.5.22",
     "undici": "7.30.0",
-    "zod": "4.4.3",
+    "zod": "4.6.6",
     "zustand": "5.0.12"
   },
   "optionalDependencies": {
