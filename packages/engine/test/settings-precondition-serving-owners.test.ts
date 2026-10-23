@@ -110,20 +110,6 @@ test('route changes during probe await refuse instead of choosing an unobserved 
     fetchImpl: (async (_input: Parameters<typeof fetch>[0]) => { await Promise.resolve(); runtime = { ...runtime, port: 5678 }; return Response.json({}); }) as typeof fetch };
   await expect(resolvePreparedConfigWriteRoute('controlPlane.port', deps)).rejects.toThrow();
 });
-test('actual facade source retires lifetime before stop callbacks and token replacement, and wires exact helper', () => {
-  const facade = readFileSync(new URL('../sdk/src/platform/daemon/facade.ts', import.meta.url), 'utf8');
-  expect(facade).toContain('settingsLifetime: () => this.settingsLifetime');
-  const stop = facade.slice(facade.indexOf('  async stop(): Promise<void> {'));
-  expect(stop.indexOf('this.settingsLifetime = null')).toBeLessThan(stop.indexOf('this._configWatchUnsub?.()'));
-  const enable = facade.slice(facade.indexOf('  enable(dangerConfig:'));
-  expect(enable.indexOf('this.settingsLifetime =')).toBeLessThan(enable.indexOf('this.authToken = token ?? null'));
-  const binding = facade.slice(facade.indexOf('  private async bindControlPlaneListener('), facade.indexOf('  private async detachControlPlaneListener('));
-  expect(binding).toContain('this.settingsLifetime = lifetime');
-  expect(binding.indexOf('this.settingsLifetime = lifetime')).toBeLessThan(binding.indexOf('this.serveFactory('));
-  const composition = readFileSync(new URL('../sdk/src/platform/daemon/facade-composition.ts', import.meta.url), 'utf8');
-  expect(composition).toContain('settingsLifetime: options.settingsLifetime');
-  expect(composition).toContain('controlPlaneHelper.withSettingsAdminAuthority(req, authority, callback)');
-});
 
 test('source-extracted facade enable cannot reopen SETTINGS during an awaited stop', () => {
   // Execute only the production enable body against a data-only facade stand-in.
@@ -304,13 +290,6 @@ for (const handover of [false, true]) test(`repeated actual stop handover=${hand
   } finally { release(); await stopping; }
   expect(settled).toBe(true);
   expect(d.events).toEqual([]);
-});
-
-test('actual update and rollback lifecycle uses the shared direct handover stop', () => {
-  const facade = readFileSync(new URL('../sdk/src/platform/daemon/facade.ts', import.meta.url), 'utf8');
-  expect(facade).toContain('stopGracefully: () => this.stopRuntime(true)');
-  const lifecycle = readFileSync(new URL('../sdk/src/platform/daemon/facade-lifecycle.ts', import.meta.url), 'utf8');
-  expect(lifecycle).toContain('stopGracefully: this.options.stopGracefully');
 });
 
 

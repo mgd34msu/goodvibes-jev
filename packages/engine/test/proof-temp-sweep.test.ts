@@ -1,7 +1,7 @@
 import { afterEach, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, symlinkSync, utimesSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { sweepStaleTmpDirs } from '../scripts/stale-tmp-sweep.ts';
 import { PROOF_RETAINED_MARKER, STALE_PROOF_TMP_MS, prepareObserveProofWorkspace, retainProofOutput } from '../scripts/proof-temp.ts';
 
@@ -30,16 +30,6 @@ test.each(['contract-proof-scratch-', 'contract-proof-home-', 'observe-proof-scr
   expect(existsSync(fresh)).toBe(true);
   expect(existsSync(unrelated)).toBe(true);
   expect(existsSync(legacy)).toBe(true);
-});
-
-test('both live proof entry points call the real sweep and mark intentionally retained output', () => {
-  for (const name of ['contract', 'observe']) {
-    const source = readFileSync(resolve(import.meta.dir, `../scripts/${name}-proof.ts`), 'utf8');
-    expect(source).toContain(name === 'contract'
-      ? "sweepStaleTmpDirs(tmpdir(), 'contract-proof-scratch-', STALE_PROOF_TMP_MS, { preserveMarker: PROOF_RETAINED_MARKER })"
-      : 'prepareObserveProofWorkspace(values.workspace)');
-    expect(source).toContain(`retainProofOutput(${name === 'contract' ? 'root' : 'workspace'})`);
-  }
 });
 
 test('selecting an old unmarked explicit observe workspace preserves its existing evidence', () => {

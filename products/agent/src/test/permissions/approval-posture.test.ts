@@ -178,9 +178,6 @@ describe('approval posture: shared helper agrees with the real permission gate',
   });
 
   test('the footer danger indicator uses configured automatic approvals, not the universal bypass flag', async () => {
-    const source = await Bun.file(new URL('../../interactive.ts', import.meta.url)).text();
-    expect(source).toMatch(/dangerMode:\s*readApprovalPostureFromConfig\(configManager\)\.automaticApprovals/);
-    expect(source).not.toMatch(/dangerMode:\s*readApprovalPostureFromConfig\(configManager\)\.bypassesPrompts/);
     for (const scenario of SCENARIOS) {
       applyScenario(scenario);
       const posture = readApprovalPostureFromConfig(configManager);

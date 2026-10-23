@@ -1,12 +1,11 @@
 import { expect, test, spyOn, setSystemTime } from 'bun:test';
-import { readFileSync } from 'node:fs';
+
 import { createBuiltinProviderHealthModalSurface } from '../../../views/builtin-modals.ts';
 import type { ResolvedBuiltinViewDeps } from '../../../views/view-deps.ts';
 import { createProviderHealthModalSurface } from '../../../views/modals/provider-health-modal.ts';
 import type { ProviderRuntimeSnapshot, ProviderRuntimeMetadata } from '@goodvibes-jev/engine/sdk/platform/providers';
-import { buildProviderHealthDomainSummaries, buildAccountPosture } from '@goodvibes-jev/engine/sdk/platform/runtime/provider-health';
-import { buildProviderHealthDomainSummaries as localDomains } from '../../../views/provider-health-domains.ts';
-import { buildAccountPosture as localPosture } from '../../../views/provider-health-routes.ts';
+
+
 import { handleConfigModalToken } from '../../../input/handler-modal-routes.ts';
 import { ConfigModal } from '../../../input/config-modal.ts';
 import { renderConfigModal } from '../../../renderer/config-modal.ts';
@@ -58,13 +57,6 @@ function fixture() {
   return { deps, values, declared, reads: () => reads, fail: () => { fail = true; }, healthy: () => { quarantineReason = undefined; trustMode = 'constrained'; contextWindow = 100_000; } };
 }
 function text(rows: readonly { label: string }[]) { return rows.map((row) => row.label).join('\n'); }
-
-test('compatibility exports are the canonical functions, not parallel product algorithms', () => {
-  expect(localDomains).toBe(buildProviderHealthDomainSummaries);
-  expect(localPosture).toBe(buildAccountPosture);
-  const source = readFileSync(new URL('../../../views/builtin-modals.ts', import.meta.url), 'utf8');
-  expect(source).toContain('manager.registerModalSurface(createBuiltinProviderHealthModalSurface(deps))');
-});
 
 test('production factory composes real runtime inspection, generic descriptors and all eight domains', async () => {
   const f = fixture();

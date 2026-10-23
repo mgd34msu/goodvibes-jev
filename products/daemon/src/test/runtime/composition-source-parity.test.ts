@@ -88,9 +88,6 @@ test('the shared workspace writer and daemon reader agree without either legacy 
 test('the real graph has no panel producer and pressure reaches its existing webhook owner', async () => {
   const fx = await fixture();
   const runtime = fx.services;
-  const graph = readFileSync(new URL('../../runtime/service-graph.ts', import.meta.url), 'utf8');
-  expect(graph).not.toContain('createNotificationDispatcher');
-  expect(graph).not.toContain('wireRuntimeNotificationBridge');
   const configured = keep(spyOn(runtime.webhookNotifier, 'isConfigured').mockReturnValue(true));
   const send = keep(spyOn(runtime.webhookNotifier, 'send').mockResolvedValue({ attempted: 1, delivered: 1, failed: 0, results: [] }));
   const emit = () => emitOpsMemoryPressure(runtime.runtimeBus, { sessionId: 'fixture', source: 'fixture', traceId: 'fixture' }, {

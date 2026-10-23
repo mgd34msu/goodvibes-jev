@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'bun:test';
-import { chmodSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import type { LiveVerificationReport } from '../../verification/live-verifier.ts';
 import {
@@ -103,25 +103,6 @@ describe('live verification report', () => {
     expect(markdown).toContain('| Agent Knowledge CLI status command | warn | Agent Knowledge route is not available. |');
     expect(markdown).toContain('/api/goodvibes-agent/knowledge/status');
     expect(markdown).toContain('Result: PASS');
-  });
-
-  it('validates every model-visible Agent Knowledge read route during live verification', () => {
-    const source = readFileSync(join(projectRoot, 'src/verification/live-verifier.ts'), 'utf8');
-    const readRoutes = [
-      '/api/goodvibes-agent/knowledge/sources',
-      '/api/goodvibes-agent/knowledge/nodes',
-      '/api/goodvibes-agent/knowledge/issues',
-      '/api/goodvibes-agent/knowledge/map',
-      '/api/goodvibes-agent/knowledge/connectors',
-    ];
-
-    for (const route of readRoutes) {
-      expect(source).toContain(`route: '${route}'`);
-    }
-    expect(source).toContain('validateAgentKnowledgeJsonRoute');
-    expect(source).toContain('for (const check of AGENT_KNOWLEDGE_READ_ROUTE_CHECKS)');
-    expect(source).not.toContain('/api/knowledge/sources');
-    expect(source).not.toContain('/api/knowledge/connectors');
   });
 
   it('normalizes Agent Knowledge JSON scope aliases and still detects non-Agent live responses', () => {

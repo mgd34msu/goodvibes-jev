@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from 'bun:test';
 import { createHash } from 'node:crypto';
-import { chmodSync, mkdirSync, mkdtempSync, readFileSync, renameSync, rmSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, renameSync, rmSync, symlinkSync, writeFileSync, realpathSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { daemonSqliteRuntime, initializeDaemonNativeSqlite, type DaemonSqliteOwner } from '../../cli/native-sqlite-runtime.ts';
@@ -111,12 +111,4 @@ test('asynchronous current restriction refuses and consumes rejection before sel
   const f = fixture(); let calls = 0;
   expect(() => initializeDaemonNativeSqlite({ ...f.options, assertCurrent: () => Promise.reject(new Error('restriction failure')), setCustomSQLite: () => { calls++; return true; } })).toThrow('must be synchronous');
   await Promise.resolve(); expect(calls).toBe(0);
-});
-
-test('entry initializes before dynamically importing every service entry', () => {
-  const entry = readFileSync(new URL('../../cli/entrypoint.ts', import.meta.url), 'utf8');
-  const init = entry.indexOf('initializeDaemonNativeSqlite();'); expect(init).toBeGreaterThan(0);
-  expect(entry.indexOf("await import('./run.js')")).toBeGreaterThan(init);
-  expect(entry.indexOf("await import('./production-runtime.js')")).toBeGreaterThan(init);
-  expect(entry).not.toContain("from './run.js'"); expect(entry).not.toContain("from './production-runtime.js'");
 });

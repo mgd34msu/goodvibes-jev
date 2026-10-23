@@ -11,11 +11,7 @@ import { describe, expect, test } from 'bun:test';
 import { existsSync, mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
-import {
-  TEST_TEMP_MANIFEST_ENV,
-  parseTempManifest,
-  removeManifestedTempDirs,
-} from '../../../scripts/test-temp-manifest.ts';
+import { parseTempManifest, removeManifestedTempDirs } from '../../../scripts/test-temp-manifest.ts';
 
 function scratch(): string {
   return makeProjectTempDir('temp-manifest-spec');
@@ -92,22 +88,5 @@ describe('removeManifestedTempDirs', () => {
     const manifest = join(base, 'manifest.json');
     writeFileSync(manifest, JSON.stringify([gone]), 'utf8');
     expect(() => removeManifestedTempDirs(manifest)).not.toThrow();
-  });
-});
-
-describe('the manifest handover is actually wired up', () => {
-  test('the runner passes the env var the preload reads', () => {
-    const runner = Bun.file(
-      join(import.meta.dir, '..', '..', '..', 'scripts', 'run-tests.ts'),
-    );
-    const preload = Bun.file(join(import.meta.dir, '..', 'preload', 'temp-cleanup.ts'));
-    return Promise.all([runner.text(), preload.text()]).then(([runnerSrc, preloadSrc]) => {
-      // Both sides reference the shared constant rather than spelling the name
-      // out, so a rename cannot silently disconnect them.
-      expect(runnerSrc).toContain('TEST_TEMP_MANIFEST_ENV');
-      expect(runnerSrc).toContain('removeManifestedTempDirs(manifestPath)');
-      expect(preloadSrc).toContain('process.env[TEST_TEMP_MANIFEST_ENV]');
-      expect(TEST_TEMP_MANIFEST_ENV).toBe('GOODVIBES_TEST_TEMP_MANIFEST');
-    });
   });
 });

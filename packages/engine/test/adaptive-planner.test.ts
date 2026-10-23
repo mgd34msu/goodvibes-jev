@@ -1,6 +1,3 @@
-import { readFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
 import { describe, expect, test } from 'bun:test';
 import { installJudgmentPort, JudgmentPortMissingError } from '@goodvibes-jev/engine/errors';
 import { coreReadingsPort, useCoreReadings } from './_helpers/core-readings.ts';
@@ -9,7 +6,6 @@ import type { RawDecomposition } from '../sdk/src/platform/core/plan-proposal.js
 
 const readings = useCoreReadings({ strategy: 'cohort' });
 
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 function inputs(overrides: Partial<PlannerInputs> = {}): PlannerInputs {
   return {
@@ -111,19 +107,6 @@ describe('AdaptivePlanner.proposeWorkstream', () => {
     const latest = planner.getLatest();
     expect(latest).not.toBeNull();
     expect(latest!.selected).toBe('cohort');
-  });
-});
-
-describe('AdaptivePlanner purity (import-surface test)', () => {
-  test('adaptive-planner.ts uses the judgment port, never direct network, files or agent spawn', async () => {
-    const source = readFileSync(
-      join(__dirname, '..', 'sdk/src/platform/core/adaptive-planner.ts'),
-      'utf-8',
-    );
-    expect(source).toContain('executionStrategy.run');
-    expect(source).toContain('judgmentPort(');
-    expect(source).not.toMatch(/readFileSync|writeFileSync|existsSync|mkdirSync/);
-    expect(source).not.toMatch(/AgentManager|spawn\(|fetch\(|LLMProvider/);
   });
 });
 

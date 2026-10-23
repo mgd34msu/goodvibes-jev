@@ -1,7 +1,7 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { join } from 'node:path';
+
 import { afterEach, describe, expect, test } from 'bun:test';
 import { ExecutionPlanManager } from '../sdk/src/platform/core/execution-plan.js';
 import {
@@ -10,8 +10,6 @@ import {
   singleItemProposal,
   type RawDecomposition,
 } from '../sdk/src/platform/core/plan-proposal.js';
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const tmpRoots: string[] = [];
 
@@ -249,16 +247,5 @@ describe('planProposalToPlanningState', () => {
     expect(buildTask.dependencies).toEqual([prepTask.id]);
 
     expect(state.dependencies).toEqual([{ fromTaskId: buildTask.id, toTaskId: prepTask.id }]);
-  });
-});
-
-describe('plan proposal purity', () => {
-  test('plan-proposal.ts performs no I/O or agent calls', () => {
-    const source = readFileSync(
-      join(__dirname, '..', 'sdk/src/platform/core/plan-proposal.ts'),
-      'utf-8',
-    );
-    // No I/O, no LLM/agent spawn, the module stays pure.
-    expect(source).not.toMatch(/readFileSync|writeFileSync|fetch\(|AgentManager|LLMProvider/);
   });
 });

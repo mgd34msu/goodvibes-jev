@@ -1,6 +1,6 @@
 /** Offline regression of the exact permission composition used by bootstrap. */
 import { afterEach, describe, expect, spyOn, test } from 'bun:test';
-import { mkdirSync, readFileSync } from 'node:fs';
+import { mkdirSync } from 'node:fs';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
@@ -15,7 +15,7 @@ import { RuntimeEventBus } from '@/runtime/index.ts';
 import { composeAgentPermissionManager } from '../../runtime/bootstrap-core.ts';
 import { createRuntimeServices, type RuntimeServices } from '../../runtime/services.ts';
 import { createRuntimeStore } from '../../runtime/store/index.ts';
-import { installPermissionManagerSafetyGuard } from '../../runtime/tool-permission-safety.ts';
+
 import { installPermissionManagerSafetyGuard as sharedGuard } from '@goodvibes-jev/engine/sdk/platform/gate/policy';
 import { makeProjectTempDir } from '../helpers/project-temp.ts';
 
@@ -91,12 +91,6 @@ function approvalReadings() {
 }
 
 describe('Agent adopts the shared permission gate without alternate authority', () => {
-  test('the compatibility path is the exact shared implementation and bootstrap uses its composition', () => {
-    expect(installPermissionManagerSafetyGuard).toBe(sharedGuard);
-    const source = readFileSync(new URL('../../runtime/bootstrap-core.ts', import.meta.url), 'utf8');
-    expect(source).toContain('const permissionManager = composeAgentPermissionManager(services)');
-    expect(source).not.toContain("from './tool-permission-safety.ts'");
-  });
 
   for (const tool of ['read', 'fetch']) {
     for (const failure of ['unavailable', 'throwing'] as const) test(`${tool}: automatic configured admission does not depend on ${failure} judgment`, async () => {

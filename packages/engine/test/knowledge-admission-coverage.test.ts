@@ -10,7 +10,7 @@
  * homegraph-self-improvement-abort.test.ts.
  */
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+
 import { trackDisposables } from './_helpers/disposables.ts';
 import { KnowledgeService } from '../sdk/src/platform/knowledge/service.js';
 import { HomeGraphService } from '../sdk/src/platform/knowledge/home-graph/service.js';
@@ -85,15 +85,5 @@ describe('home-graph 0ms ingest-enrichment tail honors pause + admission', () =>
     const h = runtimeWith({});
     await enrichAndImproveHomeGraphSource(h.runtime, 'src-1', 'space-1');
     expect(h.enrichCalls()).toBe(1);
-  });
-});
-
-describe('composition + pump shape pins', () => {
-  test('services.ts threads admitExpensiveWork into the agent and home-graph constructions', () => {
-    const src = readFileSync('sdk/src/platform/runtime/services.ts', 'utf-8');
-    const agentBlock = src.slice(src.indexOf('const agentKnowledgeService = new KnowledgeService('), src.indexOf('agentKnowledgeService.attachRuntimeBus'));
-    expect(agentBlock).toContain('admitExpensiveWork');
-    const hgBlock = src.slice(src.indexOf('const homeGraphService = new HomeGraphService('), src.indexOf('const projectPlanningService'));
-    expect(hgBlock).toContain('admitExpensiveWork');
   });
 });

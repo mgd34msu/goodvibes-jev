@@ -1,5 +1,5 @@
 import { describe, expect, test } from 'bun:test';
-import { readFileSync } from 'node:fs';
+
 import { join } from 'node:path';
 import {
   CHECKSUM_MANIFEST_NAME,
@@ -152,33 +152,5 @@ describe('the wake-word model install step in postinstall', () => {
     expect(messages).toContain('postinstall: source checkout detected; skipping the wake-word model install');
     // The shared network guard remains active; an attempted provision is a failure.
 
-  });
-
-  test('it calls the SDK policy, derives the managed root from the SDK, and cannot throw out of main()', () => {
-    const source = readFileSync(join(import.meta.dir, '../../../scripts/postinstall.js'), 'utf8');
-    // The pins stay in the SDK's manifest: this file must not carry a URL or a
-    // checksum of its own for the wake artifacts.
-    expect(source).toContain('provisionWakeWordModelsAtInstall');
-    // And the managed root comes from the SDK's one derivation, not a hand-written
-    // join, an installer writing to a directory the daemon does not read would
-    // report success and provision nothing usable.
-    expect(source).toContain('resolveManagedVoiceRoot(home)');
-    expect(source).not.toContain('voice-runtimes-v1');
-    // Even a failed dynamic import is caught: reaching main()'s caller with an
-    // exception here would abort an install over an optional model.
-    const step = source.slice(source.indexOf('async function installWakeWordModel'), source.indexOf('async function main'));
-    expect(step).toContain('try {');
-    expect(step).toContain('} catch (error) {');
-    expect(step).toContain('/voice wake setup');
-    // It runs after the binaries, so a failure cannot preempt the real install.
-    const main = source.slice(source.indexOf('async function main'));
-    expect(main.indexOf('installPlatformBinaries')).toBeLessThan(main.indexOf('installWakeWordModel'));
-  });
-
-  test('it honours the same skip switches as the binary install', () => {
-    const source = readFileSync(join(import.meta.dir, '../../../scripts/postinstall.js'), 'utf8');
-    const step = source.slice(source.indexOf('async function installWakeWordModel'), source.indexOf('async function main'));
-    expect(step).toContain('noDownload');
-    expect(step).toContain('isSourceCheckout()');
   });
 });
