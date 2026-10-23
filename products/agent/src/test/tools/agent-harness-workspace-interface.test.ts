@@ -752,9 +752,11 @@ afterEach(() => { resetAgentMcpCallRouteForTests(); installJudgmentPort(previous
           expect.objectContaining({ effect: 'mixed', modelRoute: 'agent_knowledge or agent_knowledge_ingest' }),
         ]);
       } else if (view === 'invocation') {
-        const result = await executeHarnessJson<{ readonly name: string; readonly lookup: { readonly resolvedBy: string };
-          readonly parsed: { readonly flags: { readonly outputFormat: string; readonly configOverrides: readonly string[] } } }>(fixture,
-          { mode: 'cli_command', cliCommand: 'goodvibes-agent status --json --config surfaces.slack.botToken=xoxb-secret-value' });
+        const parsed = await fixture.tool.execute({ mode: 'cli_command',
+          cliCommand: 'goodvibes-agent status --json --config surfaces.slack.botToken=xoxb-secret-value' });
+        expect(parsed.success, parsed.error).toBe(true);
+        const result = JSON.parse(parsed.output!) as { readonly name: string; readonly lookup: { readonly resolvedBy: string };
+          readonly parsed: { readonly flags: { readonly outputFormat: string; readonly configOverrides: readonly string[] } } };
         expect(result.name).toBe('status'); expect(result.lookup.resolvedBy).toBe('invocation');
         expect(result.parsed.flags.outputFormat).toBe('json');
         expect(result.parsed.flags.configOverrides).toContain('surfaces.slack.botToken=<redacted>');
