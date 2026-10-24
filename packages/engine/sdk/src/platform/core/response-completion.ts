@@ -369,7 +369,7 @@ export class ResponseCompletionGuard {
     }
   }
 
-  private async read(input: ResponseCompletionInput, options: JudgmentReadingOptions, onWaiting?: () => void, withoutCheckpoint = false): Promise<string | null> {
+  private async read(input: ResponseCompletionInput, options: JudgmentReadingOptions, onWaiting?: () => void, withoutCheckpoint = false, requireVerification = false): Promise<string | null> {
     options.signal?.throwIfAborted(); options.assertCurrent?.();
     const conversation = input.conversation, snapshot = conversation.getMessageSnapshot;
     const messages = captureConversationEvidence(conversation);
@@ -415,7 +415,7 @@ export class ResponseCompletionGuard {
       identity: owner.identity, assertCurrent: owner.assertCurrent })) checkpoint = undefined;
     let verificationFindings: readonly import('./response-completion-findings.js').CompletionFinding[] = [];
     if (checkpoint) state = checkpoint;
-    else if (JSON.stringify(fullState).length > 100_000) {
+    else if (requireVerification || JSON.stringify(fullState).length > 100_000) {
       if (!this.verification) throw new VerificationHeldError('missing private verification provider');
       let checked;
       try { checked = await this.verification.prepare(fullState, { ...readingOptions, port, identity: owner.identity, assertCurrent: owner.assertCurrent }); }
@@ -518,11 +518,24 @@ export class ResponseCompletionGuard {
     const needsFinalSource = Object.entries(run.readings).some(([aspect, reading]) =>
       !qualifications.completion.has(aspect) && (!verificationFindings.length || !['unfinished', 'unanswered'].includes(aspect)));
     const needsDelegatedSource = Object.keys(consolidation?.readings ?? {}).some(aspect => !qualifications.consolidation.has(aspect));
+    // A weak direct reading is a question for primary evidence, not a list of
+    // defects for the working model to rewrite around. Small transcripts need
+    // the same requirement/evidence assessment as large ones when ambiguous.
+    // Preserve this exact draft and take this path once; every final gate and
+    // its original-source retrieval still has to pass afterward.
+    if (state === fullState && this.verification && !requireVerification
+      && (needsFinalSource || needsDelegatedSource || !executionAccepted)
+      && [...Object.values(run.readings), ...Object.values(consolidation?.readings ?? {}), ...Object.values(execution?.readings ?? {})]
+        .some(reading => reading.outcome !== 'act')) {
+      run.recordAction('Settle uncertain direct readings against the original requirements and primary evidence before requesting any working-model repair.');
+      batch.abort();
+      return this.read(input, options, onWaiting, withoutCheckpoint, true);
+    }
     if (checkpoint && (needsFinalSource || !executionAccepted
       || needsDelegatedSource)) {
       run.recordAction('This native work checkpoint does not settle every current final check; retrieve retained originals before requesting any working-model repair.');
       batch.abort();
-      return this.read(input, options, onWaiting, true);
+      return this.read(input, options, onWaiting, true, requireVerification);
     }
     if (state !== fullState && this.verification && (needsFinalSource || needsDelegatedSource || (!executionAccepted && !verificationFindings.length))) {
       const opened = await this.verification.openFinal(state, { completion: run.readings, consolidation: consolidation?.readings ?? null, execution: execution?.readings ?? null },
@@ -532,7 +545,7 @@ export class ResponseCompletionGuard {
         consolidation?.recordAction('Retrieve primary evidence before declaring a synthesis defect.');
         execution?.recordAction('Retrieve primary evidence before declaring an execution defect.');
         batch.abort();
-        return this.read(input, options, onWaiting, withoutCheckpoint);
+        return this.read(input, options, onWaiting, withoutCheckpoint, requireVerification);
       }
     }
     if (Object.keys(run.readings).every(aspect => qualifications.completion.has(aspect))

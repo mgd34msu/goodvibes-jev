@@ -47,6 +47,40 @@ test('an account-held private draft survives session restore and still needs fre
   expect(() => restored.beginFinalization({ content: response })).not.toThrow();
   expect(create().resumedRepair()).toBe('');
 });
+
+test.each([false, true])('a small ambiguous completion is assessed against primary evidence without another answer draft (real defect: %s)', async realDefect => {
+  const request = 'Build a Node TypeScript API with a production build and meaningful API tests.';
+  const response = 'Built the API and passed its API tests. The build erases TypeScript types without static type checking.';
+  const conversation = new ConversationManager(); conversation.addUserMessage(request);
+  conversation.addToolResults([{ callId: 'build-test', success: true,
+    output: 'Node stripTypeScriptTypes produced dist/server.js; API tests passed, including restart persistence.' }]);
+  const before = conversation.getMessageSnapshot();
+  const fake = fakePort((name, question, raw) => {
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    const state = raw as { response?: string; verification?: unknown; transcript?: unknown };
+    if (Array.isArray(state.transcript) && state.response === response && !state.verification
+      && ['unfinished', 'unsupported', 'unanswered'].includes(name)) return noulAnswer(.4);
+    if (state.verification && name === 'unsupported' && realDefect) return noulAnswer(.99);
+    return noulAnswer(.01);
+  });
+  installJudgmentPort(fake.port);
+  const writer: VerificationWriter = async proposal => proposal.operation === 'requirements'
+    ? JSON.stringify({ requirements: [{ text: request, sources: [(proposal.context as { sources: { id: string }[] }).sources[0]!.id] }] })
+    : verificationWriter(proposal);
+  const guard = new ResponseCompletionGuard({ request, conversation, verificationWriter: writer });
+  const result = await guard.checkUntilAvailable(() => ({ request, response, conversation, tools: ['exec'] }));
+  expect(conversation.getMessageSnapshot()).toEqual(before);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.requirement')).toBe(true);
+  const final = fake.requests.filter(request => request.context?.battery === 'engine.core.response-completion');
+  expect(final.some(request => (request.state as never as { verification?: unknown }).verification)).toBe(true);
+  if (realDefect) {
+    expect(result).toBeString();
+    expect(() => guard.beginFinalization({ content: response })).toThrow();
+  } else {
+    expect(result).toBeNull();
+    expect(() => guard.beginFinalization({ content: response })).not.toThrow();
+  }
+});
 const unopenedAuditSource = (raw: unknown) => {
   const state = raw as { sources?: { id: string }[]; caseEvidence?: { sources?: { id: string }[] } };
   const opened = new Set(state.caseEvidence?.sources?.map(source => source.id));
