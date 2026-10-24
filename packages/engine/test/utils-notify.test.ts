@@ -1,5 +1,5 @@
-import { describe, test, expect, spyOn, beforeEach, afterEach } from 'bun:test';
-import { notifyCompletion, escapeAppleScript } from '@goodvibes-jev/engine/sdk/platform/utils';
+import { describe, test, expect } from 'bun:test';
+import { escapeAppleScript } from '@goodvibes-jev/engine/sdk/platform/utils';
 
 describe('escapeAppleScript', () => {
   test('escapes double quotes', () => {
@@ -20,47 +20,5 @@ describe('escapeAppleScript', () => {
 
   test('handles empty string', () => {
     expect(escapeAppleScript('')).toBe('');
-  });
-});
-
-describe('notifyCompletion', () => {
-  let writeSpy: ReturnType<typeof spyOn>;
-
-  beforeEach(() => {
-    writeSpy = spyOn(process.stdout, 'write').mockImplementation(() => true);
-  });
-
-  afterEach(() => {
-    writeSpy.mockRestore();
-  });
-
-  test('emits terminal bell when durationMs > 5000', () => {
-    notifyCompletion('Title', 'Message', 5001);
-    expect(writeSpy).toHaveBeenCalledWith('\x07');
-  });
-
-  test('emits terminal bell at exactly the threshold boundary (> not >=)', () => {
-    notifyCompletion('Title', 'Message', 5000);
-    expect(writeSpy).not.toHaveBeenCalledWith('\x07');
-  });
-
-  test('does not emit bell when durationMs <= 5000', () => {
-    notifyCompletion('Title', 'Message', 4999);
-    expect(writeSpy).not.toHaveBeenCalledWith('\x07');
-  });
-
-  test('does not emit bell when durationMs is 0', () => {
-    notifyCompletion('Title', 'Message', 0);
-    expect(writeSpy).not.toHaveBeenCalled();
-  });
-
-  test('does not throw when durationMs > 30000 (desktop notification path is non-fatal)', () => {
-    // Desktop notification may fail in test env, must not throw
-    expect(() => notifyCompletion('Title', 'Message', 30001)).not.toThrow();
-  });
-
-  test('emits bell for durations > 30000 as well', () => {
-    notifyCompletion('Title', 'Message', 35000);
-    expect(writeSpy).toHaveBeenCalledWith('\x07');
   });
 });

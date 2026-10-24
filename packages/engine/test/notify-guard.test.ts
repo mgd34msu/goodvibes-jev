@@ -22,6 +22,19 @@
 import { describe, expect, test, beforeEach, afterEach, spyOn, type Mock } from 'bun:test';
 import { notifyCompletion, isNotifySuppressed } from '../sdk/src/platform/utils/notify.ts';
 
+test('completion notification leaves piped JSON parseable after a long successful turn', async () => {
+  const modulePath = new URL('../sdk/src/platform/utils/notify.ts', import.meta.url).pathname;
+  const script = `import { notifyCompletion } from ${JSON.stringify(modulePath)};
+    notifyCompletion('GoodVibes', 'Response complete', 6000);
+    process.stdout.write(JSON.stringify({ok:true,response:'Completed the requested project.'})+'\\n');`;
+  const child = Bun.spawn([process.execPath, '-e', script], { stdout: 'pipe', stderr: 'pipe' });
+  const stdout = await new Response(child.stdout).text();
+  const stderr = await new Response(child.stderr).text();
+  expect(await child.exited).toBe(0);
+  expect(stderr).toBe('');
+  expect(JSON.parse(stdout)).toEqual({ ok: true, response: 'Completed the requested project.' });
+});
+
 /** A Bun.spawn-shaped fake that resolves immediately with no output. */
 function fakeSpawnResult(): ReturnType<typeof Bun.spawn> {
   return {
@@ -100,11 +113,14 @@ describe('notifyCompletion suppression', () => {
   let origOverride: string | undefined;
   let spawnSpy: Mock<typeof Bun.spawn>;
   let writeSpy: Mock<typeof process.stdout.write>;
+  let originalTTY: PropertyDescriptor | undefined;
 
   beforeEach(() => {
     origNodeEnv = process.env['NODE_ENV'];
     origOverride = process.env['GOODVIBES_SUPPRESS_NOTIFY'];
     delete process.env['GOODVIBES_SUPPRESS_NOTIFY'];
+    originalTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { value: true, configurable: true });
     spawnSpy = spyOn(Bun, 'spawn').mockImplementation(() => fakeSpawnResult()) as Mock<typeof Bun.spawn>;
     writeSpy = spyOn(process.stdout, 'write').mockImplementation(() => true) as Mock<typeof process.stdout.write>;
   });
@@ -122,6 +138,8 @@ describe('notifyCompletion suppression', () => {
     }
     spawnSpy.mockRestore();
     writeSpy.mockRestore();
+    if (originalTTY) Object.defineProperty(process.stdout, 'isTTY', originalTTY);
+    else Reflect.deleteProperty(process.stdout, 'isTTY');
   });
 
   test('default test run: terminal bell still writes, desktop-notification shell-out suppressed', () => {
