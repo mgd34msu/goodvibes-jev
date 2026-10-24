@@ -192,6 +192,7 @@ const NUDGE_TEXT = 'Contract check 1 on "Parser": the work does not pass yet. Fi
 let previousReading: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => {
   const fixture = fakePort((name, question, state) => {
+    if (name === 'completion_required') return noulAnswer(.99);
     if (question.type !== 'noul' || !state || typeof state !== 'object' || Array.isArray(state)) throw new Error('Unexpected agent lifecycle reading');
     if (state.request === 'implement the parser' && state.response === 'checking the file'
       && ['unsupported', 'repetitive'].includes(name)) return noulAnswer(.01);
@@ -201,7 +202,7 @@ beforeEach(() => {
     throw new Error(`Unexpected agent lifecycle reading: ${name}`);
   });
   previousReading = installJudgmentPort({ ...fixture.port, ask: request => {
-    if (!['engine.core.response-progress', 'engine.core.response-completion', 'engine.core.execution-assurance'].includes(request.context?.battery ?? '')) {
+    if (!['engine.core.response-progress', 'engine.core.response-completion', 'engine.core.execution-assurance', 'engine.core.completion-applicability'].includes(request.context?.battery ?? '')) {
       if (previousReading) return previousReading.ask(request);
       throw new Error('Unexpected agent lifecycle battery');
     }

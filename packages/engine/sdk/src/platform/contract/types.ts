@@ -1,4 +1,5 @@
 import type { NativeConversationContinuation } from '../workflow/work-ledger/native-continuation-context.js';
+import type { ReviewInventory } from './review-inventory.js';
 import type { DurableContractAdmission } from './durable-admission.js';
 /**
  * The contract runner's data model (docs/design/contract-runner.md section 2.3):
@@ -201,6 +202,7 @@ export type ShapeReading = ContractShapeReading;
 
 /** The four request-shape readings, keyed by the battery's question names, and the decision-log ids behind them. */
 export interface RequestShape {
+  readonly project_review?: ShapeReading;
   readonly forbids_delegation: ShapeReading;
   readonly requests_parallel_agents: ShapeReading;
   readonly forbids_writing: ShapeReading;
@@ -224,6 +226,14 @@ export interface CriterionReading {
   readonly severityDecisionId?: string | undefined;
 }
 
+/** Role in the original requested result, separate from execution status. */
+export interface WorkContribution {
+  readonly kind: 'outcome' | 'support' | 'scaffolding' | 'secondary';
+  readonly reason: string;
+  /** The observable behavior or evidence which settles this part. */
+  readonly verification: string;
+}
+
 export interface Criterion {
   readonly id: string;
   text: string;
@@ -232,6 +242,8 @@ export interface Criterion {
   readonly quote?: string | undefined;
   /** Ids of the criteria this one serves; empty for contract roots (including goal-derived checks). */
   readonly serves: readonly string[];
+  /** A checked plan's categorization; never an exemption from acceptance. */
+  readonly contribution?: WorkContribution;
   /** 'excluded' only for topology-only criteria the plan cannot satisfy; 'met-by-structure' when the plan's shape meets it. */
   disposition: CriterionDisposition;
   dispositionReason?: string | undefined;
@@ -243,6 +255,8 @@ export interface Criterion {
 // ── Checks and nudges ─────────────────────────────────────────────────────────
 
 export interface UnitCheck {
+  /** Actual file versions supplied to this passed research assessment. */
+  readonly reviewedFiles?: readonly { readonly path: string; readonly sha256: string }[];
   /** `${unitId}.k${n}` for a unit; the group or contract id in place of the unit id for group and deliverable checks. */
   readonly id: string;
   readonly at: number;
@@ -426,6 +440,8 @@ export interface JudgmentUsage {
 }
 
 export interface Contract {
+  reviewInventory?: ReviewInventory;
+  reviewExclusions?: readonly { readonly files: readonly string[]; readonly reason: string }[];
   /** Captured at submission; changing another session's selection does not reroute this contract. */
   readonly selectedModel?: Pick<import('../providers/registry-types.js').ModelDefinition, 'id' | 'provider' | 'registryKey' | 'displayName'> | undefined;
   /** Original live source evidence; serialized data cannot recreate its owner. */

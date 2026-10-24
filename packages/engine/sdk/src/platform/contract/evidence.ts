@@ -27,6 +27,7 @@ import { compareJsonReadReferences, compareReadReferences } from './read-referen
 import { commandObservation } from './command-observation.js';
 import { acceptedResearchIds } from './accepted-research.js';
 import { currentFileObservations } from './current-file-observations.js';
+import { assignedReviewPaths, reviewInventoryObservation } from './review-inventory.js';
 export { currentFileObservations } from './current-file-observations.js';
 import { parseCompletionReport } from '../agents/completion-report.js';
 import { returnedReadRows } from '../tools/read/observation.js';
@@ -398,7 +399,7 @@ export async function collectChanges(unit: Pick<ContractUnit, 'baseline'>, sourc
  * always; claims at completion and at resume; gates at every trigger but turn-end.
  */
 export async function collectUnitEvidence(
-  contract: Pick<ContractView, 'id' | 'sessionId'> & Partial<Pick<ContractView, 'status' | 'decisions' | 'createdAt' | 'origin' | 'criteria' | 'groups' | 'units' | 'proposedUnits' | 'projectRoot' | 'inputSnapshot'>>,
+  contract: Pick<ContractView, 'id' | 'sessionId'> & Partial<Pick<ContractView, 'status' | 'decisions' | 'createdAt' | 'origin' | 'criteria' | 'groups' | 'units' | 'proposedUnits' | 'projectRoot' | 'inputSnapshot' | 'reviewInventory' | 'reviewExclusions'>>,
   unit: Pick<ContractUnit, 'id' | 'goal' | 'brief' | 'files' | 'baseline' | 'readEvidence' | 'commandEvidence'>,
   trigger: CheckTrigger,
   sources: UnitEvidenceSources,
@@ -429,7 +430,9 @@ export async function collectUnitEvidence(
   const currentReads = sourceReadsFromTurns(sources.turns, sources.mustWrite ? [] : unit.files, sources.output);
   const observedReads = sources.mustWrite ? currentReads : mergeSourceReads(unit.readEvidence ?? [], currentReads);
   const currentUnit = contract.units?.find(planned => planned.id === unit.id);
-  const currentFiles = planChecks.length ? currentFileObservations(sources.cwd, [...unit.files, ...changes.map(change => change.path),
+  const currentFiles = planChecks.length ? currentFileObservations(sources.cwd, [...unit.files,
+    ...(contract.reviewInventory ? assignedReviewPaths(contract.reviewInventory, unit.files) : []), ...changes.map(change => change.path),
+    ...(contract.units ?? []).flatMap(planned => planned.checks.at(-1)?.reviewedFiles?.map(file => file.path) ?? []),
     ...(contract.units ?? []).filter(planned => planned.status === 'passed').flatMap(planned => planned.touchedPaths ?? [])]) : [];
   const owner = sources.ownerEvidence;
   const ownerReads = owner && typeof owner === 'object' && !Array.isArray(owner) && Array.isArray(owner['sourceReads'])
@@ -478,6 +481,7 @@ export async function collectUnitEvidence(
       requirements,
       ...(sources.ownerEvidence === undefined ? {} : { ownerPriorReads: sources.ownerEvidence }),
       currentFiles,
+      ...(contract.reviewInventory && contract.projectRoot && contract.units ? { reviewInventory: reviewInventoryObservation({ ...contract, projectRoot: contract.projectRoot, units: contract.units }, currentFiles) as unknown as JsonValue } : {}),
       ...(privateArtifacts.length ? { privateArtifacts } : {}),
       ...(contract.createdAt === undefined ? {} : { createdAt: contract.createdAt }),
       ...(contract.origin === undefined ? {} : { origin: contract.origin }),
@@ -507,6 +511,7 @@ export async function collectUnitEvidence(
             ...(currentUnit?.role === 'integration' || (repairing && (planned.role === 'integration' || dependencyIds.has(planned.id) || researchIds.has(planned.id)))
               ? { acceptedAnswer: planned.answer ?? '' } : {}) } : {}) }),
         criteria: planned.criteria.map(criterion => ({ id: criterion.id, text: criterion.text, serves: [...criterion.serves],
+          ...(criterion.contribution ? { contribution: { ...criterion.contribution } } : {}),
           ...(planned.id !== unit.id && planned.status === 'passed' ? { verdict: criterion.status } : {}) })) })) }),
       meaning: 'Host records for this current contract. The complete assigned unit brief and exact referenced requirements are supplied in requirements. Other units are represented by their goals, exact criteria, actual scoped checks, observations, command receipts and accepted results. Integration checks receive prior commands in full. Other checks receive full command/result bodies for their dependency closure or explicitly referenced execution ids; unrelated prior commands retain their identities, statuses and digest-bound native storage locations, not proof of unshown results. Old worker instructions remain unchanged under briefSource and its digest; they are not this unit\'s requirements. A passed peer criterion verdict establishes only its checked scope. Plan and prior-unit acceptance do not approve the unit now being checked.' } } : {}) }, unit);
 }

@@ -261,7 +261,7 @@ async function checkUnits(port: JudgmentPort, plan: ContractPlan, options: PlanC
   const site = PLAN_CHECK_SITES['unit-shape'];
   const runs = await Promise.all(planUnits(plan).map(async (unit) => ({
     unit,
-    run: await unitShape.read(port, { ...unitShapeState(plan, unit), ...(options.nativeSource === undefined ? options.originalSource ? { originalSource: { goal: options.originalSource.goal, criteria: [...options.originalSource.criteria] } } : {} : { nativeSource: nativeContractSourceData(options.nativeSource) }) }, callOptions(site, options)),
+    run: await unitShape.read(port, { ...unitShapeState(plan, unit), ...(plan.reviewExclusions ? { reviewExclusions: plan.reviewExclusions } : {}), ...(options.nativeSource === undefined ? options.originalSource ? { originalSource: { goal: options.originalSource.goal, criteria: [...options.originalSource.criteria] } } : {} : { nativeSource: nativeContractSourceData(options.nativeSource) }) }, callOptions(site, options)),
   })));
   for (const { unit, run } of runs) {
     record(output, run.decisionId, run.usage);
@@ -269,7 +269,7 @@ async function checkUnits(port: JudgmentPort, plan: ContractPlan, options: PlanC
     const found: PlanProblem[] = [];
     if (acceptanceProblem.probability > 0.5) {
       found.push({ code: 'not-checkable', targetId: unit.id,
-        message: `Repair unit ${unit.id}'s derived acceptance criteria: describe independently checkable substantive work, separate independent obligations so a rejection identifies the missing repair, and remove circular prerequisites that this very host acceptance check already passed. Host-owned planning and approval operations remain mandatory host operations. Preserve all original requirements and required work.` });
+        message: `Repair unit ${unit.id}'s derived acceptance criteria: describe independently checkable substantive work, separate independent obligations, remove circular host-approval prerequisites, and ensure contribution classifications and verification methods reflect the original requested behavior. Required functionality and its necessary dependencies need relevant behavior checks; routine setup or optional labels cannot excuse missing work. Preserve all original requirements and required work.` });
     }
     if (role.outcome === 'act' && !roleAgrees(unit.role, role.choice)) {
       found.push({

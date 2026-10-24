@@ -1,6 +1,12 @@
 import { afterEach, expect, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort as baseFakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
+
+// These fixtures exercise contract handoff acceptance behind an applicable
+// completion objective; applicability routing is tested in response-completion.test.ts.
+function fakePort(answer: Parameters<typeof baseFakePort>[0]) {
+  return baseFakePort((name, question, state) => name === 'completion_required' ? noulAnswer(.99) : answer(name, question, state));
+}
 import { completedContractEvidence } from '../sdk/src/platform/core/response-completion-contracts.js';
 import type { ContractView, UnitCheck } from '../sdk/src/platform/contract/types.js';
 import { CompletionEvidenceProjection } from '../sdk/src/platform/core/response-completion-evidence.js';
@@ -200,7 +206,8 @@ test('completion checks receive scoped records but a rejection still holds publi
   const guard = new ResponseCompletionGuard();
   expect(await guard.check(input)).not.toBeNull();
   expect(() => guard.beginFinalization({ content: input.response })).toThrow();
-  expect((held.requests[0]!.state as unknown as { completedWork: unknown }).completedWork).toEqual(completedWork);
+  const completionRequest = held.requests.find(request => request.context?.battery === 'engine.core.response-completion')!;
+  expect((completionRequest.state as unknown as { completedWork: unknown }).completedWork).toEqual(completedWork);
   installJudgmentPort(fakePort(() => noulAnswer(.01)).port);
   expect(await guard.check(input)).toBeNull();
   completedWork[0]!.answer = 'Changed after the response check.';

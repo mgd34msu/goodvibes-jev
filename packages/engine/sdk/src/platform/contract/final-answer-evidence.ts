@@ -153,7 +153,7 @@ export function finalAnswerEvidence(contract: Pick<ContractView, 'id' | 'ask' | 
     const retainedResult = source && researchIds.has(source.id)
       && unit['acceptedAnswerDigest'] === hashState(source.answer ?? '');
     return {
-    id: unit['id'] ?? null, goal: unit['goal'] ?? null, status: unit['status'] ?? null,
+    id: unit['id'] ?? null, goal: unit['goal'] ?? null, status: unit['status'] ?? null, dependsOn: unit['dependsOn'] ?? [],
     criteria: unit['criteria'] ?? null, latestCheck: unit['latestCheck'] ?? null,
     acceptedAnswerDigest: unit['acceptedAnswerDigest'] ?? null,
     ...(retainedResult ? { acceptedAnswer: source.answer ?? '' } : {}),
@@ -175,6 +175,7 @@ export function finalAnswerEvidence(contract: Pick<ContractView, 'id' | 'ask' | 
     criteriaReferenceMeaning: 'A servedBy criterionRef resolves by exact id to orchestration.units[].criteria, including its complete literal text and recorded verdict. Only identical complete criterion values are referenced; conflicting or additional fields remain inline. All original root criteria remain separately supplied unchanged. These references are native evidence links, not new approval.',
     readValidationReferenceMeaning: 'A read observation with nativeCheckRef=latestCheck retains its original validation through the enclosing unit latestCheck: expand validatedByCheckId from latestCheck.id and decisionIds from latestCheck.decisionIds. Only exact matches to that actual passed check are referenced. Read contents, digests, byte counts, paths, ranges and unit attribution remain unchanged. This is provenance for earlier reads, not approval of the current answer.',
     orchestration: { contractId: host['contractId'] ?? null, planChecks: host['planChecks'] ?? [],
+      ...(host['reviewInventory'] === undefined ? {} : { reviewInventory: host['reviewInventory'] }),
       currentAnswerSource: host['currentAnswerSource'] ?? null,
       repairPlanAdmissions: host['repairPlanAdmissions'] ?? [], referenceOperations: host['referenceOperations'] ?? [],
       sourceReferenceComparisons: host['sourceReferenceComparisons'] ?? [], sourceJsonReferenceComparisons: host['sourceJsonReferenceComparisons'] ?? [],

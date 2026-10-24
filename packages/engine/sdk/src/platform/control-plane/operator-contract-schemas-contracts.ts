@@ -111,6 +111,7 @@ const CRITERION_SCHEMA = objectSchema({
   origin: enumSchema(CRITERION_ORIGINS),
   quote: STRING_SCHEMA,
   serves: STRING_LIST_SCHEMA,
+  contribution: objectSchema({ kind: enumSchema(['outcome', 'support', 'scaffolding', 'secondary']), reason: STRING_SCHEMA, verification: STRING_SCHEMA }, ['kind', 'reason', 'verification']),
   disposition: enumSchema(CRITERION_DISPOSITIONS),
   dispositionReason: STRING_SCHEMA,
   status: enumSchema(CRITERION_STATUSES),
@@ -147,6 +148,7 @@ const CHECK_SCHEMA = objectSchema({
   qualityProblems: arraySchema(enumSchema(QUALITY_ITEMS)),
   decisionIds: STRING_LIST_SCHEMA,
   evidenceDigest: STRING_SCHEMA,
+  reviewedFiles: arraySchema(objectSchema({ path: STRING_SCHEMA, sha256: STRING_SCHEMA }, ['path', 'sha256'])),
 }, ['id', 'at', 'trigger', 'goal', 'quality', 'result', 'decisionIds', 'evidenceDigest']);
 
 const NUDGE_SCHEMA = objectSchema({
@@ -288,6 +290,8 @@ const DRAFT_PLAN_SCHEMA = objectSchema({
 export const CONTRACT_VIEW_SCHEMA = objectSchema({
   originalSource: objectSchema({ goal: STRING_SCHEMA, criteria: STRING_LIST_SCHEMA, conversationContext: arraySchema(toJSONSchema(nativeConversationContinuationMessageSchema)), selectedDiffContext: toJSONSchema(nativeSelectedDiffContextSchema) }, ['goal', 'criteria']),
   taskEvidence: STRING_SCHEMA,
+  reviewInventory: objectSchema({ paths: STRING_LIST_SCHEMA, digest: STRING_SCHEMA, source: enumSchema(['git', 'filesystem']), errors: STRING_LIST_SCHEMA }, ['paths', 'digest', 'source', 'errors']),
+  reviewExclusions: arraySchema(objectSchema({ files: STRING_LIST_SCHEMA, reason: STRING_SCHEMA }, ['files', 'reason'])),
   nativeSource: CONTRACT_NATIVE_SOURCE_SCHEMA,
   nativeDecisions: CONTRACT_NATIVE_DECISIONS_SCHEMA,
   nativeProgress: CONTRACT_NATIVE_PROGRESS_SCHEMA,
@@ -322,6 +326,7 @@ export const CONTRACT_VIEW_SCHEMA = objectSchema({
     requests_parallel_agents: SHAPE_READING_SCHEMA,
     forbids_writing: SHAPE_READING_SCHEMA,
     asks_for_attempts: SHAPE_READING_SCHEMA,
+    project_review: SHAPE_READING_SCHEMA,
     decisionIds: STRING_LIST_SCHEMA,
   }, ['forbids_delegation', 'requests_parallel_agents', 'forbids_writing', 'asks_for_attempts', 'decisionIds']),
   status: enumSchema(CONTRACT_STATUSES),

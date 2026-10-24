@@ -4,7 +4,7 @@
  * The mid-run abort seam: AgentManager owns an abort controller per agent, so
  * cancel()/kill genuinely aborts the agent's in-flight provider call (the signal
  * the runner threads into provider.chat) rather than only cooperatively at the
- * next boundary. An engine-registered external signal keeps precedence.
+ * next boundary. An engine-registered external signal also cancels the run.
  */
 import { describe, expect, test } from 'bun:test';
 import { AgentManager, type AgentExecutor } from '../sdk/src/platform/tools/agent/manager.ts';
@@ -55,14 +55,22 @@ describe('AgentManager cancellation abort seam', () => {
     executor.release();
   });
 
-  test('an engine-registered external signal takes precedence over the owned controller', () => {
+  test.each(['manager', 'external'] as const)('a registered orchestration owner cannot mask cancellation from %s', owner => {
     const executor = hangingExecutor();
     const manager = makeManager(executor);
     const record = manager.spawn({ mode: 'spawn', task: 'do work', outsideContract: true });
 
     const external = new AbortController();
     manager.registerCancellationSignal(record.id, external.signal);
-    expect(manager.getCancellationSignal(record.id)).toBe(external.signal);
+    const signal = manager.getCancellationSignal(record.id)!;
+    expect(manager.getCancellationSignal(record.id)).toBe(signal);
+    let stopped = 0;
+    signal.addEventListener('abort', () => { stopped++; });
+    if (owner === 'manager') manager.cancel(record.id);
+    else external.abort();
+    expect(signal.aborted).toBe(true);
+    expect(stopped).toBe(1);
+    expect(external.signal.aborted).toBe(owner === 'external');
     executor.release();
   });
 });

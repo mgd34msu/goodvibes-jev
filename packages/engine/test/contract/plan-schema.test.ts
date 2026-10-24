@@ -14,6 +14,8 @@ import {
 } from '../../sdk/src/platform/contract/plan-schema.js';
 import { PLANNER_DECOMPOSITION_TOOLS } from '../../sdk/src/platform/agents/planner-decomposition-runner.js';
 import { parseAmendment } from '../../sdk/src/platform/contract/amendment.js';
+import { buildPlanTree } from '../../sdk/src/platform/contract/planner.js';
+import { unitShapeInput } from '../../sdk/src/platform/contract/batteries/unit-shape.js';
 import { ASK, asPlan, draftUnit, plannerOutput, shapeOf, singleUnitPlan, validPlan, type DraftPlan } from './plan-support.js';
 
 const LIMITS: PlanLimits = { maxUnits: 64, defaultAttempts: 1 };
@@ -31,6 +33,31 @@ function targetsOf(draft: DraftPlan, code: PlanProblemCode, shape = shapeOf(), l
 }
 
 describe('parseContractPlan', () => {
+  test('work contributions retain original links and stay unaccepted through planning', () => {
+    const draft = singleUnitPlan();
+    const contribution = { kind: 'support' as const, reason: 'Necessary dependency of the requested conversion.',
+      verification: 'Run conversion through the CLI and verify its returned data.' };
+    Object.assign(draft.groups[0]!.units[0]!.criteria[0]!, { contribution });
+    const parsed = parseContractPlan(plannerOutput(draft));
+    expect(parsed.ok).toBe(true);
+    if (!parsed.ok) return;
+    const tree = buildPlanTree(parsed.plan, new Map(), 1);
+    const unit = tree.units[0]!, criterion = unit.criteria[0]!;
+    expect(criterion.contribution).toEqual(contribution);
+    expect(criterion.serves).toEqual(draft.groups[0]!.units[0]!.criteria[0]!.serves);
+    expect(criterion.status).toBe('unread');
+    expect(unit.checks).toEqual([]);
+    expect(unitShapeInput(tree.goal, tree.criteria, tree.units, unit).unit.contributions).toEqual([
+      { criterion: criterion.text, contribution },
+    ]);
+  });
+
+  test.each([{ kind: 'skip', reason: 'routine', verification: 'none' }, { kind: 'support', reason: '', verification: 'exists' }])('malformed work contribution cannot enter a plan: %j', contribution => {
+    const draft = singleUnitPlan();
+    Object.assign(draft.groups[0]!.units[0]!.criteria[0]!, { contribution });
+    const parsed = parseContractPlan(plannerOutput(draft));
+    expect(parsed.ok).toBe(false);
+  });
   test('embedded report fences remain data in plans and owner amendments', () => {
     const draft = validPlan();
     const brief = 'Preserve this report:\n```json\n{"summary":"retained"}\n```\nComplete only missing work.';

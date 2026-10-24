@@ -2,7 +2,14 @@ import { afterEach, expect, test } from 'bun:test';
 import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort as baseFakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
+
+// These fixtures exercise work verification behind an applicable completion
+// objective. Applicability routing has its own guard tests with conversational
+// and status requests in response-completion.test.ts.
+function fakePort(answer: Parameters<typeof baseFakePort>[0]) {
+  return baseFakePort((name, question, state) => name === 'completion_required' ? noulAnswer(.99) : answer(name, question, state));
+}
 import { JudgmentContextLimitError, JudgmentError } from '@goodvibes-jev/judgment';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { CompletionVerification } from '../sdk/src/platform/core/verification/coordinator.js';
@@ -16,6 +23,7 @@ import { appendVerificationObservation, beginVerificationConversation, verificat
 import { verificationWriter } from './_helpers/verification.js';
 import { retainedDelegationSources } from '../sdk/src/platform/core/verification/delegated-history.js';
 import { verificationOriginalTurns } from '../sdk/src/platform/core/verification/original-turns.js';
+import { observeReadContent } from '../sdk/src/platform/tools/read/observation.js';
 import type { VerificationAccess, VerificationWriter } from '../sdk/src/platform/core/verification/types.js';
 import type { LLMProvider } from '../sdk/src/platform/providers/interface.js';
 
@@ -862,6 +870,63 @@ test('held page audits repeat only for a changed evidence context and still cove
   expect(fake.requests.filter(request => request.context?.battery === 'engine.verification.requirement').length).toBeGreaterThan(5);
 });
 
+test('counterevidence reuse retains draft bindings while changed claims and new invalidating execution receive fresh checks', async () => {
+  const input = { ...state('Earlier native observation. '.repeat(18_000)),
+    response: 'The requested review is saved.', initial: { request: 'Review all source and write review.md.', transcript: [] } };
+  const fake = fakePort((name, question, raw) => {
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    const current = raw as { sources?: { execution?: { tool?: string } }[]; observation?: { execution?: { tool?: string } } };
+    const laterWrite = current.sources?.some(source => source.execution?.tool === 'write') || current.observation?.execution?.tool === 'write';
+    return noulAnswer(name === 'missed' && laterWrite ? .99 : .01);
+  });
+  const verifier = new CompletionVerification(verificationWriter), identity = {};
+  expect((await verifier.prepare(input, access(fake.port, identity))).findings).toHaveLength(0);
+  const auditCount = () => fake.requests.filter(request => ['engine.verification.audit', 'engine.verification.instruction-audit'].includes(request.context?.battery ?? '')).length;
+  const first = auditCount(); expect(first).toBeGreaterThan(0);
+  expect((await verifier.prepare(input, access(fake.port, identity))).findings).toHaveLength(0);
+  expect(auditCount()).toBe(first);
+  expect((await verifier.prepare({ ...input, response: 'The complete findings are available in review.md.' }, access(fake.port, identity))).findings).toHaveLength(0);
+  expect(auditCount()).toBeGreaterThan(first);
+  const changed = { ...input, transcript: [...input.transcript,
+    { role: 'assistant', toolCalls: [{ id: 'erase-report', name: 'write', arguments: { files: [{ path: 'review.md', content: '' }] } }] },
+    { role: 'tool', callId: 'erase-report', outcome: 'ok', content: 'The requested write completed.' },
+  ] };
+  expect((await verifier.prepare(changed, access(fake.port, identity))).findings.length).toBeGreaterThan(0);
+  expect(auditCount()).toBeGreaterThan(first);
+  const beforeReplacement = auditCount();
+  expect((await verifier.prepare(input, access(fake.port, {}))).findings).toHaveLength(0);
+  expect(auditCount()).toBeGreaterThan(beforeReplacement);
+});
+
+test('exact native facts avoid AI paraphrases and distinguish quoted file failures from actual failed execution', async () => {
+  const content = Array.from({ length: 2200 }, (_, index) => `${String(index + 1).padStart(5)} | // Example log text ACTUAL_FUNCTIONAL_CHECK_FAILED ${index}: ${'source documentation '.repeat(5)}`).join('\n');
+  const read = { role: 'tool', callId: 'source-read', content: JSON.stringify({ success: true, files: [{ path: 'src/parser.ts',
+    extract: 'content', lineCount: 2200, content, readObservation: observeReadContent(content, 1, 2200, true) }] }) };
+  const input = { ...state(), request: 'Review the parser and accurately report observed checks.',
+    initial: { request: 'Review the parser and accurately report observed checks.', transcript: [] },
+    transcript: [{ role: 'assistant', toolCalls: [{ id: 'source-read', name: 'read', arguments: { files: [{ path: 'src/parser.ts' }] } }] }, read] };
+  const fake = fakePort((name, question, raw) => {
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    const failed = JSON.stringify((raw as { opened?: unknown }).opened ?? null).includes('ACTUAL_FUNCTIONAL_CHECK_FAILED');
+    return noulAnswer(failed && ['quality_gap', 'observed_gap'].includes(name) ? .99 : .01);
+  });
+  let paraphrases = 0;
+  const writer: VerificationWriter = async request => {
+    if (request.operation === 'evidence' || request.operation === 'merge') paraphrases++;
+    return verificationWriter(request);
+  };
+  const verifier = new CompletionVerification(writer), identity = {};
+  const checked = await verifier.prepare(input, access(fake.port, identity));
+  expect(checked.findings).toHaveLength(0);
+  expect(checked.state.verification).toMatchObject({ exactRuntimeFacts: true });
+  expect(paraphrases).toBe(0);
+  const failed = { ...input, transcript: [...input.transcript,
+    { role: 'assistant', toolCalls: [{ id: 'run-check', name: 'exec', arguments: { commands: [{ cmd: 'run-parser-check' }] } }] },
+    { role: 'tool', callId: 'run-check', outcome: 'error', content: 'ACTUAL_FUNCTIONAL_CHECK_FAILED: parser regression exited 1.' }] };
+  expect((await verifier.prepare(failed, access(fake.port, identity))).findings.length).toBeGreaterThan(0);
+  expect(paraphrases).toBe(0);
+});
+
 test('related original pages stay exact together instead of being rewritten between each opening', async () => {
   const before = state('Original delivery evidence. '.repeat(11_000));
   const input = { ...before, initial: { request: before.request, transcript: before.transcript },
@@ -1114,6 +1179,21 @@ test('a confirmed primary work defect returns for repair even while Jev also ask
   expect(fake.requests.some(request => request.context?.battery === 'engine.verification.audit')).toBeFalse();
 });
 
+test('a confirmed current work defect does not reopen a large varied history merely to return its repair', async () => {
+  const history = Array.from({ length: 60 }, (_, index) => ({ role: 'tool', callId: `prior-${index}`,
+    content: Array.from({ length: 200 }, (_, row) => `Prior observation ${index} row ${row}: already retained contextual details.`).join('\n') }));
+  const source = { ...state(), initial: { request: state().request, transcript: history }, transcript: [...history,
+    { role: 'assistant', toolCalls: [{ id: 'current-gap', name: 'exec', arguments: { commands: [{ cmd: 'compare-review-scope' }] } }] },
+    { role: 'tool', callId: 'current-gap', content: 'The requested server.ts review remains unperformed. Preserve the completed client review.' }] };
+  const fake = fakePort((name, question) => question.type === 'choice' ? choiceAnswer(question, Object.keys(question.criteria)[0]!, .99)
+    : noulAnswer(name === 'quality_gap' || name === 'observed_gap' || name === 'needs_source' ? .99 : .01));
+  const result = await new CompletionVerification(verificationWriter).prepare(source, access(fake.port));
+  expect(result.findings).toHaveLength(1);
+  expect((result.state.verification as { publicationAllowed: boolean }).publicationAllowed).toBe(false);
+  expect(fake.requests.filter(request => request.context?.battery === 'engine.verification.requirement')).toHaveLength(1);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.source')).toBe(false);
+});
+
 test('a checked work repair reaches the model without waiting for publication-only checks on a draft that cannot be delivered', async () => {
   const fake = fakePort((name, question) => {
     if (name === 'false_blocker') throw new Error('Publication checker is unavailable.');
@@ -1349,7 +1429,9 @@ test('a refused checker RESULT retries validation with the same admitted input i
   const input = { request: 'Hello.', response: 'Hello!', conversation, tools: [] };
   const guard = new ResponseCompletionGuard(), before = conversation.getMessageSnapshot();
   expect(await guard.checkUntilAvailable(() => input)).toBeNull();
-  expect(attempts).toBe(2); expect(conversation.getMessageSnapshot()).toEqual(before);
+  // The refused first result is the applicability routing; it retries in place,
+  // then the clean routing and completion checks run once each.
+  expect(attempts).toBe(3); expect(conversation.getMessageSnapshot()).toEqual(before);
 });
 
 test('the native source fence catches nested argument mutations even after the accepted final is appended', async () => {

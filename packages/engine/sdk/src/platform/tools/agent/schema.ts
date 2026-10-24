@@ -26,7 +26,9 @@ export const AGENT_TOOL_SCHEMA: ToolDefinition = {
     ' Discovery: use mode=list to see all agents and their status, mode=templates to see available agent templates. ' +
     'Work handed to this tool with mode=spawn or batch-spawn runs as a contract: a planner splits it into units, and each unit is checked against its acceptance criteria while it works and told what to fix until it passes. ' +
     'The result carries contractStarted, contractId and the owner agent id; the owner agent reports the contract\'s answer when it ends. ' +
-    'Set outsideContract only for an agent whose work needs no checks.',
+    'Use contracts for requested deliverables and work with multiple functional parts: their criteria link each part to the original objective, and the host checks completed parts before integration. ' +
+    'Set outsideContract only for a bounded helper whose complete result can be checked as one part. Standalone agents still require native Jev completion and output checks. ' +
+    'Do not use outsideContract to avoid a rejected plan or move the same unfinished work past its required checks.',
   sideEffects: ['agent', 'workflow', 'state'],
   concurrency: 'serial',
   supportsProgress: true,
@@ -133,7 +135,7 @@ export const AGENT_TOOL_SCHEMA: ToolDefinition = {
       reviewMode: {
         type: 'string',
         enum: ['none', 'contract'],
-        description: 'Whether the agent\'s work is checked (mode: spawn). Default: contract, or none when outsideContract is set. Work without outsideContract always runs as a contract.',
+        description: 'Whether the agent uses contract unit checks (mode: spawn). Default: contract, or none when outsideContract is set. Mandatory Jev completion and output checks apply in either mode.',
       },
       communicationLane: {
         type: 'string',
@@ -166,7 +168,7 @@ export const AGENT_TOOL_SCHEMA: ToolDefinition = {
       },
       outsideContract: {
         type: 'boolean',
-        description: 'If true, run the agent directly, outside any contract, with no checks on its work (mode: spawn, batch-spawn). Default: false, which starts a contract.',
+        description: 'If true, run a bounded helper directly instead of using contract units (mode: spawn, batch-spawn). Native Jev completion and output checks remain mandatory. Use the default contract for requested deliverables or multi-part work. Default: false.',
         default: false,
       },
       // mode: batch-spawn
@@ -206,7 +208,7 @@ export const AGENT_TOOL_SCHEMA: ToolDefinition = {
             orchestrationGraphId: { type: 'string', description: 'Graph id to attach the worker to.' },
             orchestrationNodeId: { type: 'string', description: 'Explicit node id for the worker.' },
             parentNodeId: { type: 'string', description: 'Parent node id for the worker.' },
-            outsideContract: { type: 'boolean', description: 'Run this task as its own agent outside any contract, with no checks. Default: the batch\'s outsideContract.' },
+            outsideContract: { type: 'boolean', description: 'Run a bounded helper as a standalone agent with mandatory Jev completion/output checks, instead of contract units. Default: the batch\'s outsideContract.' },
           },
         },
         description: 'Tasks to hand over at once (mode: batch-spawn). Max 20. The tasks without outsideContract become the proposed units of one contract, whose planner decides the units that run; tasks with outsideContract run as separate agents, up to the active-agent cap.',

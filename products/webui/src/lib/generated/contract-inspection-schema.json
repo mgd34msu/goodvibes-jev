@@ -189,6 +189,62 @@
     "taskEvidence": {
       "type": "string"
     },
+    "reviewInventory": {
+      "type": "object",
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "digest": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "git",
+            "filesystem"
+          ]
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "paths",
+        "digest",
+        "source",
+        "errors"
+      ],
+      "additionalProperties": false
+    },
+    "reviewExclusions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "files",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
     "nativeSource": {
       "type": "object",
       "properties": {
@@ -2837,6 +2893,32 @@
               "type": "string"
             }
           },
+          "contribution": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "outcome",
+                  "support",
+                  "scaffolding",
+                  "secondary"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "verification": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "reason",
+              "verification"
+            ],
+            "additionalProperties": false
+          },
           "disposition": {
             "type": "string",
             "enum": [
@@ -3010,6 +3092,32 @@
                   "items": {
                     "type": "string"
                   }
+                },
+                "contribution": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "outcome",
+                        "support",
+                        "scaffolding",
+                        "secondary"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "verification": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "reason",
+                    "verification"
+                  ],
+                  "additionalProperties": false
                 },
                 "disposition": {
                   "type": "string",
@@ -3433,6 +3541,25 @@
                 },
                 "evidenceDigest": {
                   "type": "string"
+                },
+                "reviewedFiles": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "sha256": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "sha256"
+                    ],
+                    "additionalProperties": false
+                  }
                 }
               },
               "required": [
@@ -3645,6 +3772,32 @@
                   "items": {
                     "type": "string"
                   }
+                },
+                "contribution": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "outcome",
+                        "support",
+                        "scaffolding",
+                        "secondary"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "verification": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "reason",
+                    "verification"
+                  ],
+                  "additionalProperties": false
                 },
                 "disposition": {
                   "type": "string",
@@ -4130,6 +4283,25 @@
                 },
                 "evidenceDigest": {
                   "type": "string"
+                },
+                "reviewedFiles": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "sha256": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "sha256"
+                    ],
+                    "additionalProperties": false
+                  }
                 }
               },
               "required": [
@@ -4758,6 +4930,32 @@
                           "type": "string"
                         }
                       },
+                      "contribution": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "outcome",
+                              "support",
+                              "scaffolding",
+                              "secondary"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "verification": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "reason",
+                          "verification"
+                        ],
+                        "additionalProperties": false
+                      },
                       "disposition": {
                         "type": "string",
                         "enum": [
@@ -5242,6 +5440,25 @@
                       },
                       "evidenceDigest": {
                         "type": "string"
+                      },
+                      "reviewedFiles": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "path": {
+                              "type": "string"
+                            },
+                            "sha256": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "path",
+                            "sha256"
+                          ],
+                          "additionalProperties": false
+                        }
                       }
                     },
                     "required": [
@@ -5969,6 +6186,36 @@
           ],
           "additionalProperties": false
         },
+        "project_review": {
+          "type": "object",
+          "properties": {
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "yes",
+                "no",
+                "uncertain"
+              ]
+            },
+            "probability": {
+              "type": "number"
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "act",
+                "confirm",
+                "escalate"
+              ]
+            }
+          },
+          "required": [
+            "verdict",
+            "probability",
+            "outcome"
+          ],
+          "additionalProperties": false
+        },
         "decisionIds": {
           "type": "array",
           "items": {
@@ -6350,6 +6597,25 @@
           },
           "evidenceDigest": {
             "type": "string"
+          },
+          "reviewedFiles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "sha256"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [

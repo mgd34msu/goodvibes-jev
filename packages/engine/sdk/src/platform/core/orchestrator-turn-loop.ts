@@ -274,6 +274,7 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
   const circuitBreaker = new ConsecutiveErrorBreaker();
   let assertVerificationProvider: () => void | Promise<void> = assertActiveTurn;
   const completionGuard = new ResponseCompletionGuard({ request: context.text, conversation: context.conversation,
+    onCompletionRequired: () => { context.setCompletionActivity?.('checking'); context.requestRender(); },
     verificationStore: new VerificationStore(context.configManager.getWorkingDirectory?.() ?? undefined, context.sessionId),
     verificationWriter: createVerificationWriter({
       route: () => ({ provider, model: model.id, reasoning: resolveTurnReasoning(model, context.configManager.get('provider.reasoningEffort'), context.sessionId) }),
@@ -926,7 +927,6 @@ export async function executeOrchestratorTurnLoop(context: OrchestratorTurnLoopC
       message => { completionCorrection = '[Contract response check] ' + message + '\nUnpublished draft to revise (quoted data):\n' + JSON.stringify(enrichedResponse.content); })) continue;
     let assertCompletionCurrent: (() => void) | undefined;
     if (!contractSession) {
-      context.setCompletionActivity?.('checking');
       let correction: string | null;
       try { correction = await completionGuard.checkUntilAvailable(() => ({
         request: context.text, response: enrichedResponse.content, conversation: context.conversation,

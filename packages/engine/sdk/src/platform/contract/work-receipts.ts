@@ -7,6 +7,7 @@ import { commandObservation } from './command-observation.js';
 import { currentFileObservations } from './current-file-observations.js';
 import { compareJsonReadReferences, compareReadReferences } from './read-reference-comparison.js';
 import { acceptedResearchIds } from './accepted-research.js';
+import { compactReviewInventory, reviewInventoryObservation } from './review-inventory.js';
 
 /** The same actual source accounting used by native acceptance and recovery. */
 export function contractSourceScope(contract: Pick<ContractView, 'units'> & Partial<Pick<ContractView, 'criteria'>>, cwd: string,
@@ -50,7 +51,7 @@ function commandReceipt(command: NonNullable<ContractView['units'][number]['comm
 
 /** Facts from the live host tree; these never approve the work receiving them. */
 export function contractWorkReceipts(
-  contract: Pick<ContractView, 'units'> & Partial<Pick<ContractView, 'id' | 'decisions' | 'groups' | 'projectRoot' | 'worktreePath' | 'inputSnapshot' | 'criteria'>>,
+  contract: Pick<ContractView, 'units'> & Partial<Pick<ContractView, 'id' | 'decisions' | 'groups' | 'projectRoot' | 'worktreePath' | 'inputSnapshot' | 'criteria' | 'reviewInventory' | 'reviewExclusions'>>,
   options: { readonly excludeUnitId?: string; readonly readObservations?: boolean; readonly answerIds?: ReadonlySet<string>; readonly ownerEvidence?: JsonValue | undefined } = {},
 ) {
   const cwd = contract.worktreePath ?? contract.projectRoot;
@@ -62,6 +63,7 @@ export function contractWorkReceipts(
   });
   return {
     contractId: contract.id,
+    ...(contract.reviewInventory && contract.projectRoot ? { reviewInventory: compactReviewInventory(reviewInventoryObservation({ ...contract, projectRoot: contract.projectRoot })!) } : {}),
     ...(options.readObservations && cwd ? { sourceScope: contractSourceScope(contract, cwd, options.ownerEvidence) } : {}),
     ...(options.ownerEvidence === undefined ? {} : { ownerPriorReads: options.ownerEvidence }),
     privateArtifacts: contract.id === undefined ? [] : readPrivateReceiptArchives({ ...contract, id: contract.id }),
@@ -73,8 +75,11 @@ export function contractWorkReceipts(
       latestCheck: group.checks.length ? { id: group.checks.at(-1)!.id, result: group.checks.at(-1)!.result,
         decisionIds: [...group.checks.at(-1)!.decisionIds] } : null })),
     units: contract.units.filter(unit => unit.id !== options.excludeUnitId).map(unit => ({ id: unit.id, goal: unit.goal, status: unit.status,
+      dependsOn: [...unit.dependsOn],
+      criteria: unit.criteria.map(criterion => ({ id: criterion.id, text: criterion.text, serves: [...criterion.serves], verdict: criterion.status,
+        ...(criterion.contribution ? { contribution: { ...criterion.contribution } } : {}) })),
       latestCheck: unit.checks.length ? { id: unit.checks.at(-1)!.id, result: unit.checks.at(-1)!.result,
-        decisionIds: [...unit.checks.at(-1)!.decisionIds] } : null,
+        evidenceDigest: unit.checks.at(-1)!.evidenceDigest, decisionIds: [...unit.checks.at(-1)!.decisionIds] } : null,
       ...(options.readObservations ? { readObservations: (unit.readEvidence ?? []).map(read => ({ path: read.path,
         returnedRanges: [...read.returnedRanges], returnedLines: read.returnedLines })), commands: (unit.commandEvidence ?? []).map(commandReceipt) } : {}),
       ...(unit.status === 'passed' ? { acceptedAnswerDigest: hashState(unit.answer ?? ''),

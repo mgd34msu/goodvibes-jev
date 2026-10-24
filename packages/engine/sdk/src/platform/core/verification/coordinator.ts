@@ -9,6 +9,7 @@ import type { CompletionFinding } from '../response-completion-findings.js';
 import { bindVerificationTargets } from './targets.js';
 import { retainedDelegationSources } from './delegated-history.js';
 import { verificationOriginalTurns } from './original-turns.js';
+import { citedReadSources, nativeReadReceipts } from './read-receipts.js';
 
 const clean = (readings: Readonly<Record<string, { verdict: string; outcome: string }>>) => Object.values(readings).every(reading => reading.verdict === 'no' && reading.outcome === 'act');
 const bounded = (value: unknown, limit: number) => JSON.stringify(value).length <= limit;
@@ -83,10 +84,30 @@ export class CompletionVerification {
   private readonly nodes = new Map<string, VerificationReceipt>();
   private readonly originals = new Map<string, VerificationSource>();
   private readonly sourceOrder = new Map<string, number>();
+  // Counterevidence is conditional on the proposed claims. Reuse it only for
+  // the same draft, scope, live authority and supporting immutable sources.
+  // Component acceptance is separately retained by native contract receipts.
+  private readonly historyQualifications = new WeakMap<object, Map<string, Map<string, readonly string[]>>>();
+  private readonly readReceiptViews = new Map<string, ReturnType<typeof nativeReadReceipts>>();
+  private readonly sourceWitnesses = new Map<string, readonly string[]>();
   private originalTurns: ReadonlyMap<string, readonly VerificationSource[]> = new Map();
   private previousSources: { identity: object; request: string; ids: Set<string> } | undefined;
   private finalEvidence: { key: string; identity: object; frontier: VerificationReceipt[]; seen: Set<string>; opened: readonly VerificationSource[]; earlier: VerificationReceipt[] } | undefined;
   constructor(private readonly writer: VerificationWriter, readonly store = new VerificationStore()) {}
+
+  private readViews(sources: readonly VerificationSource[]) {
+    // Source IDs bind immutable original bytes. Execution metadata is separate
+    // because it carries the native tool association. Reusing this local view
+    // avoids parsing multi-megabyte histories on every independent requirement.
+    const key = verificationHash(sources.map(source => [source.id, source.messageRole, source.execution]));
+    let view = this.readReceiptViews.get(key);
+    if (!view) {
+      view = nativeReadReceipts(sources);
+      if (this.readReceiptViews.size >= 32) this.readReceiptViews.delete(this.readReceiptViews.keys().next().value!);
+      this.readReceiptViews.set(key, view);
+    }
+    return view;
+  }
 
   private options(access: VerificationAccess) { return { ...(access.signal ? { signal: access.signal } : {}), beforeAttempt: access.assertCurrent, ...(access.onRetry ? { onRetry: access.onRetry } : {}) }; }
   private cache(access: VerificationAccess): Map<string, unknown> {
@@ -375,10 +396,41 @@ export class CompletionVerification {
   }
 
   private async audit(requirement: VerificationRequirement, caseEvidence: unknown, sources: readonly VerificationSource[], access: VerificationAccess,
-    response: unknown, audited: Set<string>, accounted: Set<string>, turnContext?: VerificationTurnContext): Promise<VerificationSource[][]> {
+    response: unknown, audited: Set<string>, accounted: Set<string>, turnContext: VerificationTurnContext | undefined, nativeQualification: unknown): Promise<VerificationSource[][]> {
+    const observations = this.readViews(sources);
+    const evidence = caseEvidence as { sources?: VerificationSource[]; earlier?: { id: string }[] };
+    const evidenceSources = this.readViews((evidence.sources ?? []).map(source => this.originals.get(source.id) ?? source)).observations;
+    // These exact excerpts have already passed this requirement's native work
+    // and quality check. Counterevidence auditing reconciles that scoped result
+    // with history; it must not re-review all quoted application code per page.
+    // Full originals remain owned and available to the final content checks.
+    const workEvidence = { ...evidence, nativeQualification, sources: evidenceSources.map(source => {
+      if (!source.id.startsWith('cited-')) return verificationWireSource(source);
+      return { id: source.id, kind: source.kind, reference: source.reference,
+        representation: 'native-checked-source-reference', digest: verificationHash(source.text), bytes: Buffer.byteLength(source.text),
+        meaning: 'Exact source excerpt assessed by the supplied scoped native work check. Its complete text remains retained. This reference does not establish unrelated facts, erase contrary observations or approve final output.' };
+    }) };
+    const available = new Set([...sources, ...observations.ledgers.map(page => page.source)].map(source => source.id));
+    const witnesses = [...new Set([
+      ...(evidence.sources ?? []).map(source => source.id),
+      ...(evidence.earlier ?? []).flatMap(node => this.nodes.get(node.id)?.sourceIds ?? []),
+    ].flatMap(id => this.sourceWitnesses.get(id) ?? [id]))].filter(id => available.has(id));
+    let authority = this.historyQualifications.get(access.identity);
+    if (!authority) { authority = new Map(); this.historyQualifications.set(access.identity, authority); }
+    const scopeKey = verificationHash(['counterevidence-scope-v2', requirement, turnContext?.request, turnContext?.requirements, response]);
+    let qualified = authority.get(scopeKey);
+    if (!qualified) { qualified = new Map(); authority.set(scopeKey, qualified); }
+    for (const source of observations.observations) {
+      const support = qualified.get(source.id);
+      if (support && support.every(id => available.has(id))) accounted.add(source.id);
+    }
+    const remember = (source: VerificationSource) => {
+      if (witnesses.length) qualified!.set(source.id, witnesses);
+    };
+    for (const page of observations.ledgers) { this.originals.set(page.source.id, page.source); this.sourceWitnesses.set(page.source.id, page.originals); }
     // Owner instructions establish obligations. They must still be checked,
     // but a request is not an execution observation that the work failed.
-    const pages = [sources.filter(source => source.kind === 'instruction'), sources.filter(source => source.kind !== 'instruction')]
+    const pages = [observations.observations.filter(source => source.kind === 'instruction'), observations.observations.filter(source => source.kind !== 'instruction')]
       .flatMap(group => verificationFrames(group, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length));
     const checks = await ownedMapLimit(access, pages, 3, async page => {
       // These sets belong to ONE exact source/requirement/answer/authority
@@ -388,13 +440,13 @@ export class CompletionVerification {
       // A held audit was conditional on its then-current positive evidence.
       // Later retrieved proof can resolve that concern. Recheck it under the
       // exact new context; the cache below still prevents identical rereads.
-      const context = { ...turnContext, requirement, response, caseEvidence, sources: page.map(verificationWireSource) };
+      const context = { ...turnContext, requirement, response, caseEvidence: workEvidence, sources: page.map(verificationWireSource) };
       const key = verificationHash(['source-audit-v2', context]), cache = this.cache(access);
       if (cache.has(key)) {
         const accepted = cache.get(key) === true;
         const held = cache.get(key);
         const unresolved = Array.isArray(held) ? page.filter(source => held.includes(source.id)) : page;
-        for (const source of page) { audited.add(source.id); if (accepted || !unresolved.includes(source)) accounted.add(source.id); }
+        for (const source of page) { audited.add(source.id); if (accepted || !unresolved.includes(source)) { accounted.add(source.id); remember(source); } }
         return accepted ? null : unresolved;
       }
       const audit = page.every(source => source.kind === 'instruction') ? verificationInstructionAudit : verificationAudit;
@@ -410,7 +462,7 @@ export class CompletionVerification {
           if (accounted.has(observation.id)) return true;
           const originalTurn = this.originalTurn(observation.id);
           const instruction = observation.kind === 'instruction';
-          const state = { originalRequirement: requirement, requirements: turnContext?.requirements, currentWorkEvidence: caseEvidence,
+          const state = { originalRequirement: requirement, requirements: turnContext?.requirements, currentWorkEvidence: workEvidence,
             ...(instruction ? { originalInstruction: verificationWireSource(observation) } : { observation: verificationWireSource(observation) }),
             ...(originalTurn ? { originalTurn } : {}), currentTurn: turnContext?.currentTurn, proposedResponse: response };
           const sourceKey = verificationHash(['original-counterevidence-v1', state]);
@@ -423,7 +475,7 @@ export class CompletionVerification {
             : 'Retain this exact observation and resolve its specific factual concern.');
           if (!settled && exact.readings.missed.outcome !== 'act') {
             const check = `${requirement.id}:audit:${observation.id}`;
-            const assessment = await this.repairs({ ...turnContext, requirement, response, caseEvidence, sources: [verificationWireSource(observation)],
+            const assessment = await this.repairs({ ...turnContext, requirement, response, caseEvidence: workEvidence, sources: [verificationWireSource(observation)],
               ...(originalTurn ? { originalTurn } : {}),
               unresolvedQuestion: 'Does this specific original observation still establish an unmet obligation or invalidating fact, after the supplied current primary evidence? Name its actual remaining concern, or explain with exact observations why it is resolved. Do not redraft or repeat the underlying task.',
               readings: readingEvidence(exact.readings) }, [check], access);
@@ -439,7 +491,7 @@ export class CompletionVerification {
         unresolved = page.filter((_, index) => !resolved[index]);
       }
       access.assertCurrent(); cache.set(key, accepted ? true : unresolved.map(source => source.id));
-      for (const source of page) { audited.add(source.id); if (accepted || !unresolved.includes(source)) accounted.add(source.id); }
+      for (const source of page) { audited.add(source.id); if (accepted || !unresolved.includes(source)) { accounted.add(source.id); remember(source); } }
       return accepted ? null : unresolved;
     });
     return checks.filter((page): page is VerificationSource[] => page !== null);
@@ -528,7 +580,7 @@ export class CompletionVerification {
       let auditHeld = false;
       const hasPrimary = !auditSources || opened.sources.length > 0;
       const sourceDemanded = run.readings.needs_source.verdict === 'yes' && run.readings.needs_source.outcome === 'act';
-      const heldAspects = Object.entries(run.readings).filter(([, reading]) => reading.verdict !== 'no' || reading.outcome !== 'act').map(([name]) => name);
+      const heldAspects = Object.entries(run.readings).filter(([name, reading]) => name !== 'observed_gap' && (reading.verdict !== 'no' || reading.outcome !== 'act')).map(([name]) => name);
       let resolution: { aspects: string[]; readings: ReturnType<typeof readingEvidence>; decisionId?: string } | undefined;
       // A supported diagnosis plus an unchanged ambiguous question must not
       // become an endless retry of identical input. Obtain a DIFFERENT native
@@ -558,7 +610,14 @@ export class CompletionVerification {
         // interval for counterevidence. These are direct Jev checks, not a new
         // frontier draft for every history page. A changed working-model answer
         // does not invalidate an unchanged source/case qualification.
-        const suspect = await this.audit(requirement, { ...opened, sources: primarySources(opened.sources).map(verificationWireSource) }, auditSources, access, response, audited, accounted, turnContext);
+        const suspect = await this.audit(requirement, { ...opened, sources: primarySources(opened.sources).map(verificationWireSource) }, auditSources, access, response, audited, accounted, turnContext, {
+          kind: 'native-provisional-requirement-check', requirement: { id: requirement.id, text: requirement.text },
+          readings: readingEvidence({ unfinished: run.readings.unfinished, quality_gap: run.readings.quality_gap }),
+          ...(resolution ? { resolution } : {}), ...(run.result.decisionId ? { decisionId: run.result.decisionId } : {}),
+          evidenceBinding: verificationHash({ ...opened, sources: primarySources(opened.sources).map(verificationWireSource) }),
+          ...(focusedAssessment?.qualifiedNoIssues?.length ? { qualifiedDiagnosis: focusedAssessment.noIssues.filter(item => focusedAssessment!.qualifiedNoIssues!.includes(item.check)) } : {}),
+          meaning: 'This runtime just obtained a positive Jev work/quality assessment of this exact requirement and the bound primary observations. It is provisional until EVERY original history interval is checked for contrary facts. It does not establish another requirement, factual claims outside this scope, unchanged current files or final-response approval. Identify actual unaccounted counterevidence on the supplied page; do not repeat the component review merely because its quoted source bodies are referenced here.',
+        });
         checkpoint();
         if (!suspect.length) return { requirement, readings: run.readings, resolution, state, sourceExhausted: false, auditHeld: false };
         const unseen = suspect.filter(page => page.some(source => !seen.has(`source:${source.id}`)));
@@ -569,7 +628,12 @@ export class CompletionVerification {
         auditHeld = true;
       }
       if (hasPrimary && !auditHeld && (run.readings.needs_source.verdict === 'no' && run.readings.needs_source.outcome === 'act' || resolution)) return { requirement, readings: run.readings, resolution, state, sourceExhausted: false, auditHeld: false };
-      if (hasPrimary && !sourceDemanded && [run.readings.unfinished, run.readings.quality_gap].some(reading => reading.verdict === 'yes' && reading.outcome === 'act'))
+      // A concrete work defect already forbids completion. Diagnose its exact
+      // repair against these primaries before retrieving unrelated history.
+      // A simultaneous request for more proof cannot turn this into a scan of
+      // every original; a checked no-issue assessment still requires recheck.
+      if (hasPrimary && (!sourceDemanded || run.readings.observed_gap.verdict === 'yes' && run.readings.observed_gap.outcome === 'act')
+        && [run.readings.unfinished, run.readings.quality_gap].some(reading => reading.verdict === 'yes' && reading.outcome === 'act'))
         return { requirement, readings: run.readings, resolution, state, sourceExhausted: false, auditHeld: false };
       for (;;) {
         access.assertCurrent(); if (defer()) throw new VerificationDeferredError();
@@ -754,6 +818,20 @@ export class CompletionVerification {
     for (const [position, source] of sources.entries()) { this.originals.set(source.id, source); this.sourceOrder.set(source.id, position); }
     const ledger = await this.ledger(sources.filter(source => source.kind === 'instruction'), access);
     const observations = sources.filter(source => source.kind !== 'answer');
+    const readView = this.readViews(observations), readReceipts = readView.receipts;
+    const citedPages = citedReadSources(readView.reads, typeof full.response === 'string' ? full.response : '');
+    const citedSources = citedPages.map(page => page.source);
+    for (const receipt of readReceipts) {
+      this.originals.set(receipt.id, receipt);
+      const provenance = JSON.parse(receipt.text) as { originals?: string[]; originalSources?: string[] };
+      const originalIds = provenance.originals ?? provenance.originalSources!;
+      this.sourceWitnesses.set(receipt.id, originalIds);
+      this.sourceOrder.set(receipt.id, Math.min(...originalIds.map(id => this.sourceOrder.get(id) ?? sources.length)));
+    }
+    for (const page of [...readView.ledgers, ...citedPages]) {
+      this.originals.set(page.source.id, page.source); this.sourceWitnesses.set(page.source.id, page.originals);
+      this.sourceOrder.set(page.source.id, Math.min(...page.originals.map(id => this.sourceOrder.get(id) ?? sources.length)));
+    }
     const initial = full.initial as { transcript?: readonly Record<string, unknown>[] } | null;
     const earlierCalls = new Set((initial?.transcript ?? []).filter(message => message.role === 'tool').map(message => message.callId));
     const currentCalls = new Set((initial?.transcript ? (full.transcript ?? []) as readonly Record<string, unknown>[] : [])
@@ -769,12 +847,31 @@ export class CompletionVerification {
     // history no longer fits the overview, retrieve originals and audit every
     // interval instead of rebuilding a tree of history summaries on resume.
     // An index still supplies no evidence or authority to approve completion.
-    let indexed = observations.reduce((total, source) => total + source.text.length, 0) > 250_000
-      || initial != null && !bounded(observations.map(verificationWireSource), VERIFICATION_OVERVIEW_CHARACTERS);
+    // Classify runtime facts once, independently of answer wording. Executed
+    // read contents describe the application, not additional runtime events.
+    // Their native receipt view retains every executed read fact; unchanged
+    // qualified fact nodes can then serve each task and its final synthesis.
+    const factSources = readView.observations;
+    const exactRuntimeFacts = readReceipts.length > 0
+      && bounded([...factSources, ...citedSources].map(verificationWireSource), MAX_EXACT_CASE_CHARACTERS - 4_000);
+    let indexed = !exactRuntimeFacts && (factSources.reduce((total, source) => total + source.text.length, 0) > 250_000
+      || initial != null && !bounded(factSources.map(verificationWireSource), readReceipts.length ? MAX_EXACT_CASE_CHARACTERS : VERIFICATION_OVERVIEW_CHARACTERS));
     let overview: VerificationReceipt[];
-    if (indexed) overview = this.sourceIndex(observations);
+    if (exactRuntimeFacts) {
+      // A bounded exact native view needs no AI-written factual paraphrase or
+      // separate verification of that paraphrase. Every runtime observation is
+      // supplied directly to the work checks; read bodies remain retrievable.
+      const readOriginals = new Set(readView.ledgers.flatMap(page => page.originals));
+      overview = [...this.sourceIndex(citedSources, 8_000), ...this.sourceIndex(observations.filter(source => readOriginals.has(source.id)), 8_000)];
+    } else if (indexed) overview = this.sourceIndex(observations);
     else {
-      try { overview = await this.ownedAttempt(access, local => this.evidenceTree(observations, ledger, local)); }
+      try {
+        overview = await this.ownedAttempt(access, local => this.evidenceTree(factSources, ledger, local));
+        // Qualified runtime facts do not substitute for source review. Keep
+        // all exact read bodies available for specific quality/claim questions.
+        const readOriginals = new Set(readView.ledgers.flatMap(page => page.originals));
+        if (readOriginals.size) overview = [...overview, ...this.sourceIndex(observations.filter(source => readOriginals.has(source.id)))];
+      }
       catch (error) {
         access.assertCurrent();
         if (!(error instanceof VerificationSubdivisionError)) throw error;
@@ -886,7 +983,32 @@ export class CompletionVerification {
         if (bounded(candidate.map(verificationWireSource), VERIFICATION_FRAME_CHARACTERS * 2)) delegatedPrimary = candidate;
       }
     }
-    const recent = [...new Map([...hostPrimary, ...checkedAnswer, ...currentPrimary, ...delegatedPrimary].map(source => [source.id, source])).values()];
+    const receiptsByExecution = new Map<string, VerificationSource[]>();
+    for (const receipt of readReceipts) {
+      const key = verificationHash(receipt.execution), group = receiptsByExecution.get(key) ?? [];
+      group.push(receipt); receiptsByExecution.set(key, group);
+    }
+    // A latest execution may be too large for the current window. Its first
+    // and last raw fragments cannot reconstruct the original JSON, but the
+    // complete retained execution can still supply its authenticated receipt.
+    const selectedCurrent = currentPrimary.filter(source => source.execution?.tool !== 'read' || !receiptsByExecution.has(verificationHash(source.execution)));
+    const recent = [...new Map([...(exactRuntimeFacts ? factSources : []), ...hostPrimary, ...checkedAnswer,
+      ...(exactRuntimeFacts ? [] : citedSources), ...selectedCurrent, ...delegatedPrimary].map(source => [source.id, source])).values()];
+    const recentFor = (requirement: VerificationRequirement) => exactRuntimeFacts
+      ? [...recent, ...citedSources.filter(source => {
+        const path = (JSON.parse(source.text) as { path: string }).path;
+        const filename = path.split('/').at(-1)!;
+        // Literal targets are routing data, never proof or semantic approval.
+        return requirement.text.includes(path) || requirement.text.includes(filename);
+      })] : recent;
+    // Scope and honesty checks need actual inspection receipts, not a second
+    // full-codebase review of every file the worker opened. Keep this native
+    // ledger near the current result; claim-specific retrieval still opens the
+    // unchanged originals whenever quality or factual support needs them.
+    for (const receipt of readView.ledgers.map(page => page.source).reverse()) {
+      if (recent.some(source => source.id === receipt.id)) continue;
+      if (bounded([...recent, receipt].map(verificationWireSource), MAX_EXACT_CASE_CHARACTERS - VERIFICATION_FRAME_CHARACTERS)) recent.push(receipt);
+    }
     const rememberSources = () => { this.previousSources = { identity: access.identity, request: requestKey, ids: new Set(sources.map(source => source.id)) }; };
     const key = verificationHash([sources.map(source => source.id), ledger, full.response, overview.map(node => this.compactNode(node))]);
     if (this.finalEvidence?.key !== key || this.finalEvidence.identity !== access.identity)
@@ -910,7 +1032,7 @@ export class CompletionVerification {
         const local = indexed ? { ...access, signal: access.signal ? AbortSignal.any([access.signal, controller.signal]) : controller.signal,
           assertCurrent: () => { access.signal?.throwIfAborted(); access.assertCurrent(); if (controller.signal.aborted) throw new VerificationDeferredError(); } } : access;
         try {
-          const entry = retained ?? await this.inspect(requirement, ledger, overview, answer, local, indexed ? observations : undefined, () => indexed && confirmedGap, recent, full.previousReview ?? null, undefined, turnContext);
+          const entry = retained ?? await this.inspect(requirement, ledger, overview, answer, local, indexed ? observations : undefined, () => indexed && confirmedGap, recentFor(requirement), full.previousReview ?? null, undefined, turnContext);
           local.assertCurrent(); cache.set(resultKey, captureStrictJudgmentJson(entry));
           if ([entry.readings.unfinished, entry.readings.quality_gap].some(reading => reading.verdict === 'yes' && reading.outcome === 'act')) {
             confirmedGap = true;
@@ -928,7 +1050,7 @@ export class CompletionVerification {
     }
     const findings: CompletionFinding[] = [];
     const caseFindings = await ownedMapLimit(access, cases.map((entry, index) => ({ entry, index })), 3, async ({ entry, index }) => {
-      const failed = Object.entries(entry.readings).filter(([name, reading]) => !entry.resolution?.aspects.includes(name)
+      const failed = Object.entries(entry.readings).filter(([name, reading]) => name !== 'observed_gap' && !entry.resolution?.aspects.includes(name)
         && (name !== 'needs_source' || entry.sourceExhausted) && (reading.verdict !== 'no' || reading.outcome !== 'act'));
       if (!failed.length && !entry.auditHeld) return [];
       const assessment = await this.repairs({ ...entry.state, readings: readingEvidence(entry.readings) }, [`${entry.requirement.id}:result`], access);
@@ -937,9 +1059,9 @@ export class CompletionVerification {
       // settle a held gate. Reuse the exact retrieval cursor and independently
       // recheck the requirement, quality and every remaining original audit.
       const rechecked = await this.inspect(entry.requirement, ledger, overview, answer, access,
-        indexed ? observations : undefined, () => false, recent, full.previousReview ?? null, assessment, turnContext);
+        indexed ? observations : undefined, () => false, recentFor(entry.requirement), full.previousReview ?? null, assessment, turnContext);
       const stillHeld = rechecked.auditHeld || Object.entries(rechecked.readings).some(([name, reading]) =>
-        !rechecked.resolution?.aspects.includes(name) && (name !== 'needs_source' || rechecked.sourceExhausted) && (reading.verdict !== 'no' || reading.outcome !== 'act'));
+        name !== 'observed_gap' && !rechecked.resolution?.aspects.includes(name) && (name !== 'needs_source' || rechecked.sourceExhausted) && (reading.verdict !== 'no' || reading.outcome !== 'act'));
       if (stillHeld) {
         const unresolved = 'unaccountedOriginals' in rechecked.state ? rechecked.state.unaccountedOriginals[0] : undefined;
         const originalTurn = unresolved ? this.originalTurn(unresolved.id) : undefined;
@@ -965,18 +1087,19 @@ export class CompletionVerification {
       rememberSources();
       return { state: { requirements: ledger, response: answer, verification: { heldRequirements: findings.map(finding => finding.check), publicationAllowed: false } }, findings };
     }
-    const primary = indexed ? [...new Map(cases.flatMap(entry => entry.state.opened.sources.map(source => source.id)).map(id => [id, this.originals.get(id)!])).values()] : [];
+    const directEvidence = indexed || exactRuntimeFacts;
+    const primary = directEvidence ? [...new Map(cases.flatMap(entry => entry.state.opened.sources.map(source => source.id)).map(id => [id, this.originals.get(id)!])).values()] : [];
     // Earlier case records were already qualified against their originals.
     // Re-expanding their source IDs and summarizing all of them again at the
     // publication boundary repeats the entire retrieval/reduction workload.
     // Preserve the existing records and their explicit provenance instead.
-    const earlierEvidence = indexed ? [...new Map(cases.flatMap(entry => entry.state.opened.earlier)
+    const earlierEvidence = directEvidence ? [...new Map(cases.flatMap(entry => entry.state.opened.earlier)
       .map(node => [node.id, this.nodes.get(node.id)!])).values()] : [];
     // Already bounded exact primaries need no additional summary proposal.
     // Requirement/quality checks and the complete-history audit qualified the
     // result, and the final publication battery can inspect these same bytes.
-    const exactPrimary = indexed && bounded(primary.map(verificationWireSource), MAX_EXACT_CASE_CHARACTERS) ? primary : [];
-    const deliveryEvidence = indexed ? [...earlierEvidence, ...(exactPrimary.length ? [] : await this.evidenceTree(primary, ledger, access))] : overview;
+    const exactPrimary = directEvidence && bounded(primary.map(verificationWireSource), MAX_EXACT_CASE_CHARACTERS) ? primary : [];
+    const deliveryEvidence = directEvidence ? [...earlierEvidence, ...(exactPrimary.length ? [] : await this.evidenceTree(primary, ledger, access))] : overview;
     const publicationOriginals = [...new Map([...recent, ...exactPrimary, ...this.finalEvidence.opened].map(source => [source.id, source])).values()]
       .sort((left, right) => (this.sourceOrder.get(left.id) ?? 0) - (this.sourceOrder.get(right.id) ?? 0));
     const state: Record<string, unknown> = {
@@ -995,7 +1118,8 @@ export class CompletionVerification {
       verification: { currentTurn: turnContext.currentTurn, requirementChecks: cases.map(({ requirement, readings, resolution }) => ({ requirement: requirement.id, readings: readingEvidence(readings),
         ...(resolution ? { resolution, meaning: 'Fresh native Jev fulfillment and work-quality check of these uncertain aspects against the exact original requirement and actual primary observations; original negative readings remain unchanged. Original-source verification and history audits remain required under the stated verification mode. This is not final-response approval.' } : {}) })),
         deferredRequirements: ledger.filter(requirement => !cases!.some(entry => entry.requirement.id === requirement.id)).map(requirement => requirement.id),
-        sourceCount: sources.length, meaning: indexed ? 'Relevant primary records were retrieved and checked. Each provisionally accepted requirement was also audited against EVERY complete original source page for unaccounted counterevidence. Retrieval indexes and assistant/report claims are not execution proof. Final exact-response publication checks remain required.' : 'These records were independently checked against complete original source pages. They are evidence, not completion authority; assistant/report assertions remain assertions. Missing source content never establishes completion.' },
+        sourceCount: sources.length, nativeReadReceiptPages: readReceipts.length, exactRuntimeFacts,
+        meaning: indexed ? 'Relevant primary records were retrieved and checked. Original instructions and execution observations were audited for unaccounted counterevidence. Native read receipts preserve actual returned ranges, hashes and truncation; the contents of a read file are separately retrievable evidence, not events executed by the runtime. These receipts never establish substantive review quality. Retrieval indexes and assistant/report claims are not execution proof. Final exact-response publication checks remain required.' : 'Runtime facts were independently checked against complete native-observation pages. Read-execution facts retain actual returned ranges, not substantive review quality. Original read bodies remain available for claim-specific retrieval. Source-index pages retain locations only, never qualified facts or approval. Assistant/report assertions remain assertions; missing source content never establishes completion. Final exact-response publication checks remain required.' },
       previousReview: null,
     };
     const integration = await verificationIntegration.run(access.port, state as never, { ...this.options(access), site: verificationIntegration.name });

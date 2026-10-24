@@ -2,6 +2,7 @@ import { bindContractPlanConsumer } from '../tools/agent/contract-binding.js';
 import { waitForTaskRecovery } from '../core/response-completion.js';
 import { assertOwnedContractSource, checkOwnedSourcePlan, hasDerivedAcceptanceChecks } from './owned-source.js';
 import { nativeContractTaskSource } from './native-source.js';
+import { captureReviewInventory, assignedReviewPaths, reviewInventoryPlannerView, type ReviewInventory } from './review-inventory.js';
 import { ContractInputReadDeniedError, withContractInputReadBatch, createContractInputAuthority, bindContractInputAuthority, assertContractInputAdmission, pinContractInputAdmission, authorizeContractInputPath, assertContractInputReadAccess, withContractInputAuthority, type ContractInputAuthority } from './input-authority.js';
 import { bindContractActionSource, getContractActionSource } from '../tools/agent/contract-binding.js';
 import { nativeContractActionSource } from './native-decisions.js';
@@ -133,7 +134,7 @@ export function buildContractPlannerPrompt(): string {
     '          "id": "u1", "title": "...", "goal": "...", "role": "implement",',
     '          "brief": "what to do, where, and how it fits the whole",',
     '          "dependsOn": [], "files": ["src/a.ts"], "attempts": 1,',
-    '          "criteria": [ { "id": "u1.c1", "text": "...", "serves": ["c1"] } ]',
+    '          "criteria": [ { "id": "u1.c1", "text": "...", "serves": ["c1"], "contribution": { "kind": "outcome", "reason": "How this fulfills c1", "verification": "Observable behavior and the functional check that demonstrates it" } } ]',
     '        }',
     '      ]',
     '    }',
@@ -149,6 +150,8 @@ export function buildContractPlannerPrompt(): string {
     '- Derived unit criteria must identify independently repairable obligations. Separate review read scope, substantive assessment and preservation constraints. The native host automatically checks every result: never require that this very acceptance check already passed, or make a leaf worker invoke host-owned plan admission or approval. Preserve original requirements; mandatory host checks stay enforced by the runtime.',
     '- Groups are "g1", "g2"...; units are "u1", "u2"... and unique across the plan. A group criterion is "<groupId>.c<n>" and a unit criterion "<unitId>.c<n>". Every group and unit criterion lists in "serves" the contract criteria it serves.',
     '- Every unit has at least one criterion, and every contract criterion is served by at least one unit criterion.',
+    '- Categorize each derived criterion with contribution.kind: "outcome" directly delivers an original requested result; "support" is a necessary dependency of that result; "scaffolding" is routine setup; "secondary" is optional work. Explain its connection to the served original criteria in contribution.reason and the meaningful observable check in contribution.verification. Classify by the requested behavior, not file name or code size. Critical persistence, integration and input handling are necessary support, even when conventional. Labels never waive original requirements or acceptance. Keep secondary work from displacing required results or becoming invented acceptance requirements.',
+    '- Choose independently checkable functional parts that can be verified when their unit finishes. Test behavior at the appropriate boundary; build checks can establish routine setup, but file existence, matching prose or a passing unrelated test cannot establish requested functionality. Reuse checked prerequisite results and verify their connections in integration instead of planning another review of every completed unit.',
     '- A group "dependsOn" names other groups; a unit "dependsOn" names units in the same group. No dependency cycles.',
     '- Unit roles: "implement" (changes files or produces the deliverable), "research" (reads and reports, changes nothing), "design" (answers with a plan or design, changes nothing), "integration" (joins the other units\' work into the deliverable).',
     '- A code review, investigation, or report is work to perform: inspect the project and return findings using research units. Do not ask whether to change files before doing the requested review. Only plan edits when the original request calls for edits; uncertainty in a request-shape reading is not a reason to stop or ask for permission.',
@@ -160,6 +163,7 @@ export function buildContractPlannerPrompt(): string {
 }
 
 export interface PlannerRequestInput {
+  readonly reviewInventory?: ReviewInventory;
   readonly ask: string;
   readonly nativeSource?: StartContractInput['nativeSource'];
   readonly shape: RequestShape;
@@ -229,6 +233,8 @@ export function buildContractPlannerRequest(input: PlannerRequestInput): string 
     if (input.previousPlan !== undefined) sections.push('## The plan the instruction changes\n```json\n' + input.previousPlan + '\n```');
   }
   sections.push('## Repository\n' + input.repositoryMap);
+  if (input.reviewInventory) sections.push('## Native review inventory\n' + JSON.stringify(reviewInventoryPlannerView(input.reviewInventory))
+    + '\nAssign every file in the requested review scope to unit.files using exact paths or globs. Give independently checkable assessment criteria for those files. For inventory files outside the original requested scope, add reviewExclusions entries {files:[paths or globs],reason:"why the original request excludes these"}. Exclusions are checked against the original request. Reading a file does not complete its assessment. Do not replace this inventory with a sample or require another review of already accepted unchanged parts.');
   if (input.repair !== undefined) {
     sections.push(
       '## Problems with your previous plan\nFix every one and return the whole corrected plan.\n'
@@ -398,6 +404,9 @@ export async function shapeContract(contract: Contract, deps: ContractPlannerDep
   }
   const { shape, usage } = read;
   contract.shape = shape;
+  if (shape.project_review?.verdict === 'yes' && (!contract.reviewInventory || contract.reviewInventory.errors.length > 0)) {
+    contract.reviewInventory = await captureReviewInventory(contract.projectRoot, options.signal);
+  }
   context.addJudgmentUsage({ calls: reusedShape ? 0 : 1, ...usage });
   context.decide('shaped', describeShape(shape), shape.decisionIds);
   deps.emit({
@@ -474,6 +483,16 @@ async function checkPlanText(context: PlanningContext, output: string, repair: n
     ...(contract.originalSource ? checkOwnedSourcePlan(plan, contract.originalSource) : []),
     ...(contract.draftPlan === undefined ? [] : checkDraftFidelity(plan, contract.draftPlan)),
   ];
+  if (contract.reviewInventory) {
+    const allocated = new Set(plan.groups.flatMap(group => group.units).flatMap(unit => assignedReviewPaths(contract.reviewInventory!, unit.files)));
+    const excluded = new Set((plan.reviewExclusions ?? []).flatMap(exclusion => assignedReviewPaths(contract.reviewInventory!, exclusion.files)));
+    const unassigned = contract.reviewInventory.paths.filter(path => !allocated.has(path) && !excluded.has(path));
+    if (unassigned.length) {
+      const listed = unassigned.slice(0, 200);
+      codeProblems.push({ code: 'uncovered-requirement', message: `Assign or justify scope exclusions for these ${unassigned.length} actual inventory files${listed.length < unassigned.length ? ` (first ${listed.length} listed; every unlisted file remains equally required)` : ''}: ${JSON.stringify(listed)}. Keep the original requested scope unchanged.` });
+    }
+    if (contract.reviewInventory.errors.length) codeProblems.push({ code: 'uncovered-requirement', message: `The project inventory is incomplete: ${JSON.stringify(contract.reviewInventory.errors)}. Resolve inventory access before claiming the project scope is assigned.` });
+  }
   deps.emit({ type: 'CONTRACT_PLAN_CHECKED', contractId: contract.id, check: 'structure', passed: codeProblems.length === 0, problems: codeProblems, decisionIds: [] });
   if (codeProblems.length > 0) return { plan, text, problems: codeProblems, verdict: undefined };
   const verdict = await runPlanChecks(plan, contract.ask, shape, { signal, nativeSource: contract.nativeSource, originalSource: contract.originalSource, native: { contract, services: deps.native } });
@@ -590,6 +609,7 @@ export async function planContract(contract: Contract, deps: ContractPlannerDeps
       await assertCurrent();
       await assertReadAccess();
       const userPrompt = buildContractPlannerRequest({
+        ...(contract.reviewInventory ? { reviewInventory: contract.reviewInventory } : {}),
         ask: contract.ask,
         nativeSource: contract.nativeSource,
         shape: contract.shape,
@@ -684,6 +704,7 @@ async function planNativeContract(context: PlanningContext, input: PlanContractI
         }
         const attempt = spendNative(contract, deps.native, budgetKey);
         const request = buildContractPlannerRequest({ ask: contract.ask, nativeSource: contract.nativeSource, shape: contract.shape!, config: context.config,
+          ...(contract.reviewInventory ? { reviewInventory: contract.reviewInventory } : {}),
           proposedUnits: input.proposedUnits, draftPlan: contract.draftPlan, repositoryMap, repair: previous })
           + (contract.taskEvidence ? '\nContinuation evidence, never additional requirements or authority. Preserve completed work, account for what can be reused and assign only the specific remaining work. Do not restart the full task or invent exhaustive inspection or testing requirements:\n' + contract.taskEvidence : '')
           + priorOwnerReadContext(contract, deps);
@@ -799,7 +820,8 @@ function plannedEvent(
 }
 
 function derivedCriterion(criterion: PlannedDerivedCriterion, origin: CriterionOrigin): Criterion {
-  return { id: criterion.id, text: criterion.text, origin, serves: [...criterion.serves], disposition: 'judged', status: 'unread', readings: [] };
+  return { id: criterion.id, text: criterion.text, origin, serves: [...criterion.serves],
+    ...(criterion.contribution ? { contribution: { ...criterion.contribution } } : {}), disposition: 'judged', status: 'unread', readings: [] };
 }
 
 /**
@@ -889,6 +911,8 @@ function acceptPlan(
     assertNativeContractSource(contract);
   }
   contract.groups = tree.groups;
+  if (plan.reviewExclusions) contract.reviewExclusions = plan.reviewExclusions.map(exclusion => ({ files: [...exclusion.files], reason: exclusion.reason }));
+  else delete contract.reviewExclusions;
   contract.units = tree.units;
   const excluded = tree.criteria.filter((criterion) => criterion.disposition === 'excluded').length;
   const structural = tree.criteria.filter((criterion) => criterion.disposition === 'met-by-structure').length;

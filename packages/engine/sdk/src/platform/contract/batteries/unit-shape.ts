@@ -1,4 +1,5 @@
 import { nativeContractSourceData } from '../native-source.js';
+import type { WorkContribution } from '../types.js';
 /**
  * `contract.unit-shape` (docs/design/contract-runner.md section 3.4): what
  * kind of work a planned unit is, and whether it does less than the contract
@@ -81,6 +82,7 @@ export interface UnitShapeUnit {
   readonly goal: string;
   readonly brief: string;
   readonly criteria: readonly string[];
+  readonly contributions?: readonly { readonly criterion: string; readonly contribution: WorkContribution }[];
 }
 
 export interface UnitShapeSibling {
@@ -96,6 +98,7 @@ export interface UnitShapeRequirement {
 }
 
 export interface UnitShapeInput {
+  readonly reviewExclusions?: readonly { readonly files: readonly string[]; readonly reason: string }[];
   /** Complete native source retained while examining derived work. */
   readonly nativeSource?: import('../types.js').NativeContractSource | undefined;
   /** The contract goal. */
@@ -111,7 +114,7 @@ export interface ShapedUnit {
   readonly title: string;
   readonly goal: string;
   readonly brief: string;
-  readonly criteria: readonly { readonly text: string; readonly serves: readonly string[] }[];
+  readonly criteria: readonly { readonly text: string; readonly serves: readonly string[]; readonly contribution?: WorkContribution }[];
 }
 
 /** What `contract.unit-shape` reads about `unit` in a plan with `units` and contract `criteria`. */
@@ -124,7 +127,9 @@ export function unitShapeInput(
   const served = new Set(unit.criteria.flatMap((criterion) => criterion.serves));
   return {
     goal,
-    unit: { title: unit.title, goal: unit.goal, brief: unit.brief, criteria: unit.criteria.map((criterion) => criterion.text) },
+    unit: { title: unit.title, goal: unit.goal, brief: unit.brief, criteria: unit.criteria.map((criterion) => criterion.text),
+      ...(unit.criteria.some(criterion => criterion.contribution) ? { contributions: unit.criteria.flatMap(criterion => criterion.contribution
+        ? [{ criterion: criterion.text, contribution: { ...criterion.contribution } }] : []) } : {}) },
     otherUnits: units.filter((other) => other !== unit).map((other) => ({ title: other.title, goal: other.goal, criteria: other.criteria.map((criterion) => criterion.text) })),
     requirements: criteria.filter((criterion) => served.has(criterion.id)).map(({ id, text }) => ({ id, text })),
   };
@@ -161,13 +166,15 @@ function questionsFor(input: UnitShapeInput): Record<string, Question> {
   return {
     role: ROLE_QUESTION,
     acceptance_problem: noul({
-      question: 'Examine each entry of unit.criteria separately: separate entries are already independently judged. Does any SINGLE entry make this worker’s acceptance circular, assign host-only approval to the worker, or combine independent obligations so that its rejection cannot identify a specific repair?',
+      question: 'Examine each entry of unit.criteria separately: separate entries are already independently judged. Does any SINGLE entry make this worker’s acceptance circular, assign host-only approval to the worker, combine independent obligations so that its rejection cannot identify a specific repair, or have a materially inaccurate contribution classification or inadequate verification method in unit.contributions?',
       interpretation: [
         'A prerequisite that this very acceptance check already passed is circular. The host performs this check after the work is returned.',
         'Requirements about the BEHAVIOR OF SOFTWARE being implemented are substantive work: implementing or testing a program that publishes only after approval is NOT circular and should read no.',
         'Ordinary test commands and auditing existing approval records are substantive work, not host-only approval operations.',
         'Keep naturally connected facts about one behavior together. Separate entries for read scope, semantic assessment and preservation are independently repairable and should read no.',
         'Preserve every original requirement and mandatory host check; repair only defective derived criteria, never waive approval or narrow the work.',
+        'Contribution outcome means an original requested result, support means a necessary dependency, scaffolding means routine setup, and secondary means optional work. Judge against the actual original request. A necessary dependency cannot be dismissed as optional or routine to evade meaningful functional verification. Labels and prior checks do not prove this part is complete. Conventional setup may use build/execution checks; requested behavior needs relevant behavior evidence. File existence, matching prose and unrelated passing checks are inadequate for functionality.',
+        'When reviewExclusions is supplied, also answer yes if an exclusion removes files or behavior the original request requires reviewing. Excluding dependency/build/runtime artifacts from a code review may be legitimate; excluding required first-party source merely because it is supporting code or hard to inspect narrows the requested review. Reasons are proposals, not permission to omit requested work.',
       ],
     }, { true: 'A single derived entry has a circular prerequisite, requires this worker to execute host-only approval, or bundles independently repairable obligations.', false: 'Each derived entry describes independently checkable substantive work; required software approval behavior is valid, and actual host acceptance is performed by the runtime.' }),
     ...Object.fromEntries(input.requirements.flatMap(requirement => [
@@ -247,6 +254,18 @@ const EXPORT_UNITS: readonly Sibling[] = [['CSV export', 'Add CSV export', ['Rep
 const { durations, combinedDurationRequirements, version } = PROOF_PLANS;
 
 const FIXTURES: readonly UnitShapeFixture[] = [
+  fixture('required persistence cannot be optional boilerplate', 'Build a task list whose tasks survive restart', [], {
+    title: 'Persist tasks', goal: 'Tasks survive application restart', brief: 'Implement durable task storage.',
+    criteria: ['Created tasks survive restart'], contributions: [{ criterion: 'Created tasks survive restart', contribution: {
+      kind: 'secondary', reason: 'Storage is conventional boilerplate.', verification: 'Check that storage.ts exists.' } }],
+  }, [], { acceptanceProblem: 'yes' }),
+  fixture('contribution checks follow requested behavior and routine setup', 'Build a task list whose tasks survive restart', [], {
+    title: 'Persist tasks', goal: 'Tasks survive application restart', brief: 'Implement storage and its necessary package setup.',
+    criteria: ['Created tasks survive restart', 'The package builds and starts'], contributions: [
+      { criterion: 'Created tasks survive restart', contribution: { kind: 'outcome', reason: 'The user explicitly requires tasks to survive restart.', verification: 'Create a task, restart the application, and retrieve that exact task.' } },
+      { criterion: 'The package builds and starts', contribution: { kind: 'scaffolding', reason: 'Package setup is needed to execute the requested application.', verification: 'Build the package and start the produced executable.' } },
+    ],
+  }, [], { acceptanceProblem: 'no' }),
   fixture('current host approval is circular', 'Review assigned source', [], {
     title: 'Source review', goal: 'Review assigned source', brief: 'Read and assess the assigned source.',
     criteria: ['All assigned source is reviewed and this native unit acceptance check has already passed'],
@@ -421,7 +440,7 @@ function assertFixture(entry: UnitShapeFixture): void {
 
 const HEADER = {
   name: 'contract.unit-shape',
-  version: 5,
+  version: 6,
   description: 'A unit’s work role, independently checkable derived acceptance criteria, and coverage of the original requirements it serves.',
   accuracyFloor: 0.9,
 } as const;
@@ -436,6 +455,7 @@ export const unitShape: UnitShape = {
     const { unit } = input;
     const state = {
       goal: input.goal,
+      ...(input.reviewExclusions ? { reviewExclusions: input.reviewExclusions.map(exclusion => ({ files: [...exclusion.files], reason: exclusion.reason })) } : {}),
       hostOperations: {
         meaning: 'Actual contract runtime responsibilities; these operations do not execute as extra worker units. No past or current approval is asserted here.',
         beforeWork: 'The host runs Jev plan checks before accepting the plan for execution.',
@@ -444,7 +464,8 @@ export const unitShape: UnitShape = {
         source: 'contract/planner.ts, contract/agent-hooks.ts and contract/completion.ts enforce these operations.',
       },
       ...(input.nativeSource === undefined ? {} : { nativeSource: nativeContractSourceData(input.nativeSource) }),
-      unit: { title: unit.title, goal: unit.goal, brief: unit.brief, criteria: [...unit.criteria] },
+      unit: { title: unit.title, goal: unit.goal, brief: unit.brief, criteria: [...unit.criteria],
+        ...(unit.contributions ? { contributions: unit.contributions.map(item => ({ criterion: item.criterion, contribution: { ...item.contribution } })) } : {}) },
       otherUnits: input.otherUnits.map((other) => ({ title: other.title, goal: other.goal, criteria: [...other.criteria] })),
     };
     const result = await askAs(port, HEADER, 'battery', state, questionsFor(input), options);

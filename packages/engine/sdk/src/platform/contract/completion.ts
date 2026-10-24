@@ -1,4 +1,5 @@
 import { nativeContractSourceData } from './native-source.js';
+import { reviewInventoryObservation, compactReviewInventory } from './review-inventory.js';
 import { assertOwnedContractSource, hasDerivedAcceptanceChecks } from './owned-source.js';
 /**
  * Groups, the deliverable, and finishing (docs/design/contract-runner.md
@@ -268,6 +269,8 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         .map(decision => ({ id: decision.id, targetId: decision.targetId, at: decision.at, reason: decision.reason, decisionIds: [...decision.decisionIds],
           meaning: 'Actual host admission of this repair plan with its validation decision identities; this is not approval of the repaired result or final answer.' })),
       currentFiles: currentFileObservations(tree, changes.map(change => change.path), { includeText: input.scope === 'deliverable' }),
+      ...(contract.reviewInventory ? { reviewInventory: compactReviewInventory(reviewInventoryObservation(contract,
+        currentFileObservations(tree, contract.units.flatMap(unit => unit.checks.at(-1)?.reviewedFiles?.map(file => file.path) ?? [])))!) as unknown as JsonValue } : {}),
       privateArtifacts: readPrivateReceiptArchives(contract),
       currentValidation: {
         scope: input.scope, targetId: input.targetId, outputDigest: hashState(input.output), status: 'in-progress',
@@ -284,8 +287,9 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
         latestCheck: group.checks.length ? { id: group.checks.at(-1)!.id, result: group.checks.at(-1)!.result,
           decisionIds: [...group.checks.at(-1)!.decisionIds] } : null,
       })),
-      units: evidenceUnits.map(unit => ({ id: unit.id, groupId: unit.groupId, goal: unit.goal, status: unit.status,
-        criteria: judged(unit.criteria).map(criterion => ({ id: criterion.id, text: criterion.text, verdict: criterion.status })),
+      units: evidenceUnits.map(unit => ({ id: unit.id, groupId: unit.groupId, goal: unit.goal, status: unit.status, dependsOn: [...unit.dependsOn],
+        criteria: judged(unit.criteria).map(criterion => ({ id: criterion.id, text: criterion.text, verdict: criterion.status,
+          serves: [...criterion.serves], ...(criterion.contribution ? { contribution: { ...criterion.contribution } } : {}) })),
         acceptedAnswer: unit.status === 'passed' ? unit.answer ?? '' : null,
         acceptedAnswerDigest: unit.status === 'passed' ? hashState(unit.answer ?? '') : null,
         latestCheck: unit.checks.length ? JSON.parse(JSON.stringify(unit.checks.at(-1)!)) as JsonValue : null,
@@ -740,7 +744,8 @@ export function createCompletion(context: StepContext, correction: Pick<Correcti
           fullReportAt: { storage: 'native-contract-store', contractId: contract.id, unitId: unit.id, field: 'answer' },
         })), checks: judgedCriteria.map((criterion) => ({
           criterion: criterion.id,
-          servedBy: contract.units.flatMap((unit) => unit.criteria).filter((served) => served.serves.includes(criterion.id)).map((served) => ({ id: served.id, text: served.text, verdict: served.status })),
+          servedBy: contract.units.flatMap((unit) => unit.criteria).filter((served) => served.serves.includes(criterion.id)).map((served) => ({ id: served.id, text: served.text, verdict: served.status,
+            serves: [...served.serves], ...(served.contribution ? { contribution: { ...served.contribution } } : {}) })),
         })) },
         trigger,
       });

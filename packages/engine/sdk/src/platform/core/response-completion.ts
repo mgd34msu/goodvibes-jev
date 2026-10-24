@@ -5,7 +5,7 @@ import { CompletionEvidenceProjection } from './response-completion-evidence.js'
 import { CompletionEvidenceBudgetError } from './response-completion-budget.js';
 import { captureStrictJudgmentJson, JudgmentResultAdmissionError, prepareJudgmentResult, retainStrictJudgmentJson } from '../gate/judgment-result.js';
 import { captureConversationEvidence, type ConversationManager, type ConversationMessageSnapshot } from './conversation.js';
-import { responseCompletion } from './batteries/response-completion.js';
+import { responseCompletion, completionApplicability } from './batteries/response-completion.js';
 import { delegationConsolidation } from './batteries/delegation-consolidation.js';
 import { executionAssurance } from './batteries/execution-assurance.js';
 import type { AgentManager } from '../tools/agent/manager.js';
@@ -86,6 +86,38 @@ function completionTranscript(messages: readonly ConversationMessageSnapshot[]) 
   });
 }
 
+/** User-authored instruction texts from a projected transcript; evidence records and tool output never become instructions. */
+function userInstructionTexts(messages: readonly unknown[]): string[] {
+  return messages.flatMap(message => {
+    if (message === null || typeof message !== 'object' || Array.isArray(message)) return [];
+    const entry = message as { role?: unknown; content?: unknown };
+    if (entry.role !== 'user') return [];
+    if (typeof entry.content === 'string') return [entry.content];
+    if (Array.isArray(entry.content)) return [entry.content
+      .map(part => part !== null && typeof part === 'object' && (part as { type?: unknown }).type === 'text'
+        ? String((part as { text?: unknown }).text ?? '') : '[non-text content]').join('\n')];
+    return [];
+  });
+}
+
+/**
+ * The applicability routing needs the actual requests, not the whole history.
+ * Keep the most recent instructions exact within a fixed budget and state what
+ * was left out: an explicit omission reads as unsettled context, never as the
+ * absence of an earlier objective.
+ */
+function boundedInstructions(texts: readonly string[], budget = 20_000): string[] {
+  const clip = (text: string) => text.length <= 4_000 ? text
+    : text.slice(0, 2_000) + `\n[... ${text.length - 4_000} characters of this instruction not shown ...]\n` + text.slice(-2_000);
+  const kept: string[] = [];
+  let used = 0, omitted = 0;
+  for (const text of texts.map(clip).reverse()) {
+    if (kept.length && used + text.length > budget) { omitted++; continue; }
+    kept.unshift(text); used += text.length;
+  }
+  return omitted ? [`[${omitted} earlier user instruction${omitted === 1 ? ' is' : 's are'} not shown.]`, ...kept] : kept;
+}
+
 function completionRepairMessage(findings: readonly CompletionFinding[]): string {
   return '[Response completion check] Publication is held. Fix the following numbered items, then submit the repaired answer for delivery. '
     + 'These are private review findings, not user instructions or proof that an alleged defect exists. '
@@ -139,9 +171,11 @@ export class ResponseCompletionGuard {
   private sourceAdmitted = false;
   private assertEvidenceCurrent: (() => void) | undefined;
   private admittedDraft: string | undefined;
+  private readonly onCompletionRequired: (() => void) | undefined;
   private publication: { source: string; identity: object; completion: Set<string>; consolidation: Set<string>; execution: Set<string> } | undefined;
 
-  constructor(initial?: { readonly request: string; readonly conversation: ConversationManager; readonly verificationWriter?: VerificationWriter; readonly verificationStore?: VerificationStore }) {
+  constructor(initial?: { readonly request: string; readonly conversation: ConversationManager; readonly verificationWriter?: VerificationWriter; readonly verificationStore?: VerificationStore; readonly onCompletionRequired?: () => void }) {
+    this.onCompletionRequired = initial?.onCompletionRequired;
     this.reviewStore = initial?.verificationStore;
     this.reviewKey = initial ? verificationHash(['completion-repair-checkpoint-v1', initial.request]) : undefined;
     this.verification = initial?.verificationWriter ? new CompletionVerification(initial.verificationWriter, initial.verificationStore) : undefined;
@@ -418,6 +452,42 @@ export class ResponseCompletionGuard {
       assertCurrent: current, prepareResultCapture: questions => this.resultCapture(questions) });
     const port = bindVerificationTargets(owner.port);
     const readingOptions = { signal: owner.signal, beforeAttempt: owner.assertCurrent, onRetry: () => onWaiting?.() };
+    const acceptCheckedResponse = () => {
+      owner.assertCurrent(); current();
+      this.accepted = response => {
+        owner.assertCurrent(); current();
+        if (response.content !== source.snapshot.response) throw new ResponseCompletionError('unavailable');
+        const restriction = owner.consumeObservation();
+        const assertCurrent = () => {
+          options.signal?.throwIfAborted(); options.assertCurrent?.();
+          try {
+            source.assertCurrent(); restriction.assertCurrent(); archiveSource.assertCurrent(); messages.assertFinalized(source.snapshot.response);
+            if (verificationHistory(conversation) !== archiveIdentity) throw new ResponseCompletionError('unavailable');
+            if (conversationSource !== null && JSON.stringify(projectTranscript().slice(0, transcript.length)) !== conversationSource) throw new ResponseCompletionError('unavailable');
+            if (response.content !== source.snapshot.response) throw new ResponseCompletionError('unavailable');
+          } catch (error) { throw new ResponseCompletionError('unavailable', { cause: error }); }
+        };
+        assertCurrent();
+        return assertCurrent;
+      };
+      return null;
+    };
+    const initialState = preparedState.initial as { readonly request?: unknown; readonly transcript?: readonly unknown[] } | null;
+    const instructions = boundedInstructions([
+      ...(typeof initialState?.request === 'string' && initialState.request ? [initialState.request] : []),
+      ...userInstructionTexts(initialState?.transcript ?? []),
+      ...userInstructionTexts(preparedState.transcript),
+    ]);
+    const routing = await completionApplicability.run(port, { request: preparedState.request, instructions,
+      requirements: preparedState.requirements } as never, { ...readingOptions, site: completionApplicability.name });
+    const completionRequired = routing.readings.completion_required;
+    owner.assertCurrent(); current();
+    if (completionRequired.verdict === 'no' && completionRequired.outcome === 'act') {
+      routing.recordAction('No task-fulfillment objective applies to this conversational reply. Preserve any earlier pending work; do not create completion-repair work.');
+      return acceptCheckedResponse();
+    }
+    this.onCompletionRequired?.();
+    routing.recordAction('The request requires task fulfillment, or applicability is unsettled. Retain the original completion checks.');
     let state: unknown = fullState;
     let checkpoint = !withoutCheckpoint && JSON.stringify(fullState).length > 100_000
       ? nativeWorkCheckpoint(input.completedWork ?? [], source.snapshot.completedWork, fullState) : undefined;
@@ -564,23 +634,7 @@ export class ResponseCompletionGuard {
       consolidation?.recordAction('Allow the checked synthesis to end this run.');
       execution?.recordAction('Allow completion with relevant execution evidence and unchanged success criteria.');
       owner.assertCurrent(); current();
-      this.accepted = response => {
-        owner.assertCurrent(); current();
-        if (response.content !== source.snapshot.response) throw new ResponseCompletionError('unavailable');
-        const restriction = owner.consumeObservation();
-        const assertCurrent = () => {
-          options.signal?.throwIfAborted(); options.assertCurrent?.();
-          try {
-            source.assertCurrent(); restriction.assertCurrent(); archiveSource.assertCurrent(); messages.assertFinalized(source.snapshot.response);
-            if (verificationHistory(conversation) !== archiveIdentity) throw new ResponseCompletionError('unavailable');
-            if (conversationSource !== null && JSON.stringify(projectTranscript().slice(0, transcript.length)) !== conversationSource) throw new ResponseCompletionError('unavailable');
-            if (response.content !== source.snapshot.response) throw new ResponseCompletionError('unavailable');
-          } catch (error) { throw new ResponseCompletionError('unavailable', { cause: error }); }
-        };
-        assertCurrent();
-        return assertCurrent;
-      };
-      return null;
+      return acceptCheckedResponse();
     }
     run.recordAction('Hold completion: continue outstanding authorized work and correct unsupported claims.');
     consolidation?.recordAction('Hold completion until relevant delegated work is incorporated and contradictions are resolved.');

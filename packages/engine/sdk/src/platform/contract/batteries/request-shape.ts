@@ -2,7 +2,7 @@ import { nativeContractSourceData } from '../native-source.js';
 /**
  * `contract.request-shape` (docs/design/contract-runner.md section 3.1): what
  * the person's request says about how the work may be done, read before any
- * planning. Four yes/no questions about `{ request }`, asked in one request.
+ * planning. Five yes/no questions about `{ request }`, asked in one request.
  *
  * It replaces the delegation, parallel fan-out, no-write and design-only
  * phrase lists the retired review loop's routing and batch policy used to guess
@@ -33,10 +33,11 @@ const PERMISSION_BAND: YesNoBand = { yes: STAKES_BANDS.medium.confidence, no: ST
 
 export const requestShape = defineBattery({
   name: 'contract.request-shape',
-  version: 3,
+  version: 4,
   description: 'How the person asked for the work to be done: whether they forbid delegating it, ask for parallel agents, forbid changing files, or ask for several attempts to pick from.',
   accuracyFloor: 0.9,
   items: {
+    project_review: yesNo('Does the request require reviewing or auditing existing project files or code, whether the entire codebase or a specified part? A request only to implement new functionality, run tests, or discuss an idea is not a project review.', STAKES_BANDS.low.yesNo),
     forbids_delegation: yesNo(
       'Does the user forbid handing this work to other agents or sub-agents, or ask that it be done without delegating?',
       PERMISSION_BAND,
@@ -56,13 +57,13 @@ export const requestShape = defineBattery({
   },
   fixtures: [
     { name: 'full review includes its requested artifact', state: { request: 'review this codebase, in full. provide an artifact when done.' },
-      expect: { forbids_delegation: 'no', requests_parallel_agents: 'no', forbids_writing: 'no', asks_for_attempts: 'no' } },
+      expect: { project_review: 'yes', forbids_delegation: 'no', requests_parallel_agents: 'no', forbids_writing: 'no', asks_for_attempts: 'no' } },
     { name: 'review report is writable while production remains unchanged', state: { request: 'Review the repository without implementing fixes. Save the findings to review.md; leave production source unchanged.' },
-      expect: { forbids_delegation: 'no', requests_parallel_agents: 'no', forbids_writing: 'no', asks_for_attempts: 'no' } },
+      expect: { project_review: 'yes', forbids_delegation: 'no', requests_parallel_agents: 'no', forbids_writing: 'no', asks_for_attempts: 'no' } },
     {
       name: 'do it yourself, no sub-agents',
       state: { request: "Fix the null check in src/auth/session.ts yourself, don't hand this off to sub-agents." },
-      expect: { forbids_delegation: 'yes', requests_parallel_agents: 'no', forbids_writing: 'no', asks_for_attempts: 'no' },
+      expect: { project_review: 'no', forbids_delegation: 'yes', requests_parallel_agents: 'no', forbids_writing: 'no', asks_for_attempts: 'no' },
     },
     {
       name: 'in this session without spawning agents',
@@ -82,12 +83,12 @@ export const requestShape = defineBattery({
     {
       name: 'comprehensive code review without an explicit no-edit instruction',
       state: { request: 'do a comprehensive code review of this project, the full codebase' },
-      expect: { forbids_delegation: 'no', requests_parallel_agents: 'no', forbids_writing: 'yes', asks_for_attempts: 'no' },
+      expect: { project_review: 'yes', forbids_delegation: 'no', requests_parallel_agents: 'no', forbids_writing: 'yes', asks_for_attempts: 'no' },
     },
     {
       name: 'report only, no file changes',
       state: { request: "Review the caching layer and write me a report on its failure modes. Don't change any files." },
-      expect: { forbids_delegation: 'no', requests_parallel_agents: 'no', forbids_writing: 'yes', asks_for_attempts: 'no' },
+      expect: { project_review: 'yes', forbids_delegation: 'no', requests_parallel_agents: 'no', forbids_writing: 'yes', asks_for_attempts: 'no' },
     },
     {
       name: 'plan only, no edits yet',
@@ -107,7 +108,7 @@ export const requestShape = defineBattery({
     {
       name: 'plain feature request',
       state: { request: 'Add a --verbose flag to the CLI and document it in the README.' },
-      expect: { forbids_delegation: 'no', requests_parallel_agents: 'no', forbids_writing: 'no', asks_for_attempts: 'no' },
+      expect: { project_review: 'no', forbids_delegation: 'no', requests_parallel_agents: 'no', forbids_writing: 'no', asks_for_attempts: 'no' },
     },
     {
       name: 'no delegation and read only',
@@ -133,7 +134,7 @@ function toShapeReading(reading: YesNoReading): ShapeReading {
   return { verdict: reading.verdict, probability: reading.probability, outcome: reading.outcome };
 }
 
-/** Reads the four shape questions about `ask` in one request. */
+/** Reads the shape questions about `ask` in one request. */
 export async function readRequestShape(
   port: JudgmentPort,
   ask: string,
@@ -147,6 +148,7 @@ export async function readRequestShape(
   run.recordAction('shaped');
   return {
     shape: {
+      project_review: toShapeReading(readings.project_review),
       forbids_delegation: toShapeReading(readings.forbids_delegation),
       requests_parallel_agents: toShapeReading(readings.requests_parallel_agents),
       forbids_writing: toShapeReading(readings.forbids_writing),

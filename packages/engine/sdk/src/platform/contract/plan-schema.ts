@@ -11,7 +11,7 @@ import { GROUP_KINDS, UNIT_ROLES, type ContractPlanProblem } from '../../events/
 import { PLANNER_DECOMPOSITION_TOOLS } from '../agents/planner-decomposition-runner.js';
 import { wouldCreateCycle, type GraphNode } from '../orchestration/graph-dynamics.js';
 import { delegationForbidden, saysYesAtAct } from './batteries/request-shape.js';
-import type { GroupKind, NativeContractSource, RequestShape, UnitRole } from './types.js';
+import type { GroupKind, NativeContractSource, RequestShape, UnitRole, WorkContribution } from './types.js';
 
 // ── The plan ──────────────────────────────────────────────────────────────────
 
@@ -28,6 +28,7 @@ export interface PlannedDerivedCriterion {
   readonly id: string;
   readonly text: string;
   readonly serves: readonly string[];
+  readonly contribution?: WorkContribution;
 }
 
 export interface PlannedUnit {
@@ -55,6 +56,7 @@ export interface PlannedGroup {
 }
 
 export interface ContractPlan {
+  readonly reviewExclusions?: readonly { readonly files: readonly string[]; readonly reason: string }[];
   readonly goal: string;
   readonly criteria: readonly PlannedStatedCriterion[];
   readonly groups: readonly PlannedGroup[];
@@ -148,10 +150,22 @@ class FieldReader {
 }
 
 function readDerived(reader: FieldReader, raw: Json, where: string): PlannedDerivedCriterion {
+  let contribution: WorkContribution | undefined;
+  if (raw['contribution'] !== undefined) {
+    const value = raw['contribution'];
+    if (!isObject(value) || !['outcome', 'support', 'scaffolding', 'secondary'].includes(String(value['kind']))) {
+      reader.errors.push(`${where}.contribution must describe outcome, support, scaffolding or secondary work`);
+    } else {
+      const reason = reader.string(value, 'reason', `${where}.contribution`);
+      const verification = reader.string(value, 'verification', `${where}.contribution`);
+      if (reason && verification) contribution = { kind: value['kind'] as WorkContribution['kind'], reason, verification };
+    }
+  }
   return {
     id: reader.string(raw, 'id', where) ?? '',
     text: reader.string(raw, 'text', where) ?? '',
     serves: reader.strings(raw, 'serves', where),
+    ...(contribution ? { contribution } : {}),
   };
 }
 
@@ -204,6 +218,10 @@ export function parseContractPlan(text: string): ParsedContractPlan {
   if (!isObject(raw)) return { ok: false, problems: [problem('unparseable', 'The JSON block must be one object with goal, criteria and groups.')] };
   const reader = new FieldReader();
   const plan: ContractPlan = {
+    ...(raw['reviewExclusions'] === undefined ? {} : { reviewExclusions: reader.objects(raw, 'reviewExclusions', 'plan').map((entry, index) => ({
+      files: reader.strings(entry, 'files', `plan.reviewExclusions[${index}]`),
+      reason: reader.string(entry, 'reason', `plan.reviewExclusions[${index}]`) ?? '',
+    })) }),
     goal: reader.string(raw, 'goal', 'plan') ?? '',
     criteria: reader.objects(raw, 'criteria', 'plan').map((criterion, index) => {
       const where = `plan.criteria[${index}]`;

@@ -18,6 +18,7 @@
  * nudge goes out, so it never delays one.
  */
 import { nativeContractPort, type NativeContractServices } from './native-decisions.js';
+import { assignedReviewPaths, reviewProjectPath } from './review-inventory.js';
 import type { Contract } from './types.js';
 import { hashState, type JudgmentPort, type YesNoReading } from '@goodvibes-jev/judgment';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
@@ -113,7 +114,7 @@ export interface UnitCheckInput {
   /** Host-owned non-executing settlement lifetime. Never provided by contract input. */
   readonly checkPort?: JudgmentPort | undefined;
   readonly native?: { readonly contract: Contract; readonly services: NativeContractServices | undefined } | undefined;
-  readonly contract: Pick<ContractView, 'shape' | 'nativeSource'>;
+  readonly contract: Pick<ContractView, 'shape' | 'nativeSource'> & Partial<Pick<ContractView, 'reviewInventory' | 'projectRoot'>>;
   /** The unit as it stands before this check: its criteria's readings and its checks and nudges are the history. */
   readonly unit: ContractUnit;
   readonly trigger: CheckTrigger;
@@ -284,7 +285,18 @@ export async function runUnitCheck(input: UnitCheckInput): Promise<UnitCheckOutc
 
   const chosen = chooseResult(input, findings, qualityReadings);
   const decisionIds = [judgment.decisionId, quality.result.decisionId].filter((id): id is string => id !== undefined);
+  const assignedFiles = new Set(input.contract.reviewInventory ? assignedReviewPaths(input.contract.reviewInventory, unit.files) : []);
+  const inspectedFiles = new Set((evidence.sourceReads ?? []).filter(read => read.returnedLines > 0)
+    .map(read => input.contract.projectRoot ? reviewProjectPath(input.contract.projectRoot, read.path) : read.path));
   const baseCheck: UnitCheck = {
+    ...(chosen.result === 'pass' && unit.role === 'research' && input.contract.reviewInventory && evidence.orchestration
+      && typeof evidence.orchestration === 'object' && !Array.isArray(evidence.orchestration) && Array.isArray(evidence.orchestration['currentFiles'])
+      ? { reviewedFiles: evidence.orchestration['currentFiles'].flatMap(file => {
+        if (!file || typeof file !== 'object' || Array.isArray(file) || file['operation'] !== 'read-current-file' || file['source'] !== 'native-host-filesystem'
+          || file['success'] !== true || typeof file['path'] !== 'string' || typeof file['sha256'] !== 'string'
+          || !assignedFiles.has(file['path']) || !inspectedFiles.has(file['path'])) return [];
+        return [{ path: file['path'], sha256: file['sha256'] }];
+      }) } : {}),
     id: checkId,
     at: input.now,
     trigger: input.trigger,

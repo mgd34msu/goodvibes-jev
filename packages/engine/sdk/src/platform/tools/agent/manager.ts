@@ -184,12 +184,13 @@ export class AgentManager {
    * exactly as before this change.
    */
   private readonly cancellationSignals = new Map<string, AbortSignal>();
+  private readonly combinedCancellationSignals = new Map<string, { external: AbortSignal; owned: AbortSignal; signal: AbortSignal }>();
   /**
    * Manager-owned abort controllers, one per agent, the seam that lets
    * cancel()/kill genuinely abort an in-flight provider call (not only
    * cooperatively at the next turn/tool boundary). An orchestration engine may
-   * ALSO register its own signal via registerCancellationSignal (that one wins
-   * in getCancellationSignal so the engine's own kill path is unchanged); a
+   * ALSO register its own signal via registerCancellationSignal (either signal
+   * then cancels the run); a
    * plain broker/ACP-spawned agent has no external signal and falls back to this
    * owned controller, which cancel() aborts.
    */
@@ -680,6 +681,7 @@ export class AgentManager {
       if (owner.work.idle && this.executions.get(agentId) === owner) {
         this.executions.delete(agentId);
         this.cancellationControllers.delete(agentId);
+        this.combinedCancellationSignals.delete(agentId);
       }
     };
     void owner.work.run(() => settled).then(reclaim, reclaim);
@@ -809,8 +811,7 @@ export class AgentManager {
     if (cancelRecord) {
       // Abort the manager-owned controller so an in-flight provider call for this
       // agent is interrupted mid-stream, not only cooperatively at the next
-      // boundary. (An engine-registered external signal is aborted by the engine's
-      // own kill path; this covers the plain broker/ACP-spawned agent.) Create the
+      // boundary, including when an orchestration signal also owns the run. Create the
       // controller if the runner has not read the signal yet, so a later
       // getCancellationSignal() returns THIS already-aborted controller, no race
       // where a cancel is dropped because the signal was requested afterwards.
@@ -856,12 +857,14 @@ export class AgentManager {
    */
   registerCancellationSignal(agentId: string, signal: AbortSignal): void {
     this.cancellationSignals.set(agentId, signal);
+    this.combinedCancellationSignals.delete(agentId);
   }
 
   /** Drop the registered signal + owned controller once the run ends (success, failure, or cancel). Safe to call unconditionally. */
   releaseCancellationSignal(agentId: string, expectedSignal?: AbortSignal): void {
     if (expectedSignal !== undefined && this.cancellationSignals.get(agentId) !== expectedSignal) return;
     this.cancellationSignals.delete(agentId);
+    this.combinedCancellationSignals.delete(agentId);
     // A delayed prior phase release must not delete a newly admitted wake's
     // owned controller. Its actual execution settlement reclaims that itself.
     if (!this.executions.has(agentId)) this.cancellationControllers.delete(agentId);
@@ -869,18 +872,24 @@ export class AgentManager {
 
   /**
    * The cancellation signal for an agent's in-flight work. An
-   * engine-registered external signal wins (keeps the orchestration engine's own
-   * kill path authoritative); otherwise a manager-owned controller's signal is
+   * engine-registered external signal and manager cancellation both stop work.
+   * Without an external owner, a manager-owned controller's signal is
    * returned (created on first read), so a plain broker/ACP-spawned agent still
    * has an abortable signal that cancel() will trip.
    */
   getCancellationSignal(agentId: string): AbortSignal | undefined {
     const external = this.cancellationSignals.get(agentId);
-    if (external) return external;
     let controller = this.cancellationControllers.get(agentId);
     if (!controller) {
       controller = new AbortController();
       this.cancellationControllers.set(agentId, controller);
+    }
+    if (external) {
+      const retained = this.combinedCancellationSignals.get(agentId);
+      if (retained?.external === external && retained.owned === controller.signal) return retained.signal;
+      const signal = AbortSignal.any([external, controller.signal]);
+      this.combinedCancellationSignals.set(agentId, { external, owned: controller.signal, signal });
+      return signal;
     }
     return controller.signal;
   }

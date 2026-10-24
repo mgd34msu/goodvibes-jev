@@ -5,7 +5,7 @@ import type { ChatRequest, ChatResponse } from '../sdk/src/platform/providers/in
 import type { AgentRecord } from '../sdk/src/platform/tools/agent/record.js';
 import { afterEach, beforeEach, expect, spyOn, test } from 'bun:test';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
-import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
+import { fakePort as baseFakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { JudgmentError } from '@goodvibes-jev/judgment';
 import { ConversationManager } from '../sdk/src/platform/core/conversation.js';
 import { ResponseCompletionAccessError, ResponseCompletionGuard, waitForResponseDelegates } from '../sdk/src/platform/core/response-completion.js';
@@ -15,6 +15,12 @@ import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
 import { ToolRegistry } from '../sdk/src/platform/tools/registry.js';
 import { UNKNOWN_MODEL_PRICING } from '../sdk/src/platform/providers/model-pricing.js';
 import { verificationWriter } from './_helpers/verification.js';
+
+// These fixtures exercise work acceptance. Applicability is tested separately
+// with conversational and status requests against the actual host guard.
+function fakePort(answer: Parameters<typeof baseFakePort>[0]) {
+  return baseFakePort((name, question, state) => name === 'completion_required' ? noulAnswer(.99) : answer(name, question, state));
+}
 
 let previous: ReturnType<typeof installJudgmentPort>;
 beforeEach(() => { previous = installJudgmentPort(undefined); });
@@ -31,6 +37,54 @@ const answered = (failure?: string, probability = .99) => fakePort(name => noulA
 
 test('the completion battery is registered', () => {
   expect(registry.get('engine.core.response-completion')).toBeDefined();
+});
+
+function statusConversation() {
+  const conversation = new ConversationManager();
+  conversation.addUserMessage('Review every file under src and write review.md.');
+  conversation.addAssistantMessage('Reviewed three of ten files so far.');
+  conversation.addUserMessage('Still working on it?');
+  return { conversation, request: 'Still working on it?', response: 'Yes — three of ten files are reviewed; the review continues.', tools: ['read', 'write'] };
+}
+
+test('a status question routes past work verification without repair work and without marking the pending task complete', async () => {
+  // Every work-completion item would report a problem; a held result would prove the checks ran.
+  const fake = baseFakePort(name => noulAnswer(name === 'completion_required' ? .01 : .99));
+  installJudgmentPort(fake.port);
+  const input = statusConversation();
+  let activity = 0;
+  const guard = new ResponseCompletionGuard({ request: input.request, conversation: input.conversation, onCompletionRequired: () => { activity++; } });
+  expect(await guard.check(input)).toBeNull();
+  expect(fake.requests.some(request => request.context?.battery === 'engine.core.completion-applicability')).toBe(true);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.core.response-completion')).toBe(false);
+  expect(activity).toBe(0);
+  expect(() => guard.beginFinalization({ content: input.response })).not.toThrow();
+});
+
+test('unsettled applicability retains the original completion checks and reports checking activity', async () => {
+  const fake = baseFakePort(name => noulAnswer(name === 'completion_required' ? .5 : .01));
+  installJudgmentPort(fake.port);
+  const input = statusConversation();
+  let activity = 0;
+  const guard = new ResponseCompletionGuard({ request: input.request, conversation: input.conversation, onCompletionRequired: () => { activity++; } });
+  expect(await guard.check(input)).toBeNull();
+  expect(fake.requests.some(request => request.context?.battery === 'engine.core.response-completion')).toBe(true);
+  expect(activity).toBe(1);
+});
+
+test('applicability routing receives bounded instruction text instead of the entire pasted history', async () => {
+  const fake = baseFakePort(name => noulAnswer(name === 'completion_required' ? .01 : .99));
+  installJudgmentPort(fake.port);
+  const conversation = new ConversationManager();
+  conversation.addUserMessage('Fix the parser.\n' + 'pasted log line with repeated unimportant detail\n'.repeat(4_000));
+  conversation.addUserMessage('Status?');
+  const guard = new ResponseCompletionGuard();
+  expect(await guard.check({ request: 'Status?', response: 'The parser fix is still in progress.', conversation, tools: ['exec'] })).toBeNull();
+  const routed = fake.requests.find(request => request.context?.battery === 'engine.core.completion-applicability')!;
+  const instructions = (routed.state as { instructions: string[] }).instructions;
+  expect(JSON.stringify(instructions).length).toBeLessThan(30_000);
+  expect(instructions.some(text => text.includes('Fix the parser.'))).toBe(true);
+  expect(instructions.some(text => text.includes('not shown'))).toBe(true);
 });
 
 test('historical answer fields cannot replace the exact current candidate and a false current candidate is still held', async () => {
@@ -120,10 +174,11 @@ test('truthful admissions of unfinished work hold completion and retain the orig
   const fake = answered('unfinished'); installJudgmentPort(fake.port);
   const result = await new ResponseCompletionGuard().check(source());
   expect(result).toContain('The requested work remains unfinished');
-  expect(fake.requests).toHaveLength(1);
-  expect(Object.keys(fake.requests[0]!.questions)).toEqual(['false_blocker', 'unfinished', 'unsupported', 'unanswered', 'unnecessary_permission']);
-  expect(JSON.stringify(fake.requests[0]!.state)).toContain('Inspect every source file');
-  expect(JSON.stringify(fake.requests[0]!.state)).toContain(unfinished);
+  const completion = fake.requests.filter(request => request.context?.battery === 'engine.core.response-completion');
+  expect(completion).toHaveLength(1);
+  expect(Object.keys(completion[0]!.questions)).toEqual(['false_blocker', 'unfinished', 'unsupported', 'unanswered', 'unnecessary_permission']);
+  expect(JSON.stringify(completion[0]!.state)).toContain('Inspect every source file');
+  expect(JSON.stringify(completion[0]!.state)).toContain(unfinished);
 });
 
 test('every dimension and weak positive readings can hold completion', async () => {
@@ -522,7 +577,8 @@ test('transport-level retries report checker waiting while completion remains he
   } });
   const input = source('Finished.'), guard = new ResponseCompletionGuard();
   expect(await guard.checkUntilAvailable(() => input, {}, () => { waits++; })).toBeNull();
-  expect(waits).toBe(1);
+  // One transport retry on the applicability routing and one on the completion check.
+  expect(waits).toBe(2);
 });
 
 test('the real main loop recovers a transient checker outage with one model draft and a fresh successful validation', async () => {

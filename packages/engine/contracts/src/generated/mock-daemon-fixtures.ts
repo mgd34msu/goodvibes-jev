@@ -5357,6 +5357,24 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
         }
       },
       "taskEvidence": "sample",
+      "reviewInventory": {
+        "paths": [
+          "sample"
+        ],
+        "digest": "sample",
+        "source": "git",
+        "errors": [
+          "sample"
+        ]
+      },
+      "reviewExclusions": [
+        {
+          "files": [
+            "sample"
+          ],
+          "reason": "sample"
+        }
+      ],
       "nativeSource": {
         "sourceId": "sample",
         "sourceRevision": "sample",
@@ -5578,6 +5596,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "serves": [
             "sample"
           ],
+          "contribution": {
+            "kind": "outcome",
+            "reason": "sample",
+            "verification": "sample"
+          },
           "disposition": "judged",
           "dispositionReason": "sample",
           "status": "unread",
@@ -5620,6 +5643,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "serves": [
                 "sample"
               ],
+              "contribution": {
+                "kind": "outcome",
+                "reason": "sample",
+                "verification": "sample"
+              },
               "disposition": "judged",
               "dispositionReason": "sample",
               "status": "unread",
@@ -5700,7 +5728,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "decisionIds": [
                 "sample"
               ],
-              "evidenceDigest": "sample"
+              "evidenceDigest": "sample",
+              "reviewedFiles": [
+                {
+                  "path": "sample",
+                  "sha256": "sample"
+                }
+              ]
             }
           ],
           "fixRounds": 0,
@@ -5748,6 +5782,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "serves": [
                 "sample"
               ],
+              "contribution": {
+                "kind": "outcome",
+                "reason": "sample",
+                "verification": "sample"
+              },
               "disposition": "judged",
               "dispositionReason": "sample",
               "status": "unread",
@@ -5845,7 +5884,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "decisionIds": [
                 "sample"
               ],
-              "evidenceDigest": "sample"
+              "evidenceDigest": "sample",
+              "reviewedFiles": [
+                {
+                  "path": "sample",
+                  "sha256": "sample"
+                }
+              ]
             }
           ],
           "nudges": [
@@ -5986,6 +6031,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                   "serves": [
                     "sample"
                   ],
+                  "contribution": {
+                    "kind": "outcome",
+                    "reason": "sample",
+                    "verification": "sample"
+                  },
                   "disposition": "judged",
                   "dispositionReason": "sample",
                   "status": "unread",
@@ -6083,7 +6133,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                   "decisionIds": [
                     "sample"
                   ],
-                  "evidenceDigest": "sample"
+                  "evidenceDigest": "sample",
+                  "reviewedFiles": [
+                    {
+                      "path": "sample",
+                      "sha256": "sample"
+                    }
+                  ]
                 }
               ],
               "nudges": [
@@ -6225,6 +6281,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "probability": 0,
           "outcome": "act"
         },
+        "project_review": {
+          "verdict": "yes",
+          "probability": 0,
+          "outcome": "act"
+        },
         "decisionIds": [
           "sample"
         ]
@@ -6291,7 +6352,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           "decisionIds": [
             "sample"
           ],
-          "evidenceDigest": "sample"
+          "evidenceDigest": "sample",
+          "reviewedFiles": [
+            {
+              "path": "sample",
+              "sha256": "sample"
+            }
+          ]
         }
       ],
       "fixRounds": 0,
@@ -6417,6 +6484,24 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
             }
           },
           "taskEvidence": "sample",
+          "reviewInventory": {
+            "paths": [
+              "sample"
+            ],
+            "digest": "sample",
+            "source": "git",
+            "errors": [
+              "sample"
+            ]
+          },
+          "reviewExclusions": [
+            {
+              "files": [
+                "sample"
+              ],
+              "reason": "sample"
+            }
+          ],
           "nativeSource": {
             "sourceId": "sample",
             "sourceRevision": "sample",
@@ -6638,6 +6723,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "serves": [
                 "sample"
               ],
+              "contribution": {
+                "kind": "outcome",
+                "reason": "sample",
+                "verification": "sample"
+              },
               "disposition": "judged",
               "dispositionReason": "sample",
               "status": "unread",
@@ -6680,6 +6770,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                   "serves": [
                     "sample"
                   ],
+                  "contribution": {
+                    "kind": "outcome",
+                    "reason": "sample",
+                    "verification": "sample"
+                  },
                   "disposition": "judged",
                   "dispositionReason": "sample",
                   "status": "unread",
@@ -6760,7 +6855,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                   "decisionIds": [
                     "sample"
                   ],
-                  "evidenceDigest": "sample"
+                  "evidenceDigest": "sample",
+                  "reviewedFiles": [
+                    {
+                      "path": "sample",
+                      "sha256": "sample"
+                    }
+                  ]
                 }
               ],
               "fixRounds": 0,
@@ -6808,6 +6909,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                   "serves": [
                     "sample"
                   ],
+                  "contribution": {
+                    "kind": "outcome",
+                    "reason": "sample",
+                    "verification": "sample"
+                  },
                   "disposition": "judged",
                   "dispositionReason": "sample",
                   "status": "unread",
@@ -6905,7 +7011,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                   "decisionIds": [
                     "sample"
                   ],
-                  "evidenceDigest": "sample"
+                  "evidenceDigest": "sample",
+                  "reviewedFiles": [
+                    {
+                      "path": "sample",
+                      "sha256": "sample"
+                    }
+                  ]
                 }
               ],
               "nudges": [
@@ -7046,6 +7158,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                       "serves": [
                         "sample"
                       ],
+                      "contribution": {
+                        "kind": "outcome",
+                        "reason": "sample",
+                        "verification": "sample"
+                      },
                       "disposition": "judged",
                       "dispositionReason": "sample",
                       "status": "unread",
@@ -7143,7 +7260,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                       "decisionIds": [
                         "sample"
                       ],
-                      "evidenceDigest": "sample"
+                      "evidenceDigest": "sample",
+                      "reviewedFiles": [
+                        {
+                          "path": "sample",
+                          "sha256": "sample"
+                        }
+                      ]
                     }
                   ],
                   "nudges": [
@@ -7285,6 +7408,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "probability": 0,
               "outcome": "act"
             },
+            "project_review": {
+              "verdict": "yes",
+              "probability": 0,
+              "outcome": "act"
+            },
             "decisionIds": [
               "sample"
             ]
@@ -7351,7 +7479,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
               "decisionIds": [
                 "sample"
               ],
-              "evidenceDigest": "sample"
+              "evidenceDigest": "sample",
+              "reviewedFiles": [
+                {
+                  "path": "sample",
+                  "sha256": "sample"
+                }
+              ]
             }
           ],
           "fixRounds": 0,
@@ -7493,6 +7627,24 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
           }
         },
         "taskEvidence": "sample",
+        "reviewInventory": {
+          "paths": [
+            "sample"
+          ],
+          "digest": "sample",
+          "source": "git",
+          "errors": [
+            "sample"
+          ]
+        },
+        "reviewExclusions": [
+          {
+            "files": [
+              "sample"
+            ],
+            "reason": "sample"
+          }
+        ],
         "nativeSource": {
           "sourceId": "sample",
           "sourceRevision": "sample",
@@ -7714,6 +7866,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
             "serves": [
               "sample"
             ],
+            "contribution": {
+              "kind": "outcome",
+              "reason": "sample",
+              "verification": "sample"
+            },
             "disposition": "judged",
             "dispositionReason": "sample",
             "status": "unread",
@@ -7756,6 +7913,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                 "serves": [
                   "sample"
                 ],
+                "contribution": {
+                  "kind": "outcome",
+                  "reason": "sample",
+                  "verification": "sample"
+                },
                 "disposition": "judged",
                 "dispositionReason": "sample",
                 "status": "unread",
@@ -7836,7 +7998,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                 "decisionIds": [
                   "sample"
                 ],
-                "evidenceDigest": "sample"
+                "evidenceDigest": "sample",
+                "reviewedFiles": [
+                  {
+                    "path": "sample",
+                    "sha256": "sample"
+                  }
+                ]
               }
             ],
             "fixRounds": 0,
@@ -7884,6 +8052,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                 "serves": [
                   "sample"
                 ],
+                "contribution": {
+                  "kind": "outcome",
+                  "reason": "sample",
+                  "verification": "sample"
+                },
                 "disposition": "judged",
                 "dispositionReason": "sample",
                 "status": "unread",
@@ -7981,7 +8154,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                 "decisionIds": [
                   "sample"
                 ],
-                "evidenceDigest": "sample"
+                "evidenceDigest": "sample",
+                "reviewedFiles": [
+                  {
+                    "path": "sample",
+                    "sha256": "sample"
+                  }
+                ]
               }
             ],
             "nudges": [
@@ -8122,6 +8301,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                     "serves": [
                       "sample"
                     ],
+                    "contribution": {
+                      "kind": "outcome",
+                      "reason": "sample",
+                      "verification": "sample"
+                    },
                     "disposition": "judged",
                     "dispositionReason": "sample",
                     "status": "unread",
@@ -8219,7 +8403,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
                     "decisionIds": [
                       "sample"
                     ],
-                    "evidenceDigest": "sample"
+                    "evidenceDigest": "sample",
+                    "reviewedFiles": [
+                      {
+                        "path": "sample",
+                        "sha256": "sample"
+                      }
+                    ]
                   }
                 ],
                 "nudges": [
@@ -8361,6 +8551,11 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
             "probability": 0,
             "outcome": "act"
           },
+          "project_review": {
+            "verdict": "yes",
+            "probability": 0,
+            "outcome": "act"
+          },
           "decisionIds": [
             "sample"
           ]
@@ -8427,7 +8622,13 @@ export const MOCK_DAEMON_FIXTURES: MockDaemonFixtureMap = {
             "decisionIds": [
               "sample"
             ],
-            "evidenceDigest": "sample"
+            "evidenceDigest": "sample",
+            "reviewedFiles": [
+              {
+                "path": "sample",
+                "sha256": "sample"
+              }
+            ]
           }
         ],
         "fixRounds": 0,

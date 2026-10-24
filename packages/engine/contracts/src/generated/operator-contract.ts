@@ -30743,6 +30743,62 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
             "taskEvidence": {
               "type": "string"
             },
+            "reviewInventory": {
+              "type": "object",
+              "properties": {
+                "paths": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "digest": {
+                  "type": "string"
+                },
+                "source": {
+                  "type": "string",
+                  "enum": [
+                    "git",
+                    "filesystem"
+                  ]
+                },
+                "errors": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                }
+              },
+              "required": [
+                "paths",
+                "digest",
+                "source",
+                "errors"
+              ],
+              "additionalProperties": false
+            },
+            "reviewExclusions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "properties": {
+                  "files": {
+                    "type": "array",
+                    "items": {
+                      "type": "string"
+                    }
+                  },
+                  "reason": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "files",
+                  "reason"
+                ],
+                "additionalProperties": false
+              }
+            },
             "nativeSource": {
               "type": "object",
               "properties": {
@@ -33391,6 +33447,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                       "type": "string"
                     }
                   },
+                  "contribution": {
+                    "type": "object",
+                    "properties": {
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "outcome",
+                          "support",
+                          "scaffolding",
+                          "secondary"
+                        ]
+                      },
+                      "reason": {
+                        "type": "string"
+                      },
+                      "verification": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "kind",
+                      "reason",
+                      "verification"
+                    ],
+                    "additionalProperties": false
+                  },
                   "disposition": {
                     "type": "string",
                     "enum": [
@@ -33564,6 +33646,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                           "items": {
                             "type": "string"
                           }
+                        },
+                        "contribution": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "outcome",
+                                "support",
+                                "scaffolding",
+                                "secondary"
+                              ]
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "verification": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "reason",
+                            "verification"
+                          ],
+                          "additionalProperties": false
                         },
                         "disposition": {
                           "type": "string",
@@ -33987,6 +34095,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                         },
                         "evidenceDigest": {
                           "type": "string"
+                        },
+                        "reviewedFiles": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "sha256": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "path",
+                              "sha256"
+                            ],
+                            "additionalProperties": false
+                          }
                         }
                       },
                       "required": [
@@ -34199,6 +34326,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                           "items": {
                             "type": "string"
                           }
+                        },
+                        "contribution": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "outcome",
+                                "support",
+                                "scaffolding",
+                                "secondary"
+                              ]
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "verification": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "reason",
+                            "verification"
+                          ],
+                          "additionalProperties": false
                         },
                         "disposition": {
                           "type": "string",
@@ -34684,6 +34837,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                         },
                         "evidenceDigest": {
                           "type": "string"
+                        },
+                        "reviewedFiles": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "sha256": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "path",
+                              "sha256"
+                            ],
+                            "additionalProperties": false
+                          }
                         }
                       },
                       "required": [
@@ -35312,6 +35484,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                   "type": "string"
                                 }
                               },
+                              "contribution": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "outcome",
+                                      "support",
+                                      "scaffolding",
+                                      "secondary"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string"
+                                  },
+                                  "verification": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "reason",
+                                  "verification"
+                                ],
+                                "additionalProperties": false
+                              },
                               "disposition": {
                                 "type": "string",
                                 "enum": [
@@ -35796,6 +35994,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                               },
                               "evidenceDigest": {
                                 "type": "string"
+                              },
+                              "reviewedFiles": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "path": {
+                                      "type": "string"
+                                    },
+                                    "sha256": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "path",
+                                    "sha256"
+                                  ],
+                                  "additionalProperties": false
+                                }
                               }
                             },
                             "required": [
@@ -36523,6 +36740,36 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                   ],
                   "additionalProperties": false
                 },
+                "project_review": {
+                  "type": "object",
+                  "properties": {
+                    "verdict": {
+                      "type": "string",
+                      "enum": [
+                        "yes",
+                        "no",
+                        "uncertain"
+                      ]
+                    },
+                    "probability": {
+                      "type": "number"
+                    },
+                    "outcome": {
+                      "type": "string",
+                      "enum": [
+                        "act",
+                        "confirm",
+                        "escalate"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "verdict",
+                    "probability",
+                    "outcome"
+                  ],
+                  "additionalProperties": false
+                },
                 "decisionIds": {
                   "type": "array",
                   "items": {
@@ -36904,6 +37151,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                   },
                   "evidenceDigest": {
                     "type": "string"
+                  },
+                  "reviewedFiles": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "path": {
+                          "type": "string"
+                        },
+                        "sha256": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "path",
+                        "sha256"
+                      ],
+                      "additionalProperties": false
+                    }
                   }
                 },
                 "required": [
@@ -37549,6 +37815,62 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                   },
                   "taskEvidence": {
                     "type": "string"
+                  },
+                  "reviewInventory": {
+                    "type": "object",
+                    "properties": {
+                      "paths": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "digest": {
+                        "type": "string"
+                      },
+                      "source": {
+                        "type": "string",
+                        "enum": [
+                          "git",
+                          "filesystem"
+                        ]
+                      },
+                      "errors": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      }
+                    },
+                    "required": [
+                      "paths",
+                      "digest",
+                      "source",
+                      "errors"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "reviewExclusions": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "properties": {
+                        "files": {
+                          "type": "array",
+                          "items": {
+                            "type": "string"
+                          }
+                        },
+                        "reason": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "files",
+                        "reason"
+                      ],
+                      "additionalProperties": false
+                    }
                   },
                   "nativeSource": {
                     "type": "object",
@@ -40198,6 +40520,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                             "type": "string"
                           }
                         },
+                        "contribution": {
+                          "type": "object",
+                          "properties": {
+                            "kind": {
+                              "type": "string",
+                              "enum": [
+                                "outcome",
+                                "support",
+                                "scaffolding",
+                                "secondary"
+                              ]
+                            },
+                            "reason": {
+                              "type": "string"
+                            },
+                            "verification": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "kind",
+                            "reason",
+                            "verification"
+                          ],
+                          "additionalProperties": false
+                        },
                         "disposition": {
                           "type": "string",
                           "enum": [
@@ -40371,6 +40719,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                 "items": {
                                   "type": "string"
                                 }
+                              },
+                              "contribution": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "outcome",
+                                      "support",
+                                      "scaffolding",
+                                      "secondary"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string"
+                                  },
+                                  "verification": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "reason",
+                                  "verification"
+                                ],
+                                "additionalProperties": false
                               },
                               "disposition": {
                                 "type": "string",
@@ -40794,6 +41168,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                               },
                               "evidenceDigest": {
                                 "type": "string"
+                              },
+                              "reviewedFiles": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "path": {
+                                      "type": "string"
+                                    },
+                                    "sha256": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "path",
+                                    "sha256"
+                                  ],
+                                  "additionalProperties": false
+                                }
                               }
                             },
                             "required": [
@@ -41006,6 +41399,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                 "items": {
                                   "type": "string"
                                 }
+                              },
+                              "contribution": {
+                                "type": "object",
+                                "properties": {
+                                  "kind": {
+                                    "type": "string",
+                                    "enum": [
+                                      "outcome",
+                                      "support",
+                                      "scaffolding",
+                                      "secondary"
+                                    ]
+                                  },
+                                  "reason": {
+                                    "type": "string"
+                                  },
+                                  "verification": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "kind",
+                                  "reason",
+                                  "verification"
+                                ],
+                                "additionalProperties": false
                               },
                               "disposition": {
                                 "type": "string",
@@ -41491,6 +41910,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                               },
                               "evidenceDigest": {
                                 "type": "string"
+                              },
+                              "reviewedFiles": {
+                                "type": "array",
+                                "items": {
+                                  "type": "object",
+                                  "properties": {
+                                    "path": {
+                                      "type": "string"
+                                    },
+                                    "sha256": {
+                                      "type": "string"
+                                    }
+                                  },
+                                  "required": [
+                                    "path",
+                                    "sha256"
+                                  ],
+                                  "additionalProperties": false
+                                }
                               }
                             },
                             "required": [
@@ -42119,6 +42557,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                         "type": "string"
                                       }
                                     },
+                                    "contribution": {
+                                      "type": "object",
+                                      "properties": {
+                                        "kind": {
+                                          "type": "string",
+                                          "enum": [
+                                            "outcome",
+                                            "support",
+                                            "scaffolding",
+                                            "secondary"
+                                          ]
+                                        },
+                                        "reason": {
+                                          "type": "string"
+                                        },
+                                        "verification": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "kind",
+                                        "reason",
+                                        "verification"
+                                      ],
+                                      "additionalProperties": false
+                                    },
                                     "disposition": {
                                       "type": "string",
                                       "enum": [
@@ -42603,6 +43067,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                     },
                                     "evidenceDigest": {
                                       "type": "string"
+                                    },
+                                    "reviewedFiles": {
+                                      "type": "array",
+                                      "items": {
+                                        "type": "object",
+                                        "properties": {
+                                          "path": {
+                                            "type": "string"
+                                          },
+                                          "sha256": {
+                                            "type": "string"
+                                          }
+                                        },
+                                        "required": [
+                                          "path",
+                                          "sha256"
+                                        ],
+                                        "additionalProperties": false
+                                      }
                                     }
                                   },
                                   "required": [
@@ -43330,6 +43813,36 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                         ],
                         "additionalProperties": false
                       },
+                      "project_review": {
+                        "type": "object",
+                        "properties": {
+                          "verdict": {
+                            "type": "string",
+                            "enum": [
+                              "yes",
+                              "no",
+                              "uncertain"
+                            ]
+                          },
+                          "probability": {
+                            "type": "number"
+                          },
+                          "outcome": {
+                            "type": "string",
+                            "enum": [
+                              "act",
+                              "confirm",
+                              "escalate"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "verdict",
+                          "probability",
+                          "outcome"
+                        ],
+                        "additionalProperties": false
+                      },
                       "decisionIds": {
                         "type": "array",
                         "items": {
@@ -43711,6 +44224,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                         },
                         "evidenceDigest": {
                           "type": "string"
+                        },
+                        "reviewedFiles": {
+                          "type": "array",
+                          "items": {
+                            "type": "object",
+                            "properties": {
+                              "path": {
+                                "type": "string"
+                              },
+                              "sha256": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "path",
+                              "sha256"
+                            ],
+                            "additionalProperties": false
+                          }
                         }
                       },
                       "required": [
@@ -44460,6 +44992,62 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                 },
                 "taskEvidence": {
                   "type": "string"
+                },
+                "reviewInventory": {
+                  "type": "object",
+                  "properties": {
+                    "paths": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "digest": {
+                      "type": "string"
+                    },
+                    "source": {
+                      "type": "string",
+                      "enum": [
+                        "git",
+                        "filesystem"
+                      ]
+                    },
+                    "errors": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    }
+                  },
+                  "required": [
+                    "paths",
+                    "digest",
+                    "source",
+                    "errors"
+                  ],
+                  "additionalProperties": false
+                },
+                "reviewExclusions": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "files": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "reason": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "files",
+                      "reason"
+                    ],
+                    "additionalProperties": false
+                  }
                 },
                 "nativeSource": {
                   "type": "object",
@@ -47109,6 +47697,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                           "type": "string"
                         }
                       },
+                      "contribution": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "outcome",
+                              "support",
+                              "scaffolding",
+                              "secondary"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "verification": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "reason",
+                          "verification"
+                        ],
+                        "additionalProperties": false
+                      },
                       "disposition": {
                         "type": "string",
                         "enum": [
@@ -47282,6 +47896,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                               "items": {
                                 "type": "string"
                               }
+                            },
+                            "contribution": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "outcome",
+                                    "support",
+                                    "scaffolding",
+                                    "secondary"
+                                  ]
+                                },
+                                "reason": {
+                                  "type": "string"
+                                },
+                                "verification": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "reason",
+                                "verification"
+                              ],
+                              "additionalProperties": false
                             },
                             "disposition": {
                               "type": "string",
@@ -47705,6 +48345,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                             },
                             "evidenceDigest": {
                               "type": "string"
+                            },
+                            "reviewedFiles": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "path": {
+                                    "type": "string"
+                                  },
+                                  "sha256": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "path",
+                                  "sha256"
+                                ],
+                                "additionalProperties": false
+                              }
                             }
                           },
                           "required": [
@@ -47917,6 +48576,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                               "items": {
                                 "type": "string"
                               }
+                            },
+                            "contribution": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "outcome",
+                                    "support",
+                                    "scaffolding",
+                                    "secondary"
+                                  ]
+                                },
+                                "reason": {
+                                  "type": "string"
+                                },
+                                "verification": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "reason",
+                                "verification"
+                              ],
+                              "additionalProperties": false
                             },
                             "disposition": {
                               "type": "string",
@@ -48402,6 +49087,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                             },
                             "evidenceDigest": {
                               "type": "string"
+                            },
+                            "reviewedFiles": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "path": {
+                                    "type": "string"
+                                  },
+                                  "sha256": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "path",
+                                  "sha256"
+                                ],
+                                "additionalProperties": false
+                              }
                             }
                           },
                           "required": [
@@ -49030,6 +49734,32 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                       "type": "string"
                                     }
                                   },
+                                  "contribution": {
+                                    "type": "object",
+                                    "properties": {
+                                      "kind": {
+                                        "type": "string",
+                                        "enum": [
+                                          "outcome",
+                                          "support",
+                                          "scaffolding",
+                                          "secondary"
+                                        ]
+                                      },
+                                      "reason": {
+                                        "type": "string"
+                                      },
+                                      "verification": {
+                                        "type": "string"
+                                      }
+                                    },
+                                    "required": [
+                                      "kind",
+                                      "reason",
+                                      "verification"
+                                    ],
+                                    "additionalProperties": false
+                                  },
                                   "disposition": {
                                     "type": "string",
                                     "enum": [
@@ -49514,6 +50244,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                                   },
                                   "evidenceDigest": {
                                     "type": "string"
+                                  },
+                                  "reviewedFiles": {
+                                    "type": "array",
+                                    "items": {
+                                      "type": "object",
+                                      "properties": {
+                                        "path": {
+                                          "type": "string"
+                                        },
+                                        "sha256": {
+                                          "type": "string"
+                                        }
+                                      },
+                                      "required": [
+                                        "path",
+                                        "sha256"
+                                      ],
+                                      "additionalProperties": false
+                                    }
                                   }
                                 },
                                 "required": [
@@ -50241,6 +50990,36 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                       ],
                       "additionalProperties": false
                     },
+                    "project_review": {
+                      "type": "object",
+                      "properties": {
+                        "verdict": {
+                          "type": "string",
+                          "enum": [
+                            "yes",
+                            "no",
+                            "uncertain"
+                          ]
+                        },
+                        "probability": {
+                          "type": "number"
+                        },
+                        "outcome": {
+                          "type": "string",
+                          "enum": [
+                            "act",
+                            "confirm",
+                            "escalate"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "verdict",
+                        "probability",
+                        "outcome"
+                      ],
+                      "additionalProperties": false
+                    },
                     "decisionIds": {
                       "type": "array",
                       "items": {
@@ -50622,6 +51401,25 @@ export const OPERATOR_CONTRACT: OperatorContractManifest = freezeGeneratedOperat
                       },
                       "evidenceDigest": {
                         "type": "string"
+                      },
+                      "reviewedFiles": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "path": {
+                              "type": "string"
+                            },
+                            "sha256": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "path",
+                            "sha256"
+                          ],
+                          "additionalProperties": false
+                        }
                       }
                     },
                     "required": [
