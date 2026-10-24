@@ -81,6 +81,29 @@ test.each([false, true])('a small ambiguous completion is assessed against prima
     expect(() => guard.beginFinalization({ content: response })).not.toThrow();
   }
 });
+
+test('owner instructions are checked as obligations while execution history keeps its factual audit', async () => {
+  const fake = fakePort((name, _question, raw) => {
+    const context = raw as { sources?: { kind?: string }[]; originalInstruction?: unknown };
+    return noulAnswer(name === 'missed' && !context.originalInstruction && context.sources?.some(source => source.kind === 'instruction') ? .4 : .01);
+  });
+  const port: VerificationAccess['port'] = { model: fake.port.model, async ask(request) {
+    const context = request.state as never as { sources?: { kind?: string }[]; observation?: unknown; originalInstruction?: { kind?: string } };
+    if (request.context?.battery === 'engine.verification.audit' && context.sources?.some(source => source.kind === 'instruction'))
+      throw new JudgmentError('invalid-request', 'An owner instruction reached the execution-observation reader.');
+    if (request.context?.battery === 'engine.verification.instruction-audit' && (context.observation || context.sources?.some(source => source.kind !== 'instruction')))
+      throw new JudgmentError('invalid-request', 'An execution observation reached the owner-instruction reader.');
+    return fake.port.ask(request);
+  } };
+  const earlier = state('Earlier source observations. '.repeat(12_000));
+  const input = { ...earlier, initial: { request: earlier.request, transcript: earlier.transcript },
+    transcript: [...earlier.transcript, { role: 'tool', callId: 'current-proof', content: 'Observed completed inspection and report delivery.' }] };
+  const result = await new CompletionVerification(verificationWriter).prepare(input, access(port));
+  expect(result.findings).toEqual([]);
+  const instructions = fake.requests.filter(request => request.context?.battery === 'engine.verification.instruction-audit');
+  expect(instructions.some(request => (request.state as never as { originalInstruction?: unknown }).originalInstruction)).toBe(true);
+  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.audit')).toBe(true);
+});
 const unopenedAuditSource = (raw: unknown) => {
   const state = raw as { sources?: { id: string }[]; caseEvidence?: { sources?: { id: string }[] } };
   const opened = new Set(state.caseEvidence?.sources?.map(source => source.id));
@@ -314,17 +337,19 @@ test('an uncertain history page is resolved against its individual originals wit
     return noIssueWriter(request);
   };
   const fake = fakePort((name, _question, raw) => {
-    const value = raw as unknown as { observation?: { text: string }; sources?: unknown };
-    if (name === 'missed') return noulAnswer(value.observation
-      ? value.observation.text.includes('OLD-REPORT-VERSION') ? .4 : .01 : .4);
+    const value = raw as unknown as { observation?: { text: string }; originalInstruction?: { text: string }; sources?: unknown };
+    const original = value.observation ?? value.originalInstruction;
+    if (name === 'missed') return noulAnswer(original
+      ? original.text.includes('OLD-REPORT-VERSION') ? .4 : .01 : .4);
     return noulAnswer(.01);
   });
   expect((await new CompletionVerification(writer).prepare(input, access(fake.port))).findings).toEqual([]);
   expect(diagnosed).toHaveLength(1);
   expect(diagnosed[0]).toContain(':audit:');
-  const judgments = fake.requests.filter(request => request.context?.battery === 'engine.verification.observation-audit');
+  const judgments = fake.requests.filter(request => request.context?.battery === 'engine.verification.observation-audit'
+    || request.context?.battery === 'engine.verification.instruction-audit' && (request.state as never as { originalInstruction?: unknown }).originalInstruction);
   const expected = verificationSources(input).filter(source => source.kind !== 'answer');
-  expect(new Set(judgments.map(request => (request.state as never as { observation: { id: string } }).observation.id)))
+  expect(new Set(judgments.map(request => { const state = request.state as never as { observation?: { id: string }; originalInstruction?: { id: string } }; return (state.observation ?? state.originalInstruction)!.id; })))
     .toEqual(new Set(expected.map(source => source.id)));
   expect(fake.requests.filter(request => request.context?.battery === 'engine.verification.no-issue')).toHaveLength(1);
   expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(true);
@@ -367,9 +392,10 @@ test('an unsettled semantic audit returns one specific private evidence question
   conversation.addToolResults([{ callId: 'current', success: true, output: 'Completed review and delivery observed.' }]);
   let resolved = false, waits = 0;
   const fake = fakePort((name, _question, raw) => {
-    const value = raw as unknown as { observation?: { text: string }; evidence?: { unresolvedQuestion?: string } };
-    return noulAnswer(name === 'missed' ? value.observation
-      ? !resolved && value.observation.text.includes('OLD-REPORT-QUESTION') ? .4 : .01 : .4
+    const value = raw as unknown as { observation?: { text: string }; originalInstruction?: { text: string }; evidence?: { unresolvedQuestion?: string } };
+    const original = value.observation ?? value.originalInstruction;
+    return noulAnswer(name === 'missed' ? original
+      ? !resolved && original.text.includes('OLD-REPORT-QUESTION') ? .4 : .01 : .4
       : name === 'unsupported' && value.evidence?.unresolvedQuestion && !resolved ? .4 : .01);
   });
   installJudgmentPort(fake.port);
@@ -430,10 +456,11 @@ test.each([true, false])('a historical instruction is checked against its actual
     transcript: [...history, { role: 'user', content: request }, { role: 'tool', callId: 'current-proof', content:
       'Completed report read. An unrelated later printed string says EXACT-ORIGINAL-VERSIONS, but is not the original command receipt.' }] };
   const fake = fakePort((name, _question, raw) => {
-    const value = raw as unknown as { observation?: { text: string }; originalTurn?: { sources: { messageRole?: string; execution?: { callId?: string }; text: string }[] }; sources?: unknown; evidence?: { unresolvedQuestion?: string } };
+    const value = raw as unknown as { observation?: { text: string }; originalInstruction?: { text: string }; originalTurn?: { sources: { messageRole?: string; execution?: { callId?: string }; text: string }[] }; sources?: unknown; evidence?: { unresolvedQuestion?: string } };
     if (name === 'missed') {
-      if (!value.observation) return noulAnswer(JSON.stringify(value.sources).includes('PRINT-RUNTIME-VERSIONS') ? .4 : .01);
-      if (!value.observation.text.includes('PRINT-RUNTIME-VERSIONS')) return noulAnswer(.01);
+      const original = value.observation ?? value.originalInstruction;
+      if (!original) return noulAnswer(JSON.stringify(value.sources ?? []).includes('PRINT-RUNTIME-VERSIONS') ? .4 : .01);
+      if (!original.text.includes('PRINT-RUNTIME-VERSIONS')) return noulAnswer(.01);
       const observed = value.originalTurn?.sources.some(source => source.execution?.callId === 'old-version-command' && source.text.includes('EXACT-ORIGINAL-VERSIONS'));
       return noulAnswer(observed ? .01 : .4);
     }
@@ -442,7 +469,7 @@ test.each([true, false])('a historical instruction is checked against its actual
   const result = new CompletionVerification(noIssueWriter).prepare(input, access(fake.port));
   if (present) expect((await result).findings).toEqual([]);
   else await expect(result).rejects.toThrow('native requirement remains unsettled without an actionable repair');
-  expect(fake.requests.some(request => request.context?.battery === 'engine.verification.observation-audit'
+  expect(fake.requests.some(request => ['engine.verification.observation-audit', 'engine.verification.instruction-audit'].includes(request.context?.battery ?? '')
     && JSON.stringify((request.state as never as { originalTurn?: unknown }).originalTurn ?? null).includes('old-version-command'))).toBe(true);
 });
 
@@ -531,8 +558,8 @@ test('a source-backed native resolution settles uncertain quality once and still
   expect(resolutions).toHaveLength(1);
   const targets = (resolutions[0]!.questions.satisfied!.instructions as { nativeTargets: { originalRequirement: { text: string } } }).nativeTargets;
   expect(targets.originalRequirement.text).toBe('Complete the original requested review and deliver its report.');
-  const audited = fake.requests.filter(request => request.context?.battery === 'engine.verification.audit')
-    .flatMap(request => (request.state as unknown as { sources: { id: string }[] }).sources.map(source => source.id));
+  const audited = fake.requests.filter(request => ['engine.verification.audit', 'engine.verification.instruction-audit'].includes(request.context?.battery ?? ''))
+    .flatMap(request => ((request.state as unknown as { sources?: { id: string }[] }).sources ?? []).map(source => source.id));
   expect(new Set(audited)).toEqual(new Set(verificationSources(input).map(source => source.id)));
   const checks = (result.state.verification as { requirementChecks: { readings: { quality_gap: { outcome: string } }; resolution?: { aspects: string[] } }[] }).requirementChecks;
   expect(checks[0]!.readings.quality_gap.outcome).not.toBe('act');
@@ -672,8 +699,8 @@ test('a bounded native follow-up checks all current results without redrafting e
   expect(boundary.currentTurn.entryMessageCount).toBe(before.transcript.length);
   expect(new Set(boundary.currentTurn.observationIds)).toEqual(new Set(verificationSources(input)
     .filter(source => source.execution && ['native-tests', 'report-update', 'final-diff'].includes(String(source.execution.callId))).map(source => source.id)));
-  const audited = fake.requests.filter(request => request.context?.battery === 'engine.verification.audit')
-    .flatMap(request => (request.state as unknown as { sources: { id: string }[] }).sources.map(source => source.id));
+  const audited = fake.requests.filter(request => ['engine.verification.audit', 'engine.verification.instruction-audit'].includes(request.context?.battery ?? ''))
+    .flatMap(request => ((request.state as unknown as { sources?: { id: string }[] }).sources ?? []).map(source => source.id));
   expect(new Set(audited)).toEqual(new Set(verificationSources(input).map(source => source.id)));
   expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(true);
 });
@@ -767,7 +794,7 @@ test('uncertain history audits settle against the exact page and current proof w
   const input = { ...before, initial: { request: before.request, transcript: before.transcript },
     transcript: [...before.transcript, { role: 'tool', callId: 'current-proof', content: 'The complete review was accepted and the canonical report exists.' }],
     completedWork: [{ kind: 'host-completed-contract', id: 'review', status: 'passed', finalCheck: { result: 'pass' } }] };
-  const fake = fakePort((name, _question, raw) => noulAnswer(name === 'missed' && !(raw as { observation?: unknown }).observation ? .4 : .01));
+  const fake = fakePort((name, _question, raw) => noulAnswer(name === 'missed' && !(raw as { observation?: unknown }).observation && !(raw as { originalInstruction?: unknown }).originalInstruction ? .4 : .01));
   const result = await new CompletionVerification(verificationWriter).prepare(input, access(fake.port));
   expect(result.findings).toHaveLength(0);
   expect(fake.requests.some(request => request.context?.site === 'engine.verification.audit-refinement')).toBe(true);
@@ -797,8 +824,8 @@ test('held page audits repeat only for a changed evidence context and still cove
     ? choiceAnswer(question, Object.keys(question.criteria)[0]!, .99) : noulAnswer(name === 'missed' && unopenedAuditSource(raw) ? .99 : .01));
   const result = await new CompletionVerification(verificationWriter).prepare(input, access(fake.port));
   expect(result.findings).toHaveLength(0);
-  const audits = fake.requests.filter(request => request.context?.battery === 'engine.verification.audit');
-  const pages = audits.flatMap(request => (request.state as unknown as { sources: { id: string }[] }).sources.map(source => source.id));
+  const audits = fake.requests.filter(request => ['engine.verification.audit', 'engine.verification.instruction-audit'].includes(request.context?.battery ?? ''));
+  const pages = audits.flatMap(request => ((request.state as unknown as { sources?: { id: string }[] }).sources ?? []).map(source => source.id));
   expect(pages.length).toBeGreaterThan(10);
   expect(new Set(pages)).toEqual(new Set(verificationSources(input).filter(source => source.kind !== 'answer').map(source => source.id)));
   expect(new Set(audits.map(request => JSON.stringify(request.state))).size).toBe(audits.length);
@@ -1021,7 +1048,8 @@ test('large histories inspect primary evidence first and audit every interval fo
     { role: 'tool', callId: 'latest-write', content: 'The report was written.' }] };
   const result = await new CompletionVerification(writer).prepare(source, access(fake.port));
   expect(result.findings.length).toBeGreaterThan(0);
-  const audited = fake.requests.filter(request => request.context?.battery === 'engine.verification.audit').flatMap(request => (request.state as never as { sources: { id: string }[] }).sources);
+  const audited = fake.requests.filter(request => ['engine.verification.audit', 'engine.verification.instruction-audit'].includes(request.context?.battery ?? ''))
+    .flatMap(request => (request.state as never as { sources?: { id: string }[] }).sources ?? []);
   for (const original of verificationSources(source)) expect(audited.some(entry => entry.id === original.id)).toBeTrue();
   expect(evidenceDrafts).toBeLessThan(6);
   const requirement = fake.requests.find(request => request.context?.battery === 'engine.verification.requirement')!;

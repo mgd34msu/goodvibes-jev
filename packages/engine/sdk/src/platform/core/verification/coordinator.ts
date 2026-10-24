@@ -1,7 +1,7 @@
 import { JudgmentContextLimitError, JudgmentError, mapLimit } from '@goodvibes-jev/judgment';
 import { snapshotJudgmentEvidence } from '../../gate/judgment-input.js';
 import { captureStrictJudgmentJson } from '../../gate/judgment-result.js';
-import { verificationEvidence, verificationIntegration, verificationRequirement, verificationScope, verificationSource, verificationRepairs, verificationNoIssue, verificationResolution, verificationAudit, verificationObservationAudit } from './batteries.js';
+import { verificationEvidence, verificationIntegration, verificationRequirement, verificationScope, verificationSource, verificationRepairs, verificationNoIssue, verificationResolution, verificationAudit, verificationInstructionAudit, verificationObservationAudit } from './batteries.js';
 import { VERIFICATION_FRAME_CHARACTERS, VERIFICATION_OVERVIEW_CHARACTERS, verificationFrames, verificationHash, verificationSources, verificationWireSource } from './source.js';
 import { VerificationStore } from './store.js';
 import { VerificationHeldError, VerificationUnsettledError, VerificationSubdivisionError, type VerificationAccess, type VerificationReceipt, type VerificationRequirement, type VerificationSource, type VerificationSummary, type VerificationWriter } from './types.js';
@@ -35,6 +35,7 @@ type RepairAssessment = {
 };
 type VerificationTurnContext = {
   readonly request: unknown;
+  readonly requirements: readonly { readonly id: string; readonly text: string }[];
   readonly currentTurn: { readonly entryMessageCount: number | null; readonly observationIds: readonly string[]; readonly meaning: string };
 };
 async function ownedMapLimit<T, R>(access: VerificationAccess, values: readonly T[], limit: number, read: (value: T) => Promise<R>): Promise<R[]> {
@@ -375,7 +376,10 @@ export class CompletionVerification {
 
   private async audit(requirement: VerificationRequirement, caseEvidence: unknown, sources: readonly VerificationSource[], access: VerificationAccess,
     response: unknown, audited: Set<string>, accounted: Set<string>, turnContext?: VerificationTurnContext): Promise<VerificationSource[][]> {
-    const pages = verificationFrames(sources, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length);
+    // Owner instructions establish obligations. They must still be checked,
+    // but a request is not an execution observation that the work failed.
+    const pages = [sources.filter(source => source.kind === 'instruction'), sources.filter(source => source.kind !== 'instruction')]
+      .flatMap(group => verificationFrames(group, VERIFICATION_FRAME_CHARACTERS, source => JSON.stringify(verificationWireSource(source)).length));
     const checks = await ownedMapLimit(access, pages, 3, async page => {
       // These sets belong to ONE exact source/requirement/answer/authority
       // cursor. Opening another immutable original does not undo a checked
@@ -393,7 +397,8 @@ export class CompletionVerification {
         for (const source of page) { audited.add(source.id); if (accepted || !unresolved.includes(source)) accounted.add(source.id); }
         return accepted ? null : unresolved;
       }
-      const run = await verificationAudit.run(access.port, context as never, { ...this.options(access), site: verificationAudit.name });
+      const audit = page.every(source => source.kind === 'instruction') ? verificationInstructionAudit : verificationAudit;
+      const run = await audit.run(access.port, context as never, { ...this.options(access), site: audit.name });
       let accepted = clean(run.readings);
       let unresolved = page;
       run.recordAction(accepted ? 'This complete original page has no unaccounted material counterevidence; final publication remains gated.' : 'Retrieve this exact original page before accepting the provisional requirement conclusion.');
@@ -404,12 +409,15 @@ export class CompletionVerification {
         const resolved = await ownedMapLimit(access, page, 3, async observation => {
           if (accounted.has(observation.id)) return true;
           const originalTurn = this.originalTurn(observation.id);
-          const state = { originalRequirement: requirement, currentWorkEvidence: caseEvidence, observation: verificationWireSource(observation),
+          const instruction = observation.kind === 'instruction';
+          const state = { originalRequirement: requirement, requirements: turnContext?.requirements, currentWorkEvidence: caseEvidence,
+            ...(instruction ? { originalInstruction: verificationWireSource(observation) } : { observation: verificationWireSource(observation) }),
             ...(originalTurn ? { originalTurn } : {}), currentTurn: turnContext?.currentTurn, proposedResponse: response };
           const sourceKey = verificationHash(['original-counterevidence-v1', state]);
           if (cache.has(sourceKey)) return cache.get(sourceKey) === true;
-          const exact = await verificationObservationAudit.run(access.port, state as never,
-            { ...this.options(access), site: 'engine.verification.audit-refinement' });
+          const refinement = instruction ? verificationInstructionAudit : verificationObservationAudit;
+          const exact = await refinement.run(access.port, state as never,
+            { ...this.options(access), site: instruction ? verificationInstructionAudit.name : 'engine.verification.audit-refinement' });
           let settled = clean(exact.readings);
           exact.recordAction(settled ? 'This exact original observation has no unaccounted counterevidence; all other sources and publication remain gated.'
             : 'Retain this exact observation and resolve its specific factual concern.');
@@ -753,6 +761,7 @@ export class CompletionVerification {
     const currentResults = observations.filter(source => source.execution && currentCalls.has(source.execution.callId));
     const turnContext: VerificationTurnContext = {
       request: bounded(full.request, 12_000) ? full.request : { originalInstructionSources: sources.filter(source => source.kind === 'instruction').map(source => source.id) },
+      requirements: ledger.map(({ id, text }) => ({ id, text })),
       currentTurn: { entryMessageCount: initial?.transcript?.length ?? null, observationIds: currentResults.map(source => source.id),
         meaning: 'These source IDs identify actual tool observations after the native turn-entry checkpoint. Earlier executions and artifact descriptions remain historical evidence; do not treat them as actions repeated in this turn. Evaluate restrictions from when the user imposed them. All active original obligations and actual later invalidating facts remain required.' },
     };

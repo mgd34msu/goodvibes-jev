@@ -32,7 +32,7 @@ export function verificationSources(state: Record<string, unknown>): Verificatio
           if (tail < 20) end -= 20 - tail;
         }
       }
-      const label = `${reference}; ${start === 0 && end === text.length ? 'complete observation' : 'partial observation'}; characters ${start}..${end} of ${text.length}`;
+      const label = `${reference}; ${start === 0 && end === text.length ? 'complete source' : 'partial source'}; characters ${start}..${end} of ${text.length}`;
       result.push({ id: `s-${verificationHash([kind, label, text.slice(start, end)]).slice(0, 24)}`, kind,
         reference: label, text: text.slice(start, end), ...(messageRole ? { messageRole, completeMessage: start === 0 && end === text.length } : {}), ...(execution ? { execution } : {}) });
       start = end;
