@@ -73,7 +73,7 @@ export class ReadTool implements Tool {
     }
   }
 
-  private async _execute(input: ReadInput, assertCurrent: () => void, allowOutsideProject: boolean): Promise<{ success: boolean; output: string }> {
+  private async _execute(input: ReadInput, assertCurrent: () => void, allowOutsideProject: boolean): Promise<{ success: boolean; output: string; error?: string }> {
     const globalExtract: ExtractMode = input.extract ?? 'content';
     const format: OutputFormat = input.output?.format ?? 'standard';
     const includeLineNumbers: boolean = input.output?.include_line_numbers ?? true;
@@ -166,9 +166,12 @@ export class ReadTool implements Tool {
     const filesRead = fileResults.length - filesBinary - filesErrored;
     const totalLines = fileResults.reduce((s, r) => s + r.lineCount, 0);
     const totalTokens = fileResults.reduce((s, r) => s + r.tokenEstimate, 0);
+    // Every requested read failing is a failed operation, never a green check
+    // with zero lines. Per-file diagnostics stay in the structured output.
+    const allFailed = fileResults.length > 0 && filesRead === 0 && filesBinary === 0;
 
     const output: ReadOutput = {
-      success: true,
+      success: !allFailed,
       summary: {
         files_read: filesRead,
         files_binary: filesBinary,
@@ -201,6 +204,11 @@ export class ReadTool implements Tool {
       output.pagination = paginationInfo;
     }
 
+    if (allFailed) {
+      const reasons = [...new Set(fileResults.map((r) => r.error).filter((error): error is string => typeof error === 'string'))];
+      return { success: false, output: JSON.stringify(output),
+        error: `All ${fileResults.length} requested file read${fileResults.length === 1 ? '' : 's'} failed: ${reasons.slice(0, 3).join('; ')}${reasons.length > 3 ? '; …' : ''}` };
+    }
     return { success: true, output: JSON.stringify(output) };
   }
 }
