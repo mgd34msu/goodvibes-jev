@@ -1,5 +1,5 @@
 import { readFileSync, statSync } from 'node:fs';
-import { extname } from 'node:path';
+import { extname, isAbsolute, relative } from 'node:path';
 import { resolveAndValidatePath } from '../../utils/path-safety.js';
 import { logger } from '../../utils/logger.js';
 import { isNotebookFile } from '../../utils/notebook.js';
@@ -246,7 +246,7 @@ async function readImageFile(
 
   const rawMeta = getImageMetadata(imgBuffer, extname(target.resolvedPath));
   if (!shouldIncludeContent(context.format)) {
-    context.projectIndex.upsertFile(target.resolvedPath, Math.ceil(byteSize / 4));
+    indexReadFile(context, target.resolvedPath, Math.ceil(byteSize / 4));
     return {
       ...createReadBaseResult(target, byteSize, Math.ceil(byteSize / 4)),
       image: true,
@@ -256,7 +256,7 @@ async function readImageFile(
   }
 
   if (imageMode === 'metadata-only') {
-    context.projectIndex.upsertFile(target.resolvedPath, Math.ceil(byteSize / 4));
+    indexReadFile(context, target.resolvedPath, Math.ceil(byteSize / 4));
     return {
       ...createReadBaseResult(target, byteSize, 0),
       image: true,
@@ -295,7 +295,7 @@ async function readImageFile(
 
   const b64 = processedBuffer.toString('base64');
   const tokenEst = Math.ceil(processedBuffer.length / 4);
-  context.projectIndex.upsertFile(target.resolvedPath, tokenEst);
+  indexReadFile(context, target.resolvedPath, tokenEst);
 
   const desc = `Image: ${rawMeta.width ?? '?'}x${rawMeta.height ?? '?'} ${rawMeta.format}, ${humanSize(byteSize)}${resized ? ' (resized)' : ''}${converted ? ` (converted from ${originalFormat})` : ''}`;
   return {
@@ -320,7 +320,7 @@ function readArchiveFile(target: ReadTarget, context: ReadExecutionContext): Fil
 
   const listing = listArchiveContents(target.resolvedPath, archiveBuffer, extname(target.resolvedPath));
   const tokenEst = Math.ceil(listing.length / 4);
-  context.projectIndex.upsertFile(target.resolvedPath, tokenEst);
+  indexReadFile(context, target.resolvedPath, tokenEst);
   return { ...createReadBaseResult(target, archiveBuffer.length, tokenEst), content: listing, lineCount: listing.split('\n').length, archive: true };
 }
 
@@ -339,7 +339,7 @@ function readPdfFile(target: ReadTarget, context: ReadExecutionContext, fileInpu
 
   const pdfText = extractPdfText(pdfRaw, fileInput.pages);
   const tokenEst = Math.ceil(pdfByteSize / 4);
-  context.projectIndex.upsertFile(target.resolvedPath, tokenEst);
+  indexReadFile(context, target.resolvedPath, tokenEst);
   const pdfLines = pdfText.split('\n');
   return { ...createReadBaseResult(target, pdfByteSize, tokenEst), content: shouldIncludeContent(context.format) ? pdfText : undefined, lineCount: pdfLines.length };
 }
@@ -358,7 +358,7 @@ function readNotebookFile(target: ReadTarget, context: ReadExecutionContext): Fi
 
   const formatted = formatNotebook(nbRaw);
   const tokenEst = Math.ceil(nbByteSize / 4);
-  context.projectIndex.upsertFile(target.resolvedPath, tokenEst);
+  indexReadFile(context, target.resolvedPath, tokenEst);
   const nbLines = formatted.split('\n');
   return { ...createReadBaseResult(target, nbByteSize, tokenEst), content: shouldIncludeContent(context.format) ? formatted : undefined, lineCount: nbLines.length };
 }
@@ -393,7 +393,7 @@ async function readTextFile(target: ReadTarget, context: ReadExecutionContext, f
 
   const byteSize = Buffer.byteLength(rawContent, 'utf-8');
   const tokenEstimate = Math.ceil(byteSize / 4);
-  context.projectIndex.upsertFile(target.resolvedPath, tokenEstimate);
+  indexReadFile(context, target.resolvedPath, tokenEstimate);
 
   const lines = rawContent.split('\n');
   const lineCount = lines.length;
@@ -440,6 +440,11 @@ async function readTextFile(target: ReadTarget, context: ReadExecutionContext, f
   return result;
 }
 
+function indexReadFile(context: ReadExecutionContext, path: string, tokens: number): void {
+  const local = relative(context.projectIndex.baseDir, path);
+  if (local !== '..' && !local.startsWith('../') && !isAbsolute(local)) context.projectIndex.upsertFile(path, tokens);
+}
+
 export async function readOneFile(
   fileInput: ReadFileInput,
   globalExtract: ExtractMode,
@@ -452,13 +457,14 @@ export async function readOneFile(
   globalMaxImageSize?: number,
   codeIntelligence?: Pick<CodeIntelligence, 'getOutline' | 'getSymbols'>,
   assertCurrent?: () => void,
+  allowOutsideProject = false,
 ): Promise<FileReadResult> {
   assertCurrent?.();
   const extract: ExtractMode = fileInput.extract ?? globalExtract;
 
   let resolvedPath: string;
   try {
-    resolvedPath = resolveAndValidatePath(fileInput.path, projectIndex.baseDir);
+    resolvedPath = resolveAndValidatePath(fileInput.path, projectIndex.baseDir, allowOutsideProject);
   } catch (err) {
     const message = summarizeError(err);
     logger.warn('read tool: path validation failed', { path: fileInput.path, error: message });
@@ -491,7 +497,7 @@ export async function readOneFile(
   return readTextFile(target, context, fileInput);
 }
 
-export function paginateFiles(files: ReadFileInput[], tokenBudget: number, projectRoot: string): Array<number[]> {
+export function paginateFiles(files: ReadFileInput[], tokenBudget: number, projectRoot: string, allowOutsideProject = false): Array<number[]> {
   const pages: Array<number[]> = [];
   let currentPage: number[] = [];
   let currentTokens = 0;
@@ -499,7 +505,7 @@ export function paginateFiles(files: ReadFileInput[], tokenBudget: number, proje
   for (let i = 0; i < files.length; i++) {
     let est = 0;
     try {
-      const resolved = resolveAndValidatePath((files[i]?.path ?? ''), projectRoot);
+      const resolved = resolveAndValidatePath((files[i]?.path ?? ''), projectRoot, allowOutsideProject);
       est = Math.ceil(statSync(resolved).size / 4);
     } catch {
       est = 0;

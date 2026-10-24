@@ -381,3 +381,23 @@ test('read explanation states pending admission and checks only mechanical shape
   expect(explainAgentToolPolicyInvocation('read', { files: Array.from({ length: 11 }, () => ({ path: 'ordinary.txt' })) }).status).toBe('allowed');
   expect(requests).toHaveLength(0); expect(readBodies).toBe(0);
 });
+
+
+test.each(['autoApprove', 'allow-all'] as const)('the composed Agent honors %s for sibling reads and applies live revocation', async mode => {
+  const f = fixture(); reportsMutation = false;
+  const outside = join(f.workspace, '..', 'outside-fixture.txt');
+  writeFileSync(outside, 'SYNTHETIC OUTSIDE PROJECT'); symlinkSync(outside, join(f.workspace, 'external-alias.txt'));
+  f.source.goal = 'Read the sibling outside-fixture.txt file';
+  if (mode === 'autoApprove') f.runtime.configManager.set('behavior.autoApprove', true);
+  else f.runtime.configManager.set('permissions.mode', 'allow-all');
+  for (const path of [outside, '../outside-fixture.txt', 'external-alias.txt']) {
+    const result = await f.run('read', read(path));
+    expect(result.success).toBe(true); expect(result.output).toContain('SYNTHETIC OUTSIDE PROJECT');
+  }
+  expect(f.prompts()).toBe(0);
+  if (mode === 'autoApprove') f.runtime.configManager.set('behavior.autoApprove', false);
+  else f.runtime.configManager.set('permissions.mode', 'prompt');
+  const bodiesBefore = readBodies;
+  await f.run('read', read(outside)).catch(() => undefined);
+  expect(readBodies).toBe(bodiesBefore);
+});

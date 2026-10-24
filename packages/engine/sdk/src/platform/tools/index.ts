@@ -11,6 +11,7 @@ import { ModeManager } from '../state/mode-manager.js';
 import { HookDispatcher } from '../hooks/dispatcher.js';
 import { FileUndoManager } from '../state/file-undo.js';
 import type { ConfigManager } from '../config/manager.js';
+import { isEffectiveDangerMode } from '../config/index.js';
 import type { ProviderRegistry } from '../providers/registry.js';
 import type { ToolLLM } from '../config/tool-llm.js';
 import { ReadTool } from './read/index.js';
@@ -499,9 +500,11 @@ export function registerAllTools(
       }),
     );
   }
-  registerTool(new ReadTool(projectIndex, fileCache, undefined, deps.capturedReadAccess),
+  const readConfigManager = deps.configManager;
+  const allowOutsideProject = () => isEffectiveDangerMode(readConfigManager);
+  registerTool(new ReadTool(projectIndex, fileCache, undefined, deps.capturedReadAccess, allowOutsideProject),
     deps.readAdmissionPolicy === 'agent-main-conversation'
-      ? { inputProjection: createAgentReadInputProjector(projectIndex) } : undefined);
+      ? { inputProjection: createAgentReadInputProjector(projectIndex, allowOutsideProject) } : undefined);
   // One post-edit diagnostics provider shared by write and edit. Default: the
   // in-process tree-sitter syntax provider (no process spawn). `null` disables.
   const diagnosticsProvider =
@@ -557,11 +560,12 @@ export function registerAllTools(
     }),
   );
   registerTool(
-    createFindTool(workingDirectory, deps.featureFlags, undefined, deps.readAccessFilter, deps.capturedReadAccess),
+    createFindTool(workingDirectory, deps.featureFlags, undefined, deps.readAccessFilter, deps.capturedReadAccess, allowOutsideProject),
   );
   registerTool(
     createRepoMapTool({
       projectRoot: workingDirectory,
+      allowOutsideProject,
       ...(deps.readAccessFilter ? { readAccessFilter: deps.readAccessFilter } : {}),
     }),
   );

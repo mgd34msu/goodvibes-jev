@@ -44,6 +44,7 @@ export class ReadTool implements Tool {
     fileCache?: FileStateCache,
     codeIntelligence?: Pick<CodeIntelligence, 'getOutline' | 'getSymbols'>,
     private readonly capturedReadAccess?: ReadAccessFilter | undefined,
+    private readonly allowOutsideProject: () => boolean = () => false,
   ) {
     this.fileCache = fileCache ?? new FileStateCache();
     this.projectIndex = projectIndex;
@@ -55,9 +56,14 @@ export class ReadTool implements Tool {
       return { success: false, error: 'Missing or empty "files" array' };
     }
     try {
-      const assertCurrent = readExecutionGuard(args, options, this.projectIndex);
+      const guard = readExecutionGuard(args, options, this.projectIndex);
+      const allowOutsideProject = this.allowOutsideProject();
+      const assertCurrent = () => {
+        guard();
+        if (this.allowOutsideProject() !== allowOutsideProject) throw new Error('Read permission mode changed');
+      };
       assertCurrent();
-      const result = await this._execute(args as unknown as ReadInput, assertCurrent);
+      const result = await this._execute(args as unknown as ReadInput, assertCurrent, allowOutsideProject);
       assertCurrent();
       return result;
     } catch (err) {
@@ -67,7 +73,7 @@ export class ReadTool implements Tool {
     }
   }
 
-  private async _execute(input: ReadInput, assertCurrent: () => void): Promise<{ success: boolean; output: string }> {
+  private async _execute(input: ReadInput, assertCurrent: () => void, allowOutsideProject: boolean): Promise<{ success: boolean; output: string }> {
     const globalExtract: ExtractMode = input.extract ?? 'content';
     const format: OutputFormat = input.output?.format ?? 'standard';
     const includeLineNumbers: boolean = input.output?.include_line_numbers ?? true;
@@ -84,7 +90,7 @@ export class ReadTool implements Tool {
 
     if (tokenBudget !== undefined) {
       assertCurrent();
-      const pages = paginateFiles(allFiles, tokenBudget, this.projectIndex.baseDir);
+      const pages = paginateFiles(allFiles, tokenBudget, this.projectIndex.baseDir, allowOutsideProject);
       const totalPages = Math.max(1, pages.length);
       const pageIdx = Math.min(page - 1, totalPages - 1);
       const pageIndices = pages[pageIdx]! ?? [];
@@ -119,6 +125,7 @@ export class ReadTool implements Tool {
           globalMaxImageSize,
           this.codeIntelligence,
           assertCurrent,
+          allowOutsideProject,
         );
         assertCurrent();
         return result;

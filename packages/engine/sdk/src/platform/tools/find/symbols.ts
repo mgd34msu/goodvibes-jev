@@ -1,6 +1,6 @@
+import type { FindSearchOptions } from './shared.js';
 import { paginateFindResult } from './pagination.js';
 import type { WalkDirOptions } from '../../utils/walk-dir.js';
-import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { CodeIntelligence } from '../../intelligence/index.js';
 import type { OutputOptions, SymbolsQuery, SymbolKind } from './shared.js';
 import {
@@ -31,7 +31,7 @@ async function scanSymbolsQuery(
   query: SymbolsQuery,
   output: OutputOptions,
   projectRoot: string,
-  options: JudgmentReadingOptions & WalkDirOptions = {},
+  options: FindSearchOptions = {},
 ): Promise<Record<string, unknown>> {
   const before = JSON.stringify([query, output]);
   const current = () => {
@@ -40,7 +40,7 @@ async function scanSymbolsQuery(
   };
   current();
   const walkOptions: WalkDirOptions = { ...options, beforeAttempt: current };
-  const validatedPath = validateSearchPath(query.path, projectRoot);
+  const validatedPath = validateSearchPath(query.path, projectRoot, options.allowOutsideProject);
   if (typeof validatedPath === 'object') return validatedPath;
   const basePath = validatedPath;
   const kindFilter = query.kinds ? new Set(query.kinds) : null;

@@ -2,6 +2,10 @@
 
 ## Unreleased
 
+### Fixed
+
+- Honor the existing auto-approve mode for reads, file searches, and repository maps outside the project directory, including symlink targets. Apply mode changes to subsequent calls without restarting.
+
 ## [2.0.24] - 2026-10-23
 
 ### Fixed

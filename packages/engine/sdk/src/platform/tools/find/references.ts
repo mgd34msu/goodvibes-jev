@@ -1,6 +1,5 @@
 import { paginateFindResult } from './pagination.js';
-import type { WalkDirOptions } from '../../utils/walk-dir.js';
-import { resolve } from 'node:path';
+import type { FindSearchOptions } from './shared.js';
 import { assertCapturedToolReadAccess } from '../shared/captured-input-tools.js';
 import { CodeIntelligence, uriToPath } from '../../intelligence/index.js';
 import { summarizeError } from '../../utils/error-display.js';
@@ -14,6 +13,7 @@ import {
   makeLocationsResult,
   readTextFile,
   withFindWarnings,
+  validateSearchPath,
 } from './shared.js';
 
 function withFallbackReason<T extends Record<string, unknown>>(
@@ -27,8 +27,13 @@ async function scanReferencesQuery(
   query: ReferencesQuery,
   output: OutputOptions,
   projectRoot: string,
-  walkOptions: WalkDirOptions = {},
+  walkOptions: FindSearchOptions = {},
 ): Promise<Record<string, unknown>> {
+
+  const basePath = validateSearchPath(query.path, projectRoot, walkOptions.allowOutsideProject);
+  if (typeof basePath === 'object') return basePath;
+  const sourcePath = validateSearchPath(query.file, projectRoot, walkOptions.allowOutsideProject);
+  if (typeof sourcePath === 'object') return sourcePath;
 
   interface ReferenceLocation {
     file: string;
@@ -39,10 +44,10 @@ async function scanReferencesQuery(
   let skippedInvalidLspUris = 0;
   const diagnostics = createFindDiagnostics();
 
-  await assertCapturedToolReadAccess(resolve(projectRoot, query.file));
+  await assertCapturedToolReadAccess(sourcePath);
   const ci = new CodeIntelligence({});
   try {
-    const lspLocations = await ci.getReferences(query.file, query.line, query.column);
+    const lspLocations = await ci.getReferences(sourcePath, query.line, query.column);
     if (lspLocations.length > 0) {
       for (const loc of lspLocations) {
 
@@ -107,7 +112,7 @@ async function scanReferencesQuery(
     return { error: `Invalid symbol name: ${query.symbol}` };
   }
 
-  const files = await collectTextFiles(projectRoot, diagnostics, walkOptions);
+  const files = await collectTextFiles(basePath, diagnostics, walkOptions);
   for (const file of files) {
 
     const content = await readTextFile(file, diagnostics);

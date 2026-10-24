@@ -1,6 +1,6 @@
+import type { FindSearchOptions } from './shared.js';
 import { paginateFindResult } from './pagination.js';
 import type { WalkDirOptions } from '../../utils/walk-dir.js';
-import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { assertCapturedToolAccessCurrent } from '../shared/captured-input-tools.js';
 import { stat as statAsync } from 'node:fs/promises';
 import { relative } from 'node:path';
@@ -61,7 +61,7 @@ async function scanContentQuery(
   runtime: FindRuntimeService,
   projectRoot: string,
   readAccessFilter?: ReadAccessFilter,
-  options: JudgmentReadingOptions & WalkDirOptions = {},
+  options: FindSearchOptions = {},
 ): Promise<Record<string, unknown>> {
   const before = JSON.stringify([query, output]);
   const current = () => {
@@ -71,7 +71,7 @@ async function scanContentQuery(
   };
   current();
   const walkOptions: WalkDirOptions = { ...options, beforeAttempt: current };
-  const validatedPath = validateSearchPath(query.path, projectRoot);
+  const validatedPath = validateSearchPath(query.path, projectRoot, options.allowOutsideProject);
   if (typeof validatedPath === 'object') return validatedPath;
   const basePath = validatedPath;
   const format = output.format ?? 'matches';
@@ -306,7 +306,7 @@ async function scanContentQuery(
     }
 
     if (query.relationships) {
-      const importGraph = await runtime.getImportGraph(projectRoot);
+      const importGraph = await runtime.getImportGraph(basePath);
       const relMap: Record<string, { imports: string[]; importedBy: string[] }> = {};
       for (const file of matchedFiles.keys()) {
         relMap[file] = {

@@ -1,10 +1,11 @@
+import { resolveAndValidatePath } from '../../utils/path-safety.js';
 import { assertCapturedInputPathContext } from '../../contract/input-authority.js';
 // Model-invoked repository map. Every indexed source file and export is
 // included by default; a caller can explicitly request a smaller token budget.
 // Import-graph centrality determines ordering, not which files are included.
 import { statSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
-import { dirname, isAbsolute, relative, resolve, sep } from 'node:path';
+import { dirname, isAbsolute, sep, relative, resolve } from 'node:path';
 import type { Tool, ToolDefinition, ToolResult } from '../../types/tools.js';
 import { ImportGraph } from '../../intelligence/index.js';
 import { estimateTokens } from '../../core/compaction-types.js';
@@ -123,6 +124,7 @@ export function createRepoMapTool(options: {
    */
   readAccessFilter?: ReadAccessFilter;
   capturedReadAccess?: ReadAccessFilter;
+  allowOutsideProject?: () => boolean;
 }): Tool {
   const projectRoot = options.projectRoot;
   const readAccessFilter = options.readAccessFilter;
@@ -147,11 +149,15 @@ export function createRepoMapTool(options: {
       const budgetTokens = requestedBudget(args['budgetTokens']);
       const rawPath = typeof args['path'] === 'string' ? args['path'].trim() : '';
       const requested = rawPath ? (isAbsolute(rawPath) ? rawPath : resolve(projectRoot, rawPath)) : projectRoot;
-      // Keep the scan inside the project root (read-only, but no reason to escape it).
-      const root = requested === projectRoot || requested.startsWith(projectRoot + sep) ? requested : projectRoot;
+      const outsideProjectAllowed = options.allowOutsideProject?.() ?? false;
+      const root = resolveAndValidatePath(requested, projectRoot, outsideProjectAllowed);
 
+      const assertModeCurrent = () => {
+        if ((options.allowOutsideProject?.() ?? false) !== outsideProjectAllowed) throw new Error('Map permission mode changed');
+      };
       const graph = new ImportGraph();
       await graph.build(root, options.capturedReadAccess);
+      assertModeCurrent();
       const relGraph = graph.toRelativeGraph(root);
       const stats = graph.stats();
       const ranked = rankFiles(relGraph, root);
@@ -175,6 +181,7 @@ export function createRepoMapTool(options: {
       let asked = 0;
       let full = false;
       for (let index = 0; index < ranked.length && !full; index++) {
+        assertModeCurrent();
         const file = ranked[index]!;
         if (index >= asked) {
           const window = ranked.slice(asked, asked + READ_ACCESS_WINDOW);
@@ -214,6 +221,7 @@ export function createRepoMapTool(options: {
         output += `\n  … ${ranked.length - included} more file(s) omitted to stay within the token budget.`;
       }
 
+      assertModeCurrent();
       const restrictedNote = accessRestrictedNote(restrictedCount);
       if (restrictedNote) output += `\n\n${restrictedNote} (paths shown, exported symbols withheld).`;
 

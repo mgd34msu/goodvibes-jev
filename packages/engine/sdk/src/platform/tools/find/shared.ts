@@ -1,11 +1,15 @@
-import { assertCapturedToolReadAccess, assertCapturedToolInvocationCurrent } from '../shared/captured-input-tools.js';
 import { assertCapturedInputPathContext } from '../../contract/input-authority.js';
+import { assertCapturedToolReadAccess, assertCapturedToolInvocationCurrent } from '../shared/captured-input-tools.js';
 import { resolve, relative, basename, sep } from 'node:path';
 import { stat as statAsync } from 'node:fs/promises';
 import { statSync, lstatSync, existsSync, readFileSync, realpathSync } from 'node:fs';
 import { walkDir, DirectoryWalk, WALK_SKIP_DIRS, type WalkDirOptions } from '../../utils/walk-dir.js';
 import { summarizeError } from '../../utils/error-display.js';
 import { logger } from '../../utils/logger.js';
+import { resolveAndValidatePath } from '../../utils/path-safety.js';
+import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
+
+export type FindSearchOptions = JudgmentReadingOptions & WalkDirOptions & { allowOutsideProject?: boolean };
 
 export type OutputFormat =
   | 'count_only'
@@ -356,17 +360,12 @@ export function groupByKey<T extends { file: string; kind: string }>(
   return grouped;
 }
 
-export function validateSearchPath(path: string | undefined, projectRoot: string): string | { error: string } {
-  const resolved = path ? resolve(projectRoot, path) : projectRoot;
+export function validateSearchPath(path: string | undefined, projectRoot: string, allowOutsideProject = false): string | { error: string } {
   try {
-    assertCapturedInputPathContext(resolved);
-  } catch {
-    return { error: 'captured input path requires a construction-owned authority' };
+    return resolveAndValidatePath(path ?? '.', projectRoot, allowOutsideProject);
+  } catch (error) {
+    return { error: summarizeError(error) };
   }
-  if (!resolved.startsWith(projectRoot + '/') && resolved !== projectRoot) {
-    return { error: `Path '${path}' resolves outside the project root.` };
-  }
-  return resolved;
 }
 
 export function buildGitignoreMatcher(

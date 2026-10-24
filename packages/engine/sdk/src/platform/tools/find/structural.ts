@@ -1,5 +1,5 @@
+import type { FindSearchOptions } from './shared.js';
 import { paginateFindResult } from './pagination.js';
-import type { WalkDirOptions } from '../../utils/walk-dir.js';
 import { extname } from 'node:path';
 import type { OutputOptions, StructuralQuery } from './shared.js';
 import { collectFilesForSearch, makeCountResult, makeFilesResult, makeLocationsResult, readTextFile, validateSearchPath } from './shared.js';
@@ -36,9 +36,9 @@ async function scanStructuralQuery(
   query: StructuralQuery,
   output: OutputOptions,
   projectRoot: string,
-  walkOptions: WalkDirOptions = {},
+  walkOptions: FindSearchOptions = {},
 ): Promise<Record<string, unknown>> {
-  const validatedPath = validateSearchPath(query.path, projectRoot);
+  const validatedPath = validateSearchPath(query.path, projectRoot, walkOptions.allowOutsideProject);
   if (typeof validatedPath === 'object') return validatedPath;
   const basePath = validatedPath;
 

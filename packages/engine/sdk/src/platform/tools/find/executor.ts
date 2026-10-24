@@ -28,6 +28,7 @@ export function createFindTool(
    */
   readAccessFilter?: ReadAccessFilter,
   capturedReadAccess?: ReadAccessFilter,
+  allowOutsideProject: () => boolean = () => false,
 ): Tool {
   if (typeof projectRoot !== 'string' || projectRoot.trim().length === 0) {
     throw new Error('createFindTool requires projectRoot');
@@ -38,13 +39,15 @@ export function createFindTool(
     async execute(args: Record<string, unknown>, opts?: ToolExecuteOptions): Promise<{ success: boolean; output?: string; error?: string }> {
       try {
         const before = JSON.stringify(args);
+        const outsideProjectAllowed = allowOutsideProject();
         const current = () => {
           opts?.signal?.throwIfAborted(); assertCurrentToolInvocation(args, opts);
           if (JSON.stringify(args) !== before) throw new Error('Find invocation changed');
+          if (allowOutsideProject() !== outsideProjectAllowed) throw new Error('Find permission mode changed');
         };
         current();
         const reading = { ...(opts?.signal ? { signal: opts.signal } : {}), assertCurrent: current };
-        const walkOptions = { ...(opts?.signal ? { signal: opts.signal } : {}), beforeAttempt: current };
+        const walkOptions = { ...(opts?.signal ? { signal: opts.signal } : {}), beforeAttempt: current, allowOutsideProject: outsideProjectAllowed };
         const queryOptions = { ...walkOptions, ...reading };
         if (!Array.isArray(args.queries) || (args.queries as unknown[]).length === 0) {
           return { success: false, error: 'Missing or empty "queries" array' };

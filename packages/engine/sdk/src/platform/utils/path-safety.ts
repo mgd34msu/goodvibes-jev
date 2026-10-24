@@ -30,25 +30,26 @@ function nearestExistingPath(path: string): string {
 /**
  * Resolves an input path against the provided project root and validates it is
  * contained within the project root. Throws if the resolved path escapes the
- * root (path traversal attempt).
+ * root unless the owner has enabled access outside it.
  */
-export function resolveAndValidatePath(inputPath: string, projectRoot: string): string {
+export function resolveAndValidatePath(inputPath: string, projectRoot: string, allowOutsideProject = false): string {
   const root = realpathSync(resolve(projectRoot), 'utf8');
   const resolved = resolve(root, inputPath);
   assertCapturedInputPathContext(resolved);
   const rel = relative(root, resolved);
-  if (rel.startsWith('..') || rel.split(sep).includes('..')) {
+  if (!allowOutsideProject && (rel.startsWith('..') || rel.split(sep).includes('..'))) {
     throw pathOutsideRootError(inputPath);
   }
   const existingPath = nearestExistingPath(resolved);
   const realExistingPath = realpathSync(existingPath, 'utf8');
   assertCapturedInputPathContext(realExistingPath);
-  if (!isInsideRoot(root, realExistingPath)) {
+  if (!allowOutsideProject && !isInsideRoot(root, realExistingPath)) {
     throw pathOutsideRootError(inputPath);
   }
   if (existsSync(resolved)) {
     const realTargetPath = realpathSync(resolved, 'utf8');
-    if (!isInsideRoot(root, realTargetPath)) {
+    assertCapturedInputPathContext(realTargetPath);
+    if (!allowOutsideProject && !isInsideRoot(root, realTargetPath)) {
       throw pathOutsideRootError(inputPath);
     }
   }

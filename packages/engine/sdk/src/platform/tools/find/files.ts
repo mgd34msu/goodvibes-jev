@@ -1,8 +1,8 @@
+import type { FindSearchOptions } from './shared.js';
 import { paginateFindResult } from './pagination.js';
-import type { JudgmentReadingOptions } from '@goodvibes-jev/engine/errors';
 import { assertCapturedInputPathContext } from '../../contract/input-authority.js';
 import { DirectoryWalk, type WalkDirOptions } from '../../utils/walk-dir.js';
-import { join, relative } from 'node:path';
+import { isAbsolute, join, relative } from 'node:path';
 import { statSync, lstatSync } from 'node:fs';
 import type { FilesQuery, OutputOptions } from './shared.js';
 import {
@@ -27,7 +27,7 @@ async function scanFilesQuery(
   projectRoot: string,
   readAccessFilter?: ReadAccessFilter,
   capturedReadAccess?: ReadAccessFilter,
-  options: JudgmentReadingOptions & WalkDirOptions = {},
+  options: FindSearchOptions = {},
 ): Promise<Record<string, unknown>> {
   const before = JSON.stringify([query, output]);
   const current = () => {
@@ -37,7 +37,7 @@ async function scanFilesQuery(
   };
   current();
   const walkOptions: WalkDirOptions = { ...options, beforeAttempt: current };
-  const validatedPath = validateSearchPath(query.path, projectRoot);
+  const validatedPath = validateSearchPath(query.path, projectRoot, options.allowOutsideProject);
   if (typeof validatedPath === 'object') return validatedPath;
   const basePath = validatedPath;
   const walk = new DirectoryWalk(basePath);
@@ -65,14 +65,17 @@ async function scanFilesQuery(
     return { error: `Invalid modified_before date: ${query.modified_before}` };
   }
 
+  const relativeBase = relative(projectRoot, basePath);
+  const outside = relativeBase === '..' || relativeBase.startsWith('../') || isAbsolute(relativeBase);
+  const ignoreRoot = outside ? basePath : projectRoot;
   // In a captured view this filter also validates original-owner authority
   // before the synchronous matcher opens .gitignore.
-  if (respectGitignore && capturedReadAccess && !await capturedReadAccess(join(projectRoot, '.gitignore'))) throw new Error('root ignore-file read is access-restricted');
+  if (respectGitignore && capturedReadAccess && !await capturedReadAccess(join(ignoreRoot, '.gitignore'))) throw new Error('root ignore-file read is access-restricted');
   const gitignoreMatcher = respectGitignore
-    ? buildGitignoreMatcher(join(projectRoot, '.gitignore'), diagnostics)
+    ? buildGitignoreMatcher(join(ignoreRoot, '.gitignore'), diagnostics)
     : null;
   if (respectGitignore) {
-    const rootGitignorePath = join(projectRoot, '.gitignore');
+    const rootGitignorePath = join(ignoreRoot, '.gitignore');
     const nestedGitignores = await findNestedGitignoreFiles(basePath, rootGitignorePath, walk, walkOptions, diagnostics);
     if (nestedGitignores.length > 0) {
       addFindWarning(

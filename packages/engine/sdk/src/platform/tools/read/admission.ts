@@ -18,6 +18,8 @@ interface ReadCapture {
   readonly index: Pick<ProjectIndex, 'baseDir'>;
   readonly root: string;
   readonly subjects: readonly ReadSubject[];
+  readonly allowOutsideProject: boolean;
+  readonly currentAllowsOutsideProject: () => boolean;
   released: boolean;
 }
 const captures = new WeakMap<object, ReadCapture>();
@@ -55,9 +57,9 @@ function revision(path: string, root: string): string {
 }
 
 function assertCapture(capture: ReadCapture): void {
-  if (capture.released || realpathSync(resolve(capture.index.baseDir)) !== capture.root) throw new ToolInputProjectionError('stale');
+  if (capture.released || capture.currentAllowsOutsideProject() !== capture.allowOutsideProject || realpathSync(resolve(capture.index.baseDir)) !== capture.root) throw new ToolInputProjectionError('stale');
   for (const subject of capture.subjects) {
-    if (resolveAndValidatePath(subject.input, capture.root) !== subject.path
+    if (resolveAndValidatePath(subject.input, capture.root, capture.allowOutsideProject) !== subject.path
       || canonicalPath(subject.path) !== subject.canonical
       || revision(subject.path, capture.root) !== subject.revision) {
       throw new ToolInputProjectionError('stale');
@@ -74,18 +76,19 @@ function canonicalPath(path: string): string {
 }
 
 /** Installed only by the Agent composition's declared read surface. Never an admission grant. */
-export function createAgentReadInputProjector(index: Pick<ProjectIndex, 'baseDir'>): ToolInputProjector {
+export function createAgentReadInputProjector(index: Pick<ProjectIndex, 'baseDir'>, currentAllowsOutsideProject: () => boolean = () => false): ToolInputProjector {
   return {
     async project(request) {
       request.assertCurrent(); request.signal?.throwIfAborted();
       const root = realpathSync(resolve(index.baseDir));
+      const allowOutsideProject = currentAllowsOutsideProject();
       const subjects = Object.freeze(paths(request.args).map(input => {
-        const path = resolveAndValidatePath(input, root);
+        const path = resolveAndValidatePath(input, root, allowOutsideProject);
         return Object.freeze({ input, path, canonical: canonicalPath(path), revision: revision(path, root) });
       }));
-      const capture: ReadCapture = { index, root, subjects, released: false };
+      const capture: ReadCapture = { index, root, subjects, allowOutsideProject, currentAllowsOutsideProject, released: false };
       // Generated resource protocol identity, not semantic text or file bytes.
-      const resourceRevision = createHash('sha256').update(JSON.stringify({ root, subjects })).digest('hex');
+      const resourceRevision = createHash('sha256').update(JSON.stringify({ root, subjects, allowOutsideProject })).digest('hex');
       const context = Object.freeze({}); captures.set(context, capture);
       return {
         status: 'projected', args: request.args, executionContext: context,
