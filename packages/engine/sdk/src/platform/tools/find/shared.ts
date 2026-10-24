@@ -213,7 +213,7 @@ export async function isBinary(filePath: string, diagnostics?: FindDiagnostics):
 export async function collectTextFiles(dirPath: string, diagnostics?: FindDiagnostics, walkOptions: WalkDirOptions = {}): Promise<string[]> {
   const files: string[] = [];
   for await (const filePath of walkDir(dirPath, {
-    ...walkOptions, beforeAttempt: () => {
+    ...walkOptions, selectDirectory: directory => searchDirectorySelection(directory, walkOptions, diagnostics), beforeAttempt: () => {
       assertCapturedToolInvocationCurrent();
       walkOptions.beforeAttempt?.();
     }, beforeAsyncAttempt: async () => {
@@ -278,7 +278,7 @@ export async function collectGlobFiles(
   const selectedFile = (file: string): boolean => globs.some(glob => matchesGlob(glob, file, basePath))
     && walkOptions.selectFile?.(file) !== false;
   const selectedDirectory = (directory: string): boolean | undefined => {
-    const selection = walkOptions.selectDirectory?.(directory);
+    const selection = searchDirectorySelection(directory, walkOptions, diagnostics);
     if (selection === false || !prefixes.some(prefix => prefix === root || prefix === directory
       || prefix.startsWith(`${directory}${sep}`) || directory.startsWith(`${prefix}${sep}`))) return false;
     // A wildcard's "possibly relevant" must not accidentally opt all generated
@@ -433,13 +433,29 @@ export function buildGitignoreMatcher(
   };
 }
 
+/** Discovery may encounter old contract views below a live workspace. Their
+ * denial must prune that subtree, not prevent searching the ordinary project.
+ * Explicit roots and every opened path still require the original authority. */
+function searchDirectorySelection(directory: string, options: WalkDirOptions, diagnostics?: FindDiagnostics): boolean | undefined {
+  const selection = options.selectDirectory?.(directory);
+  if (selection === false) return false;
+  try { assertCapturedInputPathContext(directory); }
+  catch {
+    addFindWarning(diagnostics, `Skipped protected captured input directory '${directory}'.`);
+    return false;
+  }
+  return selection;
+}
+
 export async function findNestedGitignoreFiles(
   basePath: string, rootGitignorePath: string, walk = new DirectoryWalk(basePath), walkOptions: WalkDirOptions = {},
+  diagnostics?: FindDiagnostics,
 ): Promise<string[]> {
   const nested: string[] = [];
   const maxNested = 5;
   for await (const file of walk.files({
     ...walkOptions, includeHidden: true, maxFileSize: Number.POSITIVE_INFINITY,
+    selectDirectory: directory => searchDirectorySelection(directory, walkOptions, diagnostics),
     selectFile: file => basename(file) === '.gitignore' && file !== rootGitignorePath && walkOptions.selectFile?.(file) !== false,
     beforeAttempt: () => {
       assertCapturedToolInvocationCurrent();

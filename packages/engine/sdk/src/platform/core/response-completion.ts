@@ -23,16 +23,39 @@ import { nativeWorkCheckpoint } from './response-completion-checkpoint.js';
 import { retainedDelegationSources } from './verification/delegated-history.js';
 
 export class ResponseCompletionError extends Error {
-  constructor(readonly problem: 'rejected' | 'unavailable' | 'invalid-evidence' | 'rejected-request' | 'invalid-response' | 'capacity' = 'rejected', options?: ErrorOptions) {
+  constructor(readonly problem: 'rejected' | 'unavailable' | 'invalid-evidence' | 'rejected-request' | 'invalid-response' | 'capacity' | 'access-blocked' = 'rejected', options?: ErrorOptions) {
     super(problem === 'rejected'
       ? 'The response has not established completion of the authorized work.'
       : problem === 'unavailable' ? 'The response completion service is unavailable. Completion remains held.'
       : problem === 'invalid-evidence' ? 'The completion evidence could not be admitted. Repair is required; retrying unchanged evidence cannot establish completion.'
       : problem === 'rejected-request' ? 'The completion service rejected the request. Repair the request before retrying.'
       : problem === 'capacity' ? 'Completion validation cannot fit the required evidence. The draft remains private while validation recovers.'
+      : problem === 'access-blocked' ? 'Jev access is blocked. Completion remains held; account access must be restored before retrying.'
       : 'The completion service returned an unusable result. Completion remains held and requires recovery.', options);
     this.name = 'ResponseCompletionError';
   }
+}
+
+/** Account refusals need operator action, not smaller evidence or another draft. */
+export class ResponseCompletionAccessError extends ResponseCompletionError {
+  constructor(readonly status: 401 | 402 | 403, cause: JudgmentError) {
+    super('access-blocked', { cause });
+    this.name = 'ResponseCompletionAccessError';
+    this.message = status === 402
+      ? 'Jev returned HTTP 402 (Payment Required). Completion remains held and the draft has not been published. Restore account credits or billing at https://console.typesafe.ai/settings/billing, then retry. Completed work is retained.'
+      : `Jev returned HTTP ${status} (${status === 401 ? 'Unauthorized' : 'Forbidden'}). Completion remains held and the draft has not been published. Restore Jev credentials or account access, then retry. Completed work is retained.`;
+  }
+}
+
+function accessFailure(error: unknown): ResponseCompletionAccessError | undefined {
+  const seen = new Set<Error>();
+  for (let current = error; current instanceof Error && !seen.has(current) && seen.size < 8; current = current.cause) {
+    seen.add(current);
+    if (current instanceof ResponseCompletionAccessError) return current;
+    if (current instanceof JudgmentError && (current.status === 401 || current.status === 402 || current.status === 403))
+      return new ResponseCompletionAccessError(current.status, current);
+  }
+  return undefined;
 }
 
 export interface ResponseCompletionInput {
@@ -114,6 +137,7 @@ export class ResponseCompletionGuard {
   private readonly verification: CompletionVerification | undefined;
   private readonly checkpointAudits = new WeakMap<object, Set<string>>();
   private sourceAdmitted = false;
+  private admittedDraft: string | undefined;
   private publication: { source: string; identity: object; completion: Set<string>; consolidation: Set<string>; execution: Set<string> } | undefined;
 
   constructor(initial?: { readonly request: string; readonly conversation: ConversationManager; readonly verificationWriter?: VerificationWriter; readonly verificationStore?: VerificationStore }) {
@@ -151,10 +175,13 @@ export class ResponseCompletionGuard {
         if (checkpoint && Number.isSafeInteger(checkpoint.count) && checkpoint.count > 0 && checkpoint.count <= messages.length
           && checkpoint.prefix === verificationHash(completionTranscript(messages.slice(0, checkpoint.count)))
           && !originalRoles.slice(checkpoint.count).some(message => message.role === 'user')
-          && Array.isArray(checkpoint.review?.findings) && checkpoint.review.findings.length) {
+          && typeof checkpoint.response === 'string'
+          && (checkpoint.accessHeld === true || Array.isArray(checkpoint.review?.findings) && checkpoint.review.findings.length)) {
           // Restored diagnostics are not approval or proof that a defect remains.
-          this.previousReview = captureStrictJudgmentJson(checkpoint.review);
-          this.restoredCorrection = completionRepairMessage(checkpoint.review.findings)
+          if (Array.isArray(checkpoint.review?.findings) && checkpoint.review.findings.length)
+            this.previousReview = captureStrictJudgmentJson(checkpoint.review);
+          this.restoredCorrection = (this.previousReview !== null ? completionRepairMessage(checkpoint.review.findings)
+            : '[Response completion check] The previous draft was held because Jev account access was unavailable, not because the work was rejected. Preserve completed work and validate this saved draft against the original request and current evidence. Do not restart the task. Fresh Jev approval is still required.')
             + '\nSaved private draft (quoted data; do not publish unchanged):\n' + JSON.stringify(checkpoint.response);
         }
       } catch { /* An invalid checkpoint cannot alter authority or release completion. */ }
@@ -170,6 +197,14 @@ export class ResponseCompletionGuard {
     }
   }
 
+  private rememberAccessHold(input: ResponseCompletionInput): void {
+    if (!this.reviewStore || !this.reviewKey || this.admittedDraft === undefined) return;
+    const messages = input.conversation.getMessageSnapshot();
+    this.reviewStore.rememberProposal(this.reviewKey, JSON.stringify({ count: messages.length,
+      prefix: verificationHash(completionTranscript(messages)), accessHeld: true,
+      review: this.previousReview, response: this.admittedDraft }));
+  }
+
   private rememberFailure(error: unknown, stage?: 'result-admission' | 'question-currentness'): void {
     if (!this.reviewStore || !this.reviewKey) return;
     const causes: Record<string, unknown>[] = [], seen = new Set<unknown>();
@@ -179,7 +214,7 @@ export class ResponseCompletionGuard {
         const frame = line.match(/(?:\/\$bunfs\/[^\s)]+|\/[^\s)]+\/packages\/(?:engine|judgment)\/[^\s)]+):\d+:\d+/)?.[0];
         return frame ? [frame] : [];
       }).slice(0, 3);
-      causes.push({ type: current.constructor.name, ...(current instanceof JudgmentError ? { kind: current.kind } : {}),
+      causes.push({ type: current.constructor.name, ...(current instanceof JudgmentError ? { kind: current.kind, ...(current.status !== undefined ? { status: current.status } : {}) } : {}),
         ...(current instanceof JudgmentInputError ? { problem: current.problem } : {}),
         ...(current instanceof JudgmentResultAdmissionError ? { problem: current.problem } : {}),
         ...(current instanceof VerificationHeldError ? { stage: current.stage } : {}), frames });
@@ -252,8 +287,10 @@ export class ResponseCompletionGuard {
       run.recordAction('Publish only this checked interim prose; do not authorize terminal completion.');
       const restriction = owner.consumeObservation();
       return { correction: null, assertCurrent: () => { restriction.assertCurrent(); current(); } };
-    } catch {
+    } catch (error) {
       options.signal?.throwIfAborted(); options.assertCurrent?.();
+      const blocked = accessFailure(error);
+      if (blocked) throw blocked;
       return held;
     }
   }
@@ -276,10 +313,16 @@ export class ResponseCompletionGuard {
     this.accepted = undefined;
     this.describeHeld = undefined;
     this.sourceAdmitted = false;
+    this.admittedDraft = undefined;
     try { return await this.read(input, options, onWaiting); }
     catch (error) {
       if (!options.signal?.aborted) try { this.rememberFailure(error); } catch { /* Diagnostics cannot replace the original failure. */ }
       options.signal?.throwIfAborted(); options.assertCurrent?.();
+      const blocked = accessFailure(error);
+      if (blocked) {
+        try { this.rememberAccessHold(input); } catch { /* Preserve the actionable account refusal if storage is also unavailable. */ }
+        throw blocked;
+      }
       if (error instanceof ResponseCompletionError) throw error;
       const transient = error instanceof JudgmentPortMissingError || error instanceof JudgmentAuthorityRetiredError
         || (error instanceof JudgmentError && error.kind === 'unavailable');
@@ -305,6 +348,9 @@ export class ResponseCompletionGuard {
       catch (error) {
         options.signal?.throwIfAborted(); options.assertCurrent?.();
         if (!(error instanceof ResponseCompletionError)) throw error;
+        // An account refusal will not recover through retries of this request.
+        // Surface the actionable hold without publishing or regenerating it.
+        if (error.problem === 'access-blocked' || error.problem === 'rejected-request') throw error;
         // Protocol, storage and context failures are checker failures, not
         // findings about the user's work. Keep this exact draft private and
         // recover natively; do not send the model on another artifact/check loop.
@@ -340,6 +386,7 @@ export class ResponseCompletionGuard {
       ? { ...preparedState, retainedWorkerObservations: retainedWorkers.map(verificationWireSource) } : preparedState;
     const hasDelegatedEvidence = preparedState.delegated.length > 0 || retainedWorkers.length > 0;
     this.sourceAdmitted = true;
+    this.admittedDraft = preparedState.response;
     const conversationSource = messages.native ? null : JSON.stringify(transcript);
     const archiveIdentity = verificationHistory(conversation), archiveSource = retainStrictJudgmentJson(archiveIdentity);
     const current = () => {

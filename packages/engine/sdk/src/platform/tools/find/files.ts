@@ -73,7 +73,7 @@ async function scanFilesQuery(
     : null;
   if (respectGitignore) {
     const rootGitignorePath = join(projectRoot, '.gitignore');
-    const nestedGitignores = await findNestedGitignoreFiles(basePath, rootGitignorePath, walk, walkOptions);
+    const nestedGitignores = await findNestedGitignoreFiles(basePath, rootGitignorePath, walk, walkOptions, diagnostics);
     if (nestedGitignores.length > 0) {
       addFindWarning(
         diagnostics,

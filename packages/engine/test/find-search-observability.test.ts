@@ -1,7 +1,7 @@
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { afterEach, beforeEach, describe, expect, test } from 'bun:test';
-import { mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { executeContentQuery } from '../sdk/src/platform/tools/find/content.ts';
@@ -28,6 +28,30 @@ class DegradedImportGraphRuntime extends FindRuntimeService {
 }
 
 describe('find/search degradation observability', () => {
+  test('old protected contract views cannot break live project search or disclose their contents', async () => {
+    const root = tempRoot('gv-find-retained-contract-');
+    const protectedRoot = join(root, '.goodvibes', '.worktrees', 'contract-input', 'old');
+    mkdirSync(protectedRoot, { recursive: true });
+    mkdirSync(join(root, 'src'));
+    writeFileSync(join(protectedRoot, '.gitignore'), 'private.ts\n');
+    writeFileSync(join(protectedRoot, 'private.ts'), 'export const PROTECTED_REVIEW_SOURCE = 1;');
+    const live = join(root, 'src', 'live.ts');
+    writeFileSync(live, 'export const LIVE_REVIEW_SOURCE = 1;');
+    try {
+      for (const include_hidden of [false, true]) {
+        const result = await executeFilesQuery({ id: 'files', mode: 'files', patterns: ['**/*.ts'], include_hidden }, { format: 'files_only' }, root);
+        expect(result.files).toEqual([live]);
+        expect(result.error).toBeUndefined();
+      }
+      const content = await executeContentQuery({ id: 'content', mode: 'content', pattern: 'REVIEW_SOURCE' }, { format: 'matches' }, new FindRuntimeService(), root);
+      expect(content.count).toBe(1);
+      expect(JSON.stringify(content)).toContain('LIVE_REVIEW_SOURCE');
+      expect(JSON.stringify(content)).not.toContain('PROTECTED_REVIEW_SOURCE');
+      const explicit = await executeFilesQuery({ id: 'files', mode: 'files', path: protectedRoot }, {}, root);
+      expect(explicit.error).toContain('construction-owned authority');
+    } finally { rmSync(root, { recursive: true, force: true }); }
+  });
+
   test('import indexing lets input callbacks run while preserving the complete graph', async () => {
     const root = tempRoot('gv-import-responsive-');
     for (let i = 0; i < 500; i++) writeFileSync(join(root, `f${i}.ts`), i ? `export { value } from './f${i - 1}.ts';\n` : 'export const value = 1;\n');

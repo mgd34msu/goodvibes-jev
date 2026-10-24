@@ -8,7 +8,7 @@ import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
 import { JudgmentError } from '@goodvibes-jev/judgment';
 import { ConversationManager } from '../sdk/src/platform/core/conversation.js';
-import { ResponseCompletionGuard, waitForResponseDelegates } from '../sdk/src/platform/core/response-completion.js';
+import { ResponseCompletionAccessError, ResponseCompletionGuard, waitForResponseDelegates } from '../sdk/src/platform/core/response-completion.js';
 import { registry } from '../sdk/src/platform/core/judgment-registry.js';
 import { executeOrchestratorTurnLoop, type OrchestratorTurnLoopContext } from '../sdk/src/platform/core/orchestrator-turn-loop.js';
 import { RuntimeEventBus } from '../sdk/src/platform/runtime/events/index.js';
@@ -408,6 +408,33 @@ test('an unavailable final checker holds the task, retries, and remains cancella
   expect(await outcome).toHaveProperty('error');
 });
 
+test('account refusals hold the actual turn without publishing, retrying Jev, or regenerating the model draft', async () => {
+  for (const status of [401, 402, 403] as const) {
+    let calls = 0;
+    installJudgmentPort({ model: 'jev-latest', ask: async () => {
+      calls++; throw new JudgmentError('rejected', 'Upstream refusal', { status });
+    } });
+    const f = loop(['PRIVATE DRAFT: completed review.']);
+    const observed = f.context.conversation.getMessageSnapshot();
+    try {
+      await expect(executeOrchestratorTurnLoop(f.context)).rejects.toBeInstanceOf(ResponseCompletionAccessError);
+      expect(calls).toBe(1); expect(f.requests).toHaveLength(1); expect(f.events).toEqual([]);
+      expect(f.context.conversation.getMessageSnapshot()).toEqual(observed);
+    } finally { f.unsubscribe(); }
+  }
+});
+
+test('progress account refusals surface the account action and cannot silently trigger more work', async () => {
+  let calls = 0;
+  installJudgmentPort({ model: 'jev-latest', ask: async () => {
+    calls++; throw new JudgmentError('rejected', 'Upstream refusal', { status: 402 });
+  } });
+  const input = source('Inspecting the parser.'), guard = new ResponseCompletionGuard();
+  await expect(guard.checkProgress(input)).rejects.toMatchObject({ problem: 'access-blocked', status: 402 });
+  expect(calls).toBe(1);
+  expect(() => guard.beginFinalization({ content: input.response })).toThrow();
+});
+
 test('a restored final checker can approve the same held draft without a fresh model call', async () => {
   const input = source('Finished.'), guard = new ResponseCompletionGuard();
   let waiting = 0;
@@ -417,8 +444,8 @@ test('a restored final checker can approve the same held draft without a fresh m
   expect(guard.beginFinalization({ content: input.response })).not.toThrow();
 });
 
-test('checker protocol and storage errors hold the same draft without requesting model repairs', async () => {
-  for (const kind of ['invalid-request', 'rejected', 'invalid-response', 'unrecorded'] as const) {
+test('checker result and storage errors hold the same draft without requesting model repairs', async () => {
+  for (const kind of ['invalid-response', 'unrecorded'] as const) {
     const fake = answered(); let calls = 0, waits = 0;
     installJudgmentPort({ model: fake.port.model, ask: async () => { calls++; throw new JudgmentError(kind, 'Synthetic permanent failure'); } });
     const guard = new ResponseCompletionGuard(), input = source('Finished.');
@@ -426,6 +453,19 @@ test('checker protocol and storage errors hold the same draft without requesting
     const pending = guard.checkUntilAvailable(() => input, { signal: controller.signal }, () => { waits++; controller.abort(); });
     await expect(pending).rejects.toThrow();
     expect(calls).toBe(1); expect(waits).toBe(1);
+    expect(() => guard.beginFinalization({ content: input.response })).toThrow();
+  }
+});
+
+test('permanent request refusals are surfaced without retrying an unchanged request or releasing the draft', async () => {
+  for (const kind of ['invalid-request', 'rejected'] as const) {
+    const fake = answered(); let calls = 0, waits = 0;
+    installJudgmentPort({ model: fake.port.model, ask: async () => {
+      calls++; throw new JudgmentError(kind, 'Synthetic permanent refusal', { status: 400 });
+    } });
+    const guard = new ResponseCompletionGuard(), input = source('Finished.');
+    await expect(guard.checkUntilAvailable(() => input, {}, () => { waits++; })).rejects.toMatchObject({ problem: 'rejected-request' });
+    expect(calls).toBe(1); expect(waits).toBe(0);
     expect(() => guard.beginFinalization({ content: input.response })).toThrow();
   }
 });
@@ -465,10 +505,10 @@ test('transport-level retries report checker waiting while completion remains he
   expect(waits).toBe(1);
 });
 
-test('the real main loop recovers a checker refusal with one model draft and a fresh successful validation', async () => {
+test('the real main loop recovers a transient checker outage with one model draft and a fresh successful validation', async () => {
   const fake = answered(); let calls = 0;
   installJudgmentPort({ model: fake.port.model, ask: async request => {
-    if (request.context?.battery === 'engine.core.response-completion' && ++calls === 1) throw new JudgmentError('rejected', 'Synthetic HTTP 400');
+    if (request.context?.battery === 'engine.core.response-completion' && ++calls === 1) throw new JudgmentError('unavailable', 'Synthetic HTTP 503', { status: 503 });
     return fake.port.ask(request);
   } });
   const f = loop(['FINISHED: original response.']);

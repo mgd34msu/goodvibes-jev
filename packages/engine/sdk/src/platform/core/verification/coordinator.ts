@@ -1,4 +1,4 @@
-import { JudgmentError, mapLimit } from '@goodvibes-jev/judgment';
+import { JudgmentContextLimitError, JudgmentError, mapLimit } from '@goodvibes-jev/judgment';
 import { snapshotJudgmentEvidence } from '../../gate/judgment-input.js';
 import { captureStrictJudgmentJson } from '../../gate/judgment-result.js';
 import { verificationEvidence, verificationIntegration, verificationRequirement, verificationScope, verificationSource, verificationRepairs, verificationNoIssue, verificationResolution, verificationAudit, verificationObservationAudit } from './batteries.js';
@@ -281,7 +281,7 @@ export class CompletionVerification {
         }
         return retained;
       }
-      if (!(error instanceof VerificationSubdivisionError) && (!(error instanceof JudgmentError) || (error.kind !== 'rejected' && error.kind !== 'invalid-request'))) throw error;
+      if (!(error instanceof JudgmentContextLimitError)) throw error;
       // Native request recovery: split the SAME source, keeping every interval.
       // No rejected transport request becomes a finding against the user's work.
       if (sources.length > 1) {
@@ -313,7 +313,7 @@ export class CompletionVerification {
       // Route back to original retrieval instead of recursively drafting every
       // possible grouping of the same child summaries.
       if (error instanceof VerificationSubdivisionError) throw error;
-      if (!(error instanceof JudgmentError) || (error.kind !== 'rejected' && error.kind !== 'invalid-request')) throw error;
+      if (!(error instanceof JudgmentContextLimitError)) throw error;
       const middle = Math.ceil(children.length / 2);
       return [...await this.merge(children.slice(0, middle), scope, access), ...await this.merge(children.slice(middle), scope, access)];
     }
@@ -447,7 +447,7 @@ export class CompletionVerification {
     try { return [await this.node(sources, [requirement], access, requirement)]; }
     catch (error) {
       access.assertCurrent();
-      if (!(error instanceof VerificationSubdivisionError) && (!(error instanceof JudgmentError) || (error.kind !== 'rejected' && error.kind !== 'invalid-request'))) throw error;
+      if (!(error instanceof VerificationSubdivisionError) && !(error instanceof JudgmentContextLimitError)) throw error;
       // An irreducible case record is retained as explicitly unqualified source
       // locations, not retried forever or treated as evidence of success.
       return this.sourceIndex(originals(), 8_000);

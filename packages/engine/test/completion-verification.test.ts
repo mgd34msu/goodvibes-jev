@@ -3,7 +3,7 @@ import { mkdtempSync, readFileSync, rmSync, symlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fakePort, noulAnswer, choiceAnswer } from '@goodvibes-jev/judgment/testing';
-import { JudgmentError } from '@goodvibes-jev/judgment';
+import { JudgmentContextLimitError, JudgmentError } from '@goodvibes-jev/judgment';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { CompletionVerification } from '../sdk/src/platform/core/verification/coordinator.js';
 import { verificationHash, verificationSources, verificationWireSource } from '../sdk/src/platform/core/verification/source.js';
@@ -26,6 +26,27 @@ const good = () => fakePort(() => noulAnswer(.01));
 const access = (port: VerificationAccess['port'], identity = {}, signal?: AbortSignal): VerificationAccess => ({ port, identity, ...(signal ? { signal } : {}), assertCurrent: () => signal?.throwIfAborted() });
 const state = (content = 'Observed source.') => ({ request: 'Review all source and write review.md.', response: 'The report is saved in review.md.', transcript: [{ role: 'tool', callId: 'read-1', content }], tools: ['read', 'write'], requirements: null, delegated: [], initial: null });
 const directory = () => { const value = mkdtempSync(join(tmpdir(), 'completion-verification-')); directories.push(value); return value; };
+
+test('an account-held private draft survives session restore and still needs fresh Jev approval', async () => {
+  const root = directory(), request = 'Review the source and provide the findings.', response = 'The source review found an input parsing defect.';
+  const conversation = new ConversationManager(); conversation.addUserMessage(request);
+  const create = () => new ResponseCompletionGuard({ request, conversation, verificationStore: new VerificationStore(root, 'account-hold') });
+  const fake = good(); let refusals = 0;
+  installJudgmentPort({ model: fake.port.model, ask: async () => {
+    refusals++; throw new JudgmentError('rejected', 'Synthetic account refusal', { status: 402 });
+  } });
+  const first = create(), input = { request, response, conversation, tools: [] };
+  await expect(first.checkUntilAvailable(() => input)).rejects.toMatchObject({ problem: 'access-blocked', status: 402 });
+  expect(refusals).toBe(1);
+  const restored = create();
+  expect(restored.resumedRepair()).toContain(response);
+  expect(restored.resumedRepair()).toContain('Do not restart the task');
+  expect(() => restored.beginFinalization({ content: response })).toThrow();
+  installJudgmentPort(fake.port);
+  expect(await restored.checkUntilAvailable(() => input)).toBeNull();
+  expect(() => restored.beginFinalization({ content: response })).not.toThrow();
+  expect(create().resumedRepair()).toBe('');
+});
 const unopenedAuditSource = (raw: unknown) => {
   const state = raw as { sources?: { id: string }[]; caseEvidence?: { sources?: { id: string }[] } };
   const opened = new Set(state.caseEvidence?.sources?.map(source => source.id));
@@ -1277,17 +1298,32 @@ test('source retrieval opens original evidence and settles ambiguity without ano
   expect(JSON.stringify(inspections.at(-1)!.state)).toContain('Exact parser implementation');
 });
 
-test('native request rejection partitions the same evidence and preserves its middle', async () => {
+test('an endpoint context limit partitions the same evidence and preserves its middle', async () => {
   const fake = good(); let rejected = 0;
   const port: VerificationAccess['port'] = { model: fake.port.model, async ask(request) {
     if (request.context?.battery === 'engine.verification.evidence' && JSON.stringify((request.state as never as { sources: unknown }).sources).length > 9_000) {
-      rejected++; throw new JudgmentError('invalid-request', 'Synthetic size refusal');
+      rejected++; throw new JudgmentContextLimitError();
     }
     return fake.port.ask(request);
   } };
   await new CompletionVerification(verificationWriter).prepare(state('a'.repeat(8_000) + 'HIDDEN-MIDDLE-DEFECT' + 'b'.repeat(8_000)), access(port));
   expect(rejected).toBeGreaterThan(0);
   expect(JSON.stringify(fake.requests)).toContain('HIDDEN-MIDDLE-DEFECT');
+});
+
+test('account and ordinary request refusals do not subdivide large evidence into more Jev requests', async () => {
+  for (const status of [400, 401, 402, 403]) {
+    const fake = good(); let evidenceCalls = 0;
+    const refusal = new JudgmentError('rejected', 'Synthetic refusal', { status });
+    const port: VerificationAccess['port'] = { model: fake.port.model, async ask(request) {
+      if (request.context?.battery === 'engine.verification.evidence') { evidenceCalls++; throw refusal; }
+      return fake.port.ask(request);
+    } };
+    await expect(new CompletionVerification(verificationWriter).prepare(state('exact source '.repeat(12_000)), access(port))).rejects.toBe(refusal);
+    // At most the already admitted parallel pages run. No recursive fan-out.
+    expect(evidenceCalls).toBeGreaterThan(0);
+    expect(evidenceCalls).toBeLessThanOrEqual(3);
+  }
 });
 
 test('unchanged evidence qualifications are reused only within the same current authority; restored proposals are rechecked', async () => {
