@@ -612,6 +612,8 @@ export type GoodVibesCliFlagField = keyof GoodVibesCliFlags;
 // @public (undocumented)
 export interface GoodVibesCliFlags {
     // (undocumented)
+    readonly autoApprove?: boolean;
+    // (undocumented)
     readonly configOverrides: readonly string[];
     // (undocumented)
     readonly continueLast: boolean;

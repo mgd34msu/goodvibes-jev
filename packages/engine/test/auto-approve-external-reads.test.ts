@@ -1,3 +1,4 @@
+import { parseGoodVibesCli, applyRuntimeConfigOverrides } from '../terminal-shell/src/index.js';
 import { installJudgmentPort } from '@goodvibes-jev/engine/errors';
 import { fakePort, noulAnswer } from '@goodvibes-jev/judgment/testing';
 import { afterEach, beforeEach, expect, test } from 'bun:test';
@@ -69,4 +70,16 @@ test('auto mode lists and searches the requested sibling and maps its own export
   config.set('permissions.mode', 'prompt');
   expect(JSON.parse((await find.execute(args)).output!).listing.error).toContain('outside the project root');
   expect((await map.execute({ path: sibling })).success).toBe(false);
+});
+
+
+test('the documented launch flag enables actual external file access without persisting the setting', async () => {
+  const cli = parseGoodVibesCli(['--no-worries-just-vibes']);
+  expect(cli.errors).toEqual([]); expect(cli.command).toBe('tui');
+  expect(applyRuntimeConfigOverrides(config, cli.flags.configOverrides)).toEqual([]);
+  const tool = new ReadTool(index, undefined, undefined, undefined, allowsOutside);
+  const result = await tool.execute({ files: [{ path: '../sibling/external.ts' }] });
+  expect(result.output).toContain('EXTERNAL_RESULT');
+  const restarted = new ConfigManager({ surfaceRoot: 'tui', workingDir: workspace, homeDir: join(root, 'home') });
+  expect(restarted.get('behavior.autoApprove')).toBe(false);
 });

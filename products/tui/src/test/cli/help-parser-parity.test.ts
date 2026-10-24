@@ -30,6 +30,7 @@ const PARSER_KNOWN_LONG_FLAGS = [
   '--print',
   '--json',
   '--no-alt-screen',
+  '--no-worries-just-vibes',
   '--open',
   '--continue',
   '--yes',

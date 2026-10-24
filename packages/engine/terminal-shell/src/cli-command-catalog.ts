@@ -85,6 +85,7 @@ const GLOBAL_FLAGS: readonly CommandFlagSpec<GoodVibesCliFlagField>[] = [
     constValue: 'json',
     summary: 'Shorthand for --output json.',
   },
+  { tokens: ['--no-worries-just-vibes'], field: 'autoApprove', kind: 'boolean', summary: 'Auto-approve tools, including access outside the project, for this launch.' },
   { tokens: ['--no-alt-screen'], field: 'noAltScreen', kind: 'boolean', summary: 'Do not use the terminal alt screen.' },
   { tokens: ['--open'], field: 'open', kind: 'boolean', summary: 'Open a browser window for the web surface.' },
   { tokens: ['--continue'], field: 'continueLast', kind: 'boolean', summary: 'Resume the last conversation.' },
@@ -267,6 +268,7 @@ function postProcess(
   const errors = [...result.errors];
 
   if (flags.nonInteractive) flags = { ...flags, yes: true };
+  if (flags.autoApprove) flags = { ...flags, configOverrides: [...flags.configOverrides, 'behavior.autoApprove=true'] };
 
   if (flags.model !== undefined && flags.provider === undefined) {
     const inferred = inferProviderFromModel(flags.model);

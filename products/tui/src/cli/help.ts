@@ -102,6 +102,7 @@ export function renderGoodVibesHelp(binary = 'goodvibes'): string {
     '  -o, --output <format>          text, json, or stream-json',
     '      --output-format <format>   Alias for --output',
     '      --json                     Alias for --output-format json',
+    '      --no-worries-just-vibes    Auto-approve tools and access outside the project for this launch',
     '      --no-alt-screen            Keep output in normal terminal scrollback',
     '      --port <port>              Port for server/web commands',
     '      --hostname <host>          Hostname for server/web commands (--host is an alias)',

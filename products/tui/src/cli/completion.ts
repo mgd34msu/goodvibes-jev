@@ -46,6 +46,7 @@ const OPTIONS = [
   '--output-format',
   '--json',
   '--no-alt-screen',
+  '--no-worries-just-vibes',
   '--port',
   '--hostname',
   '--open',
