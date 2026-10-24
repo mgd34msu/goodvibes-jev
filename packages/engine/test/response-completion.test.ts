@@ -17,9 +17,15 @@ import { UNKNOWN_MODEL_PRICING } from '../sdk/src/platform/providers/model-prici
 import { verificationWriter } from './_helpers/verification.js';
 
 // These fixtures exercise work acceptance. Applicability is tested separately
-// with conversational and status requests against the actual host guard.
+// with conversational and status requests against the actual host guard, and
+// held paths run the finding localizer, whose choice question any well-formed
+// port must answer.
 function fakePort(answer: Parameters<typeof baseFakePort>[0]) {
-  return baseFakePort((name, question, state) => name === 'completion_required' ? noulAnswer(.99) : answer(name, question, state));
+  return baseFakePort((name, question, state) => {
+    if (name === 'completion_required') return noulAnswer(.99);
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    return answer(name, question, state);
+  });
 }
 
 let previous: ReturnType<typeof installJudgmentPort>;
@@ -201,6 +207,61 @@ test('rejected drafts keep returning to execution until Jev accepts without a hi
   const input = source('Review and artifact complete.');
   expect(await guard.check(input)).toBeNull();
   expect(guard.beginFinalization({ content: input.response })).not.toThrow();
+});
+
+test('a reworded draft cannot clear an unverified fix: the remembered repair returns without another Jev pass', async () => {
+  // The snapvault shape: an edit after the last successful verification, held
+  // by execution assurance. Rewording the claim cannot change what executed.
+  const fake = fakePort(name => noulAnswer(name === 'implementation_presented' || name === 'ineffective_fix' ? .99 : .01));
+  installJudgmentPort(fake.port);
+  const conversation = new ConversationManager();
+  conversation.addUserMessage('Fix the archiver and verify it.');
+  conversation.addAssistantMessage('', { toolCalls: [{ id: 'build', name: 'exec', arguments: { cmd: 'go test && go build' } }] });
+  conversation.addToolResults([{ callId: 'build', success: false, output: 'command failed before tests ran' }]);
+  const input = { request: 'Fix the archiver and verify it.', response: 'Fixed and verified.', conversation, tools: ['exec'] };
+  const guard = new ResponseCompletionGuard();
+  const first = await guard.check(input);
+  expect(first).toContain('leaves the requested behavior broken');
+  expect(first).toContain('Specific findings');
+  const calls = fake.requests.length;
+  const second = await guard.check({ ...input, response: 'Reworded: the archiver fix is definitely verified now.' });
+  expect(second).toContain('rejection 2 of an equivalent draft');
+  expect(fake.requests.length).toBe(calls);
+  const third = await guard.check({ ...input, response: 'Reworded again, still claiming verification.' });
+  expect(third).toContain('rejection 3');
+  expect(fake.requests.length).toBe(calls);
+});
+
+test('an identical resubmitted draft over unchanged evidence is served from the remembered verdict', async () => {
+  const fake = answered('unfinished'); installJudgmentPort(fake.port);
+  const guard = new ResponseCompletionGuard();
+  const input = source();
+  expect(await guard.check(input)).toContain('The requested work remains unfinished');
+  const calls = fake.requests.length;
+  expect(await guard.check(input)).toContain('rejection 2');
+  expect(fake.requests.length).toBe(calls);
+  // A changed claim on a wording-repairable hold gets a fresh full read.
+  expect(await guard.check({ ...input, response: 'The complete review and artifact are delivered.' })).toBeString();
+  expect(fake.requests.length).toBeGreaterThan(calls);
+});
+
+test('new execution evidence after a held draft gets a fresh full check instead of the remembered verdict', async () => {
+  const fake = answered('unfinished'); installJudgmentPort(fake.port);
+  const guard = new ResponseCompletionGuard();
+  const input = source();
+  expect(await guard.check(input)).toBeString();
+  const calls = fake.requests.length;
+  input.conversation.addToolResults([{ callId: 'rerun-tests', success: true, output: 'bun test: 8 pass, 0 fail' }]);
+  expect(await guard.check(input)).toBeString();
+  expect(fake.requests.length).toBeGreaterThan(calls);
+});
+
+test('a held correction names localized findings from the actual evidence', async () => {
+  const fake = answered('unfinished'); installJudgmentPort(fake.port);
+  const correction = await new ResponseCompletionGuard().check(source());
+  expect(correction).toContain('Specific findings');
+  expect(correction).toContain('"id":"unfinished"');
+  expect(fake.requests.some(request => request.context?.battery === 'engine.core.response-finding')).toBe(true);
 });
 
 test('missing Jev and malformed results cannot approve a response', async () => {

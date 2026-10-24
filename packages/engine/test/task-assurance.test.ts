@@ -77,7 +77,7 @@ test('completion and consolidation start concurrently and the slower rejection h
   expect(maximum).toBe(3);
   release.resolve(); expect(await pending).toContain('findings conflict');
   expect(fake.requests.map(request => request.context?.battery).sort()).toEqual([
-    'engine.core.completion-applicability', 'engine.core.delegation-consolidation', 'engine.core.execution-assurance', 'engine.core.response-completion',
+    'engine.core.completion-applicability', 'engine.core.delegation-consolidation', 'engine.core.execution-assurance', 'engine.core.response-completion', 'engine.core.response-finding',
   ]);
 });
 
@@ -91,7 +91,7 @@ test('every execution assurance failure independently holds completion', async (
     conversation.addToolResults([{ callId: 'e', success: true, output: '1 pass' }]);
     const result = await new ResponseCompletionGuard().check({ request: 'Fix the parser and verify its regression.', response: 'Fixed and verified.', conversation, tools: ['exec'] });
     expect(result).toBeString();
-    expect(fake.requests.filter(request => request.context?.battery !== 'engine.core.completion-applicability')).toHaveLength(2);
+    expect(fake.requests.filter(request => !['engine.core.completion-applicability', 'engine.core.response-finding'].includes(request.context?.battery ?? ''))).toHaveLength(2);
   }
 });
 
@@ -116,7 +116,7 @@ test('a completion claim based on an earlier turn still requires execution assur
   const guard = new ResponseCompletionGuard({ request: 'Is that finished?', conversation });
   conversation.replaceMessagesForLLM([{ role: 'user', content: '[Session Summary] The parser was edited; completion still needs checking.' }]);
   expect(await guard.check({ request: 'Is that finished?', response: 'The parser is fixed.', conversation, tools: ['edit'] })).toContain('leaves the requested behavior broken');
-  expect(fake.requests.map(request => request.context?.battery).sort()).toEqual(['engine.core.completion-applicability', 'engine.core.execution-assurance', 'engine.core.response-completion']);
+  expect(fake.requests.map(request => request.context?.battery).sort()).toEqual(['engine.core.completion-applicability', 'engine.core.execution-assurance', 'engine.core.response-completion', 'engine.core.response-finding']);
 });
 
 test('only agent identities returned by this conversation contribute delegated evidence', () => {

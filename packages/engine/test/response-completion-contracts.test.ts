@@ -209,6 +209,8 @@ test('completion checks receive scoped records but a rejection still holds publi
   const completionRequest = held.requests.find(request => request.context?.battery === 'engine.core.response-completion')!;
   expect((completionRequest.state as unknown as { completedWork: unknown }).completedWork).toEqual(completedWork);
   installJudgmentPort(fakePort(() => noulAnswer(.01)).port);
+  // Unchanged evidence returns the remembered rejection; a fresh verdict needs new execution evidence.
+  conversation.addToolResults([{ callId: 'redeliver', success: true, output: 'Saved review re-verified and delivered.' }]);
   expect(await guard.check(input)).toBeNull();
   completedWork[0]!.answer = 'Changed after the response check.';
   expect(() => guard.beginFinalization({ content: input.response })).toThrow();
