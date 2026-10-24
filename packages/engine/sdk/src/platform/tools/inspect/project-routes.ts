@@ -15,7 +15,7 @@ import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import type { YesNoReading } from '@goodvibes-jev/judgment';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
 import { apiRoutes, HANDLER_METHODS, handlerView, routeLineView, servesQuestion } from '../batteries/api-routes.js';
-import { safeRead, walk } from './shared.js';
+import { scanRead, walk } from './shared.js';
 import type { ApiFramework, ApiRoute } from './schema.js';
 
 const SITE = 'tools.inspect.api-routes';
@@ -40,14 +40,14 @@ function route(
   return reading === 'uncertain' ? { method, path, file, line, reading } : { method, path, file, line };
 }
 
-async function findNextjsAppRoutes(root: string): Promise<ApiRoute[]> {
+async function findNextjsAppRoutes(root: string, unavailable: string[]): Promise<ApiRoute[]> {
   const routes: ApiRoute[] = [];
   const appDir = join(root, 'app');
   if (!existsSync(appDir)) return routes;
 
   const files = await walk(appDir, (p) => p.endsWith('route.ts') || p.endsWith('route.js'));
   for (const file of files) {
-    const content = await safeRead(file);
+    const content = await scanRead(file, unavailable);
     const relFile = relative(root, file);
     const lines = content.split('\n');
     const routePath =
@@ -73,7 +73,7 @@ async function findNextjsAppRoutes(root: string): Promise<ApiRoute[]> {
 }
 
 /** Each pages/api handler is read once for all seven methods (one request); each method it serves is a route. */
-async function findNextjsPagesRoutes(root: string): Promise<ApiRoute[]> {
+async function findNextjsPagesRoutes(root: string, unavailable: string[]): Promise<ApiRoute[]> {
   const apiDir = join(root, 'pages', 'api');
   if (!existsSync(apiDir)) return [];
 
@@ -85,7 +85,8 @@ async function findNextjsPagesRoutes(root: string): Promise<ApiRoute[]> {
       relative(join(root, 'pages'), file)
         .replace(/\.[tj]sx?$/, '')
         .replace(/\[(.+?)\]/g, ':$1');
-    const content = await safeRead(file);
+    const content = await scanRead(file, unavailable);
+    if (!content) return [];
     await assertCapturedToolAccessCurrent();
     const run = await apiRoutes.run(judgmentPort(SITE), handlerView(relFile, content), {
       site: SITE,
@@ -110,12 +111,12 @@ async function findNextjsPagesRoutes(root: string): Promise<ApiRoute[]> {
 const VERB_CALL = /\.(get|post|put|delete|patch|options|head)\s*\(\s*(['"`])(.*?)\2\s*(?:,|$)/;
 
 /** Verb calls read by `route_registration` for one framework; each is a route unless the reading is a no. */
-async function findCallRoutes(root: string, framework: ConcreteFramework): Promise<ApiRoute[]> {
+async function findCallRoutes(root: string, framework: ConcreteFramework, unavailable: string[]): Promise<ApiRoute[]> {
   const files = await walk(root, (p) => /\.[tj]sx?$/.test(p));
   const candidates = (
     await mapWithConcurrency(files, READ_CONCURRENCY, async (file) => {
       const relFile = relative(root, file);
-      const lines = (await safeRead(file)).split('\n');
+      const lines = (await scanRead(file, unavailable)).split('\n');
       return lines.flatMap((text, index) => {
         const m = VERB_CALL.exec(text);
         return m ? [{ relFile, lines, index, method: m[1]!.toUpperCase(), path: m[3] || '/' }] : [];
@@ -146,8 +147,8 @@ const FRAMEWORK_PACKAGES: ReadonlyArray<readonly [pkg: string, framework: Concre
 ];
 
 /** The API frameworks package.json declares as dependencies (facts, no preference among them). */
-export async function declaredApiFrameworks(root: string): Promise<ConcreteFramework[]> {
-  const raw = await safeRead(join(root, 'package.json'));
+export async function declaredApiFrameworks(root: string, unavailable: string[] = []): Promise<ConcreteFramework[]> {
+  const raw = await scanRead(join(root, 'package.json'), unavailable);
   if (!raw) return [];
   try {
     const pkg = JSON.parse(raw);
@@ -158,9 +159,9 @@ export async function declaredApiFrameworks(root: string): Promise<ConcreteFrame
   }
 }
 
-async function routesFor(root: string, framework: ConcreteFramework): Promise<ApiRoute[]> {
-  if (framework === 'nextjs') return [...(await findNextjsAppRoutes(root)), ...(await findNextjsPagesRoutes(root))];
-  return findCallRoutes(root, framework);
+async function routesFor(root: string, framework: ConcreteFramework, unavailable: string[]): Promise<ApiRoute[]> {
+  if (framework === 'nextjs') return [...(await findNextjsAppRoutes(root, unavailable)), ...(await findNextjsPagesRoutes(root, unavailable))];
+  return findCallRoutes(root, framework, unavailable);
 }
 
 /**
@@ -169,11 +170,11 @@ async function routesFor(root: string, framework: ConcreteFramework): Promise<Ap
  * Each framework's candidates are read for that framework, so nothing is
  * preferred.
  */
-export async function inspectApi(root: string, framework: ApiFramework): Promise<ApiRoute[]> {
-  if (framework !== 'auto') return routesFor(root, framework);
-  const declared = await declaredApiFrameworks(root);
+export async function inspectApi(root: string, framework: ApiFramework, unavailable: string[] = []): Promise<ApiRoute[]> {
+  if (framework !== 'auto') return routesFor(root, framework, unavailable);
+  const declared = await declaredApiFrameworks(root, unavailable);
   const frameworks = declared.length > 0 ? declared : FRAMEWORK_PACKAGES.map(([, fw]) => fw);
   const routes: ApiRoute[] = [];
-  for (const fw of frameworks) routes.push(...(await routesFor(root, fw)));
+  for (const fw of frameworks) routes.push(...(await routesFor(root, fw, unavailable)));
   return routes;
 }

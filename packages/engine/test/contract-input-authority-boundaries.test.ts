@@ -495,6 +495,29 @@ for (const allowed of [false, true]) {
     }, true));
 }
 
+test('captured api inspection skips a policy-denied file visibly instead of failing the whole scan', async () =>
+  fixture(async ({ view, token }) => {
+    const { InspectTool } = await import('../sdk/src/platform/tools/inspect/index.js');
+    const { fakePort, noulAnswer } = await import('@goodvibes-jev/judgment/testing');
+    const { installJudgmentPort } = await import('../errors/src/index.js');
+    writeFileSync(join(view, 'package.json'), JSON.stringify({ dependencies: { express: '^4.0.0' } }));
+    writeFileSync(join(view, 'routes-a.ts'), "app.get('/alpha', handler);\n");
+    writeFileSync(join(view, 'routes-b.ts'), "app.get('/beta', handler);\n");
+    const previous = installJudgmentPort(fakePort(() => noulAnswer(.99)).port);
+    const filter = async (path: string) => path !== join(view, 'routes-b.ts');
+    try {
+      const tool = capturedInputTool(new InspectTool(undefined, view), token, view, filter, undefined);
+      const result = await tool.execute({ mode: 'api', projectRoot: '.' });
+      expect(result.success).toBe(true);
+      expect(result.output).toContain('/alpha');
+      expect(result.output).not.toContain('/beta');
+      expect(result.output).toContain('unavailable_files');
+      expect(result.output).toContain('routes-b.ts');
+    } finally {
+      installJudgmentPort(previous);
+    }
+  }, true));
+
 test('captured fetch retains the existing allowed local HTTP path and checks revocation before outward effects', async () =>
   fixture(async ({ token, view, root }) => {
     const { createFetchTool } = await import('../sdk/src/platform/tools/fetch/index.js');

@@ -46,8 +46,11 @@ export async function executeInspectMode(
 
       case 'api': {
         const framework: ApiFramework = (input.framework ?? 'auto') as ApiFramework;
-        const routes = await inspectApi(projectRoot, framework);
-        return createInspectSuccess({ routes, count: routes.length }, format, input.mode);
+        const unavailable: string[] = [];
+        const routes = await inspectApi(projectRoot, framework, unavailable);
+        return createInspectSuccess({ routes, count: routes.length,
+          ...(unavailable.length ? { unavailable_files: [...new Set(unavailable)].sort(),
+            warning: `${new Set(unavailable).size} file(s) were denied by the current read-access policy and were not inspected.` } : {}) }, format, input.mode);
       }
 
       case 'database': {
@@ -79,8 +82,10 @@ export async function executeInspectMode(
 
       case 'api_spec': {
         const framework: ApiFramework = (input.framework ?? 'auto') as ApiFramework;
-        const routes = await inspectApi(projectRoot, framework);
-        return createInspectSuccess(generateApiSpec(routes), format, input.mode);
+        const unavailable: string[] = [];
+        const routes = await inspectApi(projectRoot, framework, unavailable);
+        return createInspectSuccess({ ...generateApiSpec(routes),
+          ...(unavailable.length ? { unavailable_files: [...new Set(unavailable)].sort() } : {}) }, format, input.mode);
       }
 
       case 'api_validate': {

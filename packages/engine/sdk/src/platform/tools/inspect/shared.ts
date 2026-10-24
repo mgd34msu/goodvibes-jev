@@ -1,4 +1,5 @@
 import { assertCapturedToolReadAccess } from '../shared/captured-input-tools.js';
+import { ContractInputReadDeniedError } from '../../contract/input-authority.js';
 import { existsSync, readFileSync } from 'node:fs';
 import { join, relative, resolve } from 'node:path';
 import { readdir } from 'node:fs/promises';
@@ -297,6 +298,30 @@ export async function walk(
 
 export async function safeRead(filePath: string): Promise<string> {
   await assertCapturedToolReadAccess(filePath);
+  try {
+    return readFileSync(filePath, 'utf-8');
+  } catch {
+    return '';
+  }
+}
+
+/**
+ * A discovery-scan read. A captured view's read policy denying one incidental
+ * file excludes that file from the scan and records it, instead of failing the
+ * whole inspection; the denied file contributes nothing. Every other failure
+ * still aborts: outside-project policy and captured-input ownership stay
+ * separate mechanisms, and nothing here grants access the policy denied.
+ */
+export async function scanRead(filePath: string, unavailable?: string[]): Promise<string> {
+  try {
+    await assertCapturedToolReadAccess(filePath);
+  } catch (error) {
+    if (error instanceof ContractInputReadDeniedError) {
+      unavailable?.push(filePath);
+      return '';
+    }
+    throw error;
+  }
   try {
     return readFileSync(filePath, 'utf-8');
   } catch {

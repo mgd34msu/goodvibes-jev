@@ -260,6 +260,8 @@ export interface FetchCall {
 }
 
 export interface ApiSyncResult {
+  /** Files the current access policy denied; they were not inspected. */
+  unavailable_files?: string[];
   fetch_calls: FetchCall[];
   unmatched_fetches: FetchCall[];
   unmatched_routes: ApiRoute[];

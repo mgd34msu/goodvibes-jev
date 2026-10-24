@@ -1,7 +1,7 @@
 import { assertCapturedToolAccessCurrent, assertCapturedToolReadAccess } from '../shared/captured-input-tools.js';
 import { existsSync, mkdirSync, readdirSync, statSync, writeFileSync } from 'node:fs';
 import { dirname, extname, join, relative } from 'node:path';
-import { walk, safeRead, resolvePath } from './shared.js';
+import { walk, safeRead, scanRead, resolvePath } from './shared.js';
 import { judgmentPort } from '@goodvibes-jev/engine/errors';
 import { declaredTestRunner } from '../../utils/project-test-runner.js';
 import { mapWithConcurrency } from '../../utils/concurrency.js';
@@ -477,13 +477,13 @@ function normalizeUrlForMatch(url: string): string {
  * standard a path resolves only against a document's base URL, so such a
  * call is client code wherever the file sits; the whole project is scanned.
  */
-async function findFetchCalls(root: string): Promise<FetchCall[]> {
+async function findFetchCalls(root: string, unavailable: string[]): Promise<FetchCall[]> {
   const calls: FetchCall[] = [];
   const FETCH_RE = /fetch\(\s*[`'"](\/[^`'"?#]*)[`'"]/g;
   const files = await walk(root, (p) => /\.[tj]sx?$/.test(p));
   for (const file of files) {
     const relFile = relative(root, file);
-    (await safeRead(file)).split('\n').forEach((line, i) => {
+    (await scanRead(file, unavailable)).split('\n').forEach((line, i) => {
       for (const m of line.matchAll(FETCH_RE)) calls.push({ url: m[1]!, file: relFile, line: i + 1 });
     });
   }
@@ -491,7 +491,8 @@ async function findFetchCalls(root: string): Promise<FetchCall[]> {
 }
 
 export async function inspectApiSync(root: string, framework: ApiFramework): Promise<ApiSyncResult> {
-  const [routes, fetchCalls] = await Promise.all([inspectApi(root, framework), findFetchCalls(root)]);
+  const unavailable: string[] = [];
+  const [routes, fetchCalls] = await Promise.all([inspectApi(root, framework, unavailable), findFetchCalls(root, unavailable)]);
 
   const normalizedRoutes = routes.map((r) => ({
     ...r,
@@ -517,5 +518,5 @@ export async function inspectApiSync(root: string, framework: ApiFramework): Pro
 
   const drift_detected = unmatched_fetches.length > 0;
 
-  return { fetch_calls: fetchCalls, unmatched_fetches, unmatched_routes, drift_detected };
+  return { ...(unavailable.length ? { unavailable_files: [...new Set(unavailable)].sort() } : {}), fetch_calls: fetchCalls, unmatched_fetches, unmatched_routes, drift_detected };
 }
