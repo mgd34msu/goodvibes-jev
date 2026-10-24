@@ -9,6 +9,8 @@ export interface VerificationSource {
   readonly messageRole?: 'user' | 'assistant' | 'tool' | 'system';
   readonly completeMessage?: boolean;
   readonly execution?: Readonly<Record<string, unknown>>;
+  /** Native call identities on every interval of an assistant tool request. */
+  readonly toolCallIds?: readonly string[];
 }
 export interface VerificationFact {
   readonly text: string;

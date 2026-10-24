@@ -834,8 +834,24 @@ export class CompletionVerification {
     // A small follow-up may test, edit the report, then inspect the diff. The
     // last diff alone cannot prove its test result. Retain all current results
     // when they fit the same two-frame budget as a bounded latest execution.
-    const currentPrimary = currentResults.length > 0 && bounded(currentResults.map(verificationWireSource), VERIFICATION_FRAME_CHARACTERS * 2)
+    let currentPrimary = currentResults.length > 0 && bounded(currentResults.map(verificationWireSource), VERIFICATION_FRAME_CHARACTERS * 2)
       ? currentResults : latestResults;
+    // A successful write receipt can refer to arguments larger than the inline
+    // limit. Keep its exact native request beside the result, including every
+    // interval of a fragmented request. Otherwise a large old failure can push
+    // the implementation out of the retrieval window while leaving only a
+    // byte count behind. This selects evidence, never proves its quality.
+    const primaryBudget = Math.floor(MAX_EXACT_CASE_CHARACTERS / 2);
+    for (const [callId, results] of [...executions].reverse()) {
+      const callSources = observations.filter(source => source.toolCallIds?.includes(String(callId)));
+      const group = [...callSources, ...results];
+      // Keep only complete bounded groups here. Oversized executions and every
+      // omitted original still retain their retrieval and mandatory audit.
+      if (!bounded(group.map(verificationWireSource), VERIFICATION_FRAME_CHARACTERS * 2)) continue;
+      const candidate = [...new Map([...currentPrimary, ...group].map(source => [source.id, source])).values()];
+      if (bounded(candidate.map(verificationWireSource), primaryBudget)) currentPrimary = candidate;
+    }
+    currentPrimary.sort((left, right) => this.sourceOrder.get(left.id)! - this.sourceOrder.get(right.id)!);
     // The parent's spawn receipt proves that a worker started, not what it
     // inspected or returned. Keep bounded actual worker observations beside
     // that receipt so opening old counterevidence cannot displace the proof.

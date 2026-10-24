@@ -66,3 +66,35 @@ test.skipIf(!availability.available || !Bun.which('node') || !Bun.which('npm'))(
     await manager.close(); rmSync(workspace, { recursive: true, force: true });
   }
 });
+
+
+test.skipIf(!availability.available || !Bun.which('go'))('ordinary sandbox compiles and tests Go without exposing private home files or writable toolchains', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'sandbox-go-runtime-'));
+  const workspace = join(root, 'project'), home = join(root, 'private-home');
+  mkdirSync(workspace); mkdirSync(home);
+  const secret = join(home, 'private.txt'); writeFileSync(secret, 'PRIVATE_GO_SENTINEL');
+  writeFileSync(join(workspace, 'go.mod'), 'module contained-go\n\ngo 1.22\n');
+  writeFileSync(join(workspace, 'main.go'), `package main
+import ("fmt"; "os"; "runtime")
+func main() { fmt.Println("contained Go build") }
+func isolated() bool {
+  if _, err := os.Stat(${JSON.stringify(secret)}); !os.IsNotExist(err) { return false }
+  probe := runtime.GOROOT()+"/src/.goodvibes-readonly-probe"
+  if file, err := os.OpenFile(probe, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0600); err == nil { file.Close(); os.Remove(probe); return false }
+  return true
+}
+`);
+  writeFileSync(join(workspace, 'main_test.go'), 'package main\nimport "testing"\nfunc TestIsolation(t *testing.T) { if !isolated() { t.Fatal("runtime isolation failed") } }\n');
+  const manager = new ProcessManager();
+  const tool = createExecTool(manager, { defaultWorkingDirectory: workspace,
+    overflowHandler: new OverflowHandler({ baseDir: workspace }), credentialEnvScrub: { enabled: false },
+    sandbox: { config: { enabled: true, egressAllowlist: [], workspaceWritable: [] }, availability, featureEnabled: true, homeDir: home } });
+  try {
+    const result = await tool.execute({ commands: [{ cmd: 'export GOCACHE="$PWD/.cache"; go test ./... && go build -o dist/contained . && ./dist/contained', progress: false, timeout_ms: 60_000 }] });
+    expect(result.success, result.output ?? result.error).toBe(true);
+    const output = JSON.parse(result.output!);
+    expect(output).toMatchObject({ sandboxed: true, sandbox_network: 'disabled', exit_code: 0 });
+    expect(output.stdout).toContain('contained Go build');
+    expect(readFileSync(secret, 'utf8')).toBe('PRIVATE_GO_SENTINEL');
+  } finally { await manager.close(); rmSync(root, { recursive: true, force: true }); }
+});

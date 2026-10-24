@@ -8,7 +8,7 @@
         "brace-expansion": "^5.0.9",
         "fast-uri": "^3.1.5",
         "ip-address": "^10.4.0",
-        "undici": "^7.29.0",
+        "undici": "^7.30.1",
       },
       "devDependencies": {
         "@arethetypeswrong/cli": "0.18.5",
@@ -50,7 +50,7 @@
         "@goodvibes-jev/judgment": "workspace:*",
         "smol-toml": "1.9.1",
         "tar": "7.5.22",
-        "undici": "7.30.0",
+        "undici": "7.30.1",
         "zod": "4.6.6",
         "zustand": "5.0.12",
       },
@@ -131,7 +131,7 @@
       },
       "devDependencies": {
         "@goodvibes-jev/judgment": "workspace:*",
-        "undici": "7.30.0",
+        "undici": "7.30.1",
       },
     },
     "products/tui": {
@@ -173,7 +173,7 @@
       "devDependencies": {
         "@eslint/js": "10.0.1",
         "@goodvibes-jev/judgment": "workspace:*",
-        "@happy-dom/global-registrator": "20.10.6",
+        "@happy-dom/global-registrator": "21.0.4",
         "@playwright/test": "^1.61.0",
         "@types/bun": "^1.3.14",
         "@types/react": "^19.2.15",
@@ -183,7 +183,7 @@
         "eslint-plugin-jsx-a11y": "6.10.2",
         "eslint-plugin-react-hooks": "7.1.1",
         "eslint-plugin-react-refresh": "0.5.3",
-        "happy-dom": "^20.10.6",
+        "happy-dom": "^21.0.4",
         "prettier": "3.8.4",
         "typescript": "^6.0.3",
         "typescript-eslint": "8.61.1",
@@ -206,7 +206,7 @@
     "minimatch": "^10.2.5",
     "sharp": "^0.35.5",
     "tar": "^7.5.16",
-    "undici": "^7.29.0",
+    "undici": "^7.30.1",
     "ws": "8.21.0",
     "zod": "4.6.6",
   },
@@ -463,7 +463,7 @@
 
     "@goodvibes-jev/webui": ["@goodvibes-jev/webui@workspace:products/webui"],
 
-    "@happy-dom/global-registrator": ["@happy-dom/global-registrator@20.10.6", "", { "dependencies": { "@types/node": ">=20.0.0", "happy-dom": "^20.10.6" } }, "sha512-Nu/IjRkkNxmeG2ywWsyJSO4d1BrWTqVzxCPL+gXj0b97klhmjd6wLzt6Bx/laNpkZ3WLW7zNCqmtMIbIlahqug=="],
+    "@happy-dom/global-registrator": ["@happy-dom/global-registrator@21.0.4", "", { "dependencies": { "@types/node": ">=20.0.0", "happy-dom": "^21.0.4" } }, "sha512-Bbr0hW9hhDhBf3Jp0EyDlkCbFgbr0z2jd3BMKYOYW+fOkPM4Nx195GMXyCtRCGEgoNn6i09FabXrSkNFm2ONzg=="],
 
     "@humanfs/core": ["@humanfs/core@0.19.2", "", { "dependencies": { "@humanfs/types": "^0.15.0" } }, "sha512-UhXNm+CFMWcbChXywFwkmhqjs3PRCmcSa/hfBgLIb7oQ5HNb1wS0icWsGtSAUNgefHeI+eBrA8I1fxmbHsGdvA=="],
 
@@ -1177,7 +1177,7 @@
 
     "guid-typescript": ["guid-typescript@1.0.9", "", {}, "sha512-Y8T4vYhEfwJOTbouREvG+3XDsjr8E3kIr7uf+JZ0BYloFsttiHU0WfvANVsR7TxNUJa/WpCnw/Ino/p+DeBhBQ=="],
 
-    "happy-dom": ["happy-dom@20.14.5", "", { "dependencies": { "@types/node": ">=20.0.0", "@types/whatwg-mimetype": "^3.0.2", "@types/ws": "^8.18.1", "buffer-image-size": "^0.6.4", "entities": "^7.0.1", "whatwg-mimetype": "^3.0.0", "ws": "^8.21.0" } }, "sha512-x/RzkpWO40bTjIoT30iQtt64FLLmH/iRcUCN2X//bLx7H3ifkdfPXyqsro/OYtqzIAhiLMMA7mmiOR9C3NOKjQ=="],
+    "happy-dom": ["happy-dom@21.0.4", "", { "dependencies": { "@types/node": ">=20.0.0", "@types/whatwg-mimetype": "^3.0.2", "@types/ws": "^8.18.1", "buffer-image-size": "^0.6.4", "entities": "^7.0.1", "whatwg-mimetype": "^3.0.0", "ws": "^8.21.0" } }, "sha512-tFm+GaLBgo6o0awHnvHaNoraVo27qJ+2tZEtZ+cIa08hXbeitrxAJajLI05hsUy/2/YTKcUjQYzHe5mCcraLBw=="],
 
     "has-bigints": ["has-bigints@1.1.0", "", {}, "sha512-R3pbpkcIqv2Pm3dUwgjclDRVmWpTJW2DcMzcIhEXEx1oh/CEMObMm3KLmRJOdvhM7o4uQBnwr8pzRK2sJWIqfg=="],
 
@@ -1827,7 +1827,7 @@
 
     "unbox-primitive": ["unbox-primitive@1.1.0", "", { "dependencies": { "call-bound": "^1.0.3", "has-bigints": "^1.0.2", "has-symbols": "^1.1.0", "which-boxed-primitive": "^1.1.1" } }, "sha512-nWJ91DjeOkej/TA8pXQ3myruKpKEYgqvpw9lz4OPHj/NWFNluYrjbz9j01CJ8yKQd2g4jFoOkINCTW2I5LEEyw=="],
 
-    "undici": ["undici@7.30.0", "", {}, "sha512-dkrQXeHSaoamnItlYbmzG0wFYrM0ZwDxCIg0A7aKjTyyhh9svRzCNFEzV+Vm05/yehjCzjDZ31KXfGEjYSztDQ=="],
+    "undici": ["undici@7.30.1", "", {}, "sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg=="],
 
     "undici-types": ["undici-types@7.30.0", "", {}, "sha512-7QjA5O+GhM27do7Id6hQZpnYEd7WzHbs7/XIS9A1k+Gat/ZVF7Jmpzt68zL/205f65FYwDNLSjQemHPS8ReM/A=="],
 

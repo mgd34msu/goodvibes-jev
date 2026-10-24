@@ -211,6 +211,36 @@ test.each([false, true])('bounded worker receipts stay primary while older histo
   expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(true);
 });
 
+test.each([false, true])('bounded tool requests stay with execution receipts beside a large older failure (implementation defect: %s)', async broken => {
+  const history = [{ role: 'tool', callId: 'old-failed-tests', outcome: 'error',
+    content: Array.from({ length: 4000 }, (_, line) => `Earlier test failure ${line}: original diagnostic details before the observed repair.\n`).join('') }];
+  const implementation = `${'// original implementation context\n'.repeat(500)}\n${broken ? 'REFRESH_TOKEN_NOT_REVOKED' : 'REFRESH_TOKEN_REVOKED'}\n${'// remaining implementation context\n'.repeat(350)}`;
+  const input = { ...state(), request: 'Implement refresh-token revocation and test it.', initial: { request: 'Implement refresh-token revocation and test it.', transcript: history },
+    transcript: [...history,
+      { role: 'assistant', toolCalls: [{ id: 'write-implementation', name: 'write', arguments: { path: 'logout.ts', content: implementation } }] },
+      { role: 'tool', callId: 'write-implementation', outcome: 'ok', content: 'One file written successfully.' },
+      { role: 'assistant', toolCalls: [{ id: 'test-implementation', name: 'exec', arguments: { command: 'run functional tests' } }] },
+      { role: 'tool', callId: 'test-implementation', outcome: 'ok', content: 'Functional tests completed successfully.' },
+    ] };
+  let inspected = false;
+  const fake = fakePort((name, question, raw) => {
+    if (question.type === 'choice') return choiceAnswer(question, Object.keys(question.criteria)[0]!, .99);
+    const opened = (raw as { opened?: { sources?: { text: string | { runs: { text: string; count: number }[] }; toolCallIds?: string[]; execution?: { callId?: string } }[] } }).opened?.sources;
+    if (opened && ['unfinished', 'quality_gap', 'needs_source'].includes(name)) {
+      const requests = opened.filter(source => source.toolCallIds?.includes('write-implementation'));
+      const complete = requests.map(source => typeof source.text === 'string' ? source.text
+        : (source.text as { runs: { text: string; count: number }[] }).runs.map(run => run.text.repeat(run.count)).join('')).join('');
+      const receipt = opened.some(source => source.execution?.callId === 'write-implementation');
+      inspected ||= complete.includes(implementation.replaceAll('\n', '\\n')) && receipt;
+      return noulAnswer(name === 'needs_source' ? inspected ? .01 : .99 : broken ? .99 : .01);
+    }
+    return noulAnswer(.01);
+  });
+  const result = await new CompletionVerification(verificationWriter).prepare(input, access(fake.port));
+  expect(inspected).toBe(true);
+  expect(result.findings.length > 0).toBe(broken);
+});
+
 test('retrieval indexes remain native locations instead of becoming another set of summary drafts', async () => {
   const history = Array.from({ length: 100 }, (_, i) => ({ role: 'tool', callId: `old-${i}`,
     content: `Historical observation ${i}: ` + Array.from({ length: 90 }, (_, line) => `Original line ${line}: inspection pending in this earlier attempt.`).join('\n') }));

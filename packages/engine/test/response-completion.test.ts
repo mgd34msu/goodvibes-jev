@@ -197,6 +197,26 @@ test('hierarchical evidence cannot hide a changed original observation from the 
   expect(() => guard.beginFinalization({ content: input.response })).toThrow();
 });
 
+test('a late native observation rebuilds stale completion evidence without rewriting the answer', async () => {
+  const input = source('The requested review artifact is complete.'), fake = answered();
+  let stale = true, attempts = 0;
+  installJudgmentPort({ model: fake.port.model, async ask(request) {
+    attempts++;
+    if (stale) {
+      stale = false;
+      input.conversation.addSystemMessage('[Daemon] Web surface ready.');
+      // The recording port deliberately drops assertion text and HTTP status.
+      throw new JudgmentError('rejected', 'the judgment request was rejected');
+    }
+    return fake.port.ask(request);
+  } });
+  const guard = new ResponseCompletionGuard();
+  expect(await guard.checkUntilAvailable(() => input)).toBeNull();
+  expect(attempts).toBeGreaterThan(1);
+  expect(fake.requests.some(request => JSON.stringify(request.state).includes('[Daemon] Web surface ready.'))).toBe(true);
+  expect(() => guard.beginFinalization({ content: input.response })).not.toThrow();
+});
+
 test('cancellation, transcript changes and retired ports cannot release a pending completion', async () => {
   for (const change of ['abort', 'transcript', 'port', 'response']) {
     const started = Promise.withResolvers<void>(), release = Promise.withResolvers<void>();

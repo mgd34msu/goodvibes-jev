@@ -137,6 +137,7 @@ export class ResponseCompletionGuard {
   private readonly verification: CompletionVerification | undefined;
   private readonly checkpointAudits = new WeakMap<object, Set<string>>();
   private sourceAdmitted = false;
+  private assertEvidenceCurrent: (() => void) | undefined;
   private admittedDraft: string | undefined;
   private publication: { source: string; identity: object; completion: Set<string>; consolidation: Set<string>; execution: Set<string> } | undefined;
 
@@ -324,6 +325,13 @@ export class ResponseCompletionGuard {
         throw blocked;
       }
       if (error instanceof ResponseCompletionError) throw error;
+      // A recording refusal can mean that a late native observation changed
+      // the source while Jev was reading it. Rebuild that evidence snapshot;
+      // an unchanged HTTP rejection still remains a permanent request error.
+      if (error instanceof JudgmentError && error.kind === 'rejected' && error.status === undefined) {
+        try { this.assertEvidenceCurrent?.(); }
+        catch (cause) { throw new ResponseCompletionError('unavailable', { cause }); }
+      }
       const transient = error instanceof JudgmentPortMissingError || error instanceof JudgmentAuthorityRetiredError
         || (error instanceof JudgmentError && error.kind === 'unavailable');
       const problem = error instanceof CompletionEvidenceBudgetError || error instanceof VerificationSubdivisionError ? 'capacity' : error instanceof VerificationHeldError ? 'unavailable' : transient ? 'unavailable' : error instanceof JudgmentInputError ? this.sourceAdmitted ? 'invalid-response' : 'invalid-evidence'
@@ -370,6 +378,7 @@ export class ResponseCompletionGuard {
   }
 
   private async read(input: ResponseCompletionInput, options: JudgmentReadingOptions, onWaiting?: () => void, withoutCheckpoint = false, requireVerification = false): Promise<string | null> {
+    this.assertEvidenceCurrent = undefined;
     options.signal?.throwIfAborted(); options.assertCurrent?.();
     const conversation = input.conversation, snapshot = conversation.getMessageSnapshot;
     const messages = captureConversationEvidence(conversation);
@@ -395,6 +404,7 @@ export class ResponseCompletionGuard {
         || input.request !== source.snapshot.request || input.response !== source.snapshot.response
         || verificationHistory(conversation) !== archiveIdentity || conversationSource !== null && JSON.stringify(projectTranscript()) !== conversationSource) throw new Error('Response completion transcript changed.');
     };
+    this.assertEvidenceCurrent = current;
     current();
     // Small direct checks also need their full worker observations on resume.
     // The agent event journal is deliberately abbreviated and cannot replace

@@ -8,7 +8,7 @@ import { delegationConsolidation } from './batteries/delegation-consolidation.js
 import { executionAssurance } from './batteries/execution-assurance.js';
 import { responseFinding } from './batteries/response-finding.js';
 import { responseProgress } from './batteries/response-progress.js';
-import { verificationScope, verificationEvidence, verificationRequirement, verificationSource, verificationIntegration, verificationRepairs, verificationNoIssue, verificationResolution, verificationCheckpointHistory, verificationAudit, verificationObservationAudit } from './verification/batteries.js';
+import { verificationScope, verificationEvidence, verificationRequirement, verificationSource, verificationIntegration, verificationRepairs, verificationNoIssue, verificationResolution, verificationCheckpointHistory, verificationAudit, verificationInstructionAudit, verificationObservationAudit } from './verification/batteries.js';
 
 export const registry = new BatteryRegistry();
 registry.register(turnShape);
@@ -32,6 +32,7 @@ registry.register(verificationNoIssue);
 registry.register(verificationResolution);
 registry.register(verificationCheckpointHistory);
 registry.register(verificationAudit);
+registry.register(verificationInstructionAudit);
 registry.register(verificationObservationAudit);
 
 // Spawned-agent observations share the canonical engine registry.

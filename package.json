@@ -126,7 +126,7 @@
     "brace-expansion": "^5.0.9",
     "fast-uri": "^3.1.5",
     "ip-address": "^10.4.0",
-    "undici": "^7.29.0"
+    "undici": "^7.30.1"
   },
   "patchedDependencies": {
     "eslint-plugin-jsx-a11y@6.10.2": "patches/eslint-plugin-jsx-a11y@6.10.2.patch"
@@ -144,7 +144,7 @@
     "esbuild": "0.28.1",
     "form-data": "4.0.6",
     "ws": "8.21.0",
-    "undici": "^7.29.0",
+    "undici": "^7.30.1",
     "tar": "^7.5.16",
     "brace-expansion": "^5.0.9",
     "sharp": "^0.35.5",
@@ -161,6 +161,6 @@
     "esbuild": "Pinned to 0.28.1 to close GHSA-gv7w-rqvm-qjhr (missing binary integrity verification in Deno module, enabling RCE via NPM_CONFIG_REGISTRY). Wrangler 4.x pins esbuild <0.28.1; this override forces the patched release across all transitive consumers.",
     "form-data": "Pinned to 4.0.6 to close GHSA-hmw2-7cc7-3qxx (CRLF injection via unescaped multipart field/file names). Forces the patched release across remaining transitive consumers.",
     "ws": "Pinned to 8.21.0 to close GHSA-96hv-2xvq-fx4p (memory-exhaustion DoS from tiny fragments). Minor bump within the 8.x line forced across miniflare, node-edge-tts, and the openai ws peer.",
-    "undici": "Pinned to 7.28.0 to close GHSA-vmh5-mc38-953g, GHSA-vxpw-j846-p89q, and GHSA-hm92-r4w5-c3mj (TLS bypass, WebSocket DoS, SOCKS5 routing). Kept on the 7.x line that jsdom (^7.25.0) and miniflare require; 8.x would be a breaking major."
+    "undici": "Require 7.30.1 to close GHSA-xjj6-f33q-929c (an unhandled body-stream error can crash fetch callers). Keep the compatible 7.x line used by jsdom and miniflare."
   }
 }

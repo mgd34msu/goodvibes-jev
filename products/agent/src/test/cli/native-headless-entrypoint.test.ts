@@ -278,7 +278,7 @@ describe('tui real direct headless entrypoint', () => {
     const f = await fixture('tui');
     for (const args of [['run', HEADLESS_PROMPT], ['exec', HEADLESS_PROMPT], ['-p', HEADLESS_PROMPT]]) {
       const output = await f.run([...args, ...json]);
-      expect(output.code, output.stderr).toBe(0);
+      expect(output.code, `${output.stdout}\n${output.stderr}`).toBe(0);
       expect(readEnvelope(output).response).toBe(HEADLESS_REPLY);
     }
     expect(f.captures()).toHaveLength(0); expect(f.model.requests).toHaveLength(3);

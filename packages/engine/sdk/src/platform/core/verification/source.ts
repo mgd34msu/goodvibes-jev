@@ -11,7 +11,7 @@ export const verificationHash = (value: unknown): string => createHash('sha256')
  * no middle is dropped and a fragment never claims to be a whole observation. */
 export function verificationSources(state: Record<string, unknown>): VerificationSource[] {
   const result: VerificationSource[] = [];
-  const add = (kind: VerificationSource['kind'], reference: string, value: unknown, messageRole?: VerificationSource['messageRole'], execution?: VerificationSource['execution']) => {
+  const add = (kind: VerificationSource['kind'], reference: string, value: unknown, messageRole?: VerificationSource['messageRole'], execution?: VerificationSource['execution'], toolCallIds?: readonly string[]) => {
     const text = typeof value === 'string' ? value : JSON.stringify(value);
     if (!text) return;
     for (let start = 0; start < text.length;) {
@@ -34,7 +34,7 @@ export function verificationSources(state: Record<string, unknown>): Verificatio
       }
       const label = `${reference}; ${start === 0 && end === text.length ? 'complete source' : 'partial source'}; characters ${start}..${end} of ${text.length}`;
       result.push({ id: `s-${verificationHash([kind, label, text.slice(start, end)]).slice(0, 24)}`, kind,
-        reference: label, text: text.slice(start, end), ...(messageRole ? { messageRole, completeMessage: start === 0 && end === text.length } : {}), ...(execution ? { execution } : {}) });
+        reference: label, text: text.slice(start, end), ...(messageRole ? { messageRole, completeMessage: start === 0 && end === text.length } : {}), ...(execution ? { execution } : {}), ...(toolCallIds?.length ? { toolCallIds } : {}) });
       start = end;
     }
   };
@@ -59,7 +59,7 @@ export function verificationSources(state: Record<string, unknown>): Verificatio
       const call = message.role === 'tool' && typeof message.callId === 'string' ? callContext.get(message.callId) : undefined;
       const execution = message.role === 'tool' ? { callId: message.callId, outcome: message.outcome ?? 'unknown', ...(call ? { tool: call.name,
         ...(JSON.stringify(call.arguments ?? null).length <= 2_000 ? { exactArguments: call.arguments ?? null } : { argumentsSource: `Original assistant call ${call.id}; arguments are retained separately, not clipped or inferred.` }) } : {}) } : undefined;
-      add(originalInstructions && message.role === 'user' ? 'instruction' : 'observation', `${prefix}[${index}]; role ${message.role}`, message, role, execution);
+      add(originalInstructions && message.role === 'user' ? 'instruction' : 'observation', `${prefix}[${index}]; role ${message.role}`, message, role, execution, message.role === 'assistant' ? calls?.map(call => call.id) : undefined);
     });
   };
   const archive = state.archive as readonly { messages: unknown }[] | undefined;

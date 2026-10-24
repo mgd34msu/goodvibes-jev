@@ -50,8 +50,8 @@ function npmPackage(node: string): string | undefined {
 }
 
 /** Ordinary execution keeps home and service directories hidden. Admit only
- * standalone interpreters and the selected Node installation's npm package;
- * never mount a PATH directory, an entire installation or a user's home.
+ * standalone interpreters, the selected npm package and Go distribution
+ * components; never mount a PATH directory, a version manager or a user's home.
  * Captured execution retains its separate construction-owned runtime inputs. */
 export function withSandboxRuntimes(plan: ExecSandboxPlan, workspace: string): ExecSandboxPlan {
   if (!plan.sandboxed) return plan;
@@ -60,7 +60,8 @@ export function withSandboxRuntimes(plan: ExecSandboxPlan, workspace: string): E
   const bun = typeof Bun !== 'undefined'
     ? nativeExecutable(resolveProcessCapturedBunRuntimeExecutable()) : trustedExecutable('bun');
   const node = typeof Bun === 'undefined' ? nativeExecutable(process.execPath) : trustedExecutable('node');
-  if (!bun && !node) return plan;
+  const go = trustedExecutable('go');
+  if (!bun && !node && !go) return plan;
   const mounts = ['--dir', runtimeRoot, '--dir', SANDBOX_RUNTIME_BIN];
   if (bun) mounts.push('--ro-bind', bun, `${SANDBOX_RUNTIME_BIN}/bun`);
   if (node) {
@@ -74,6 +75,23 @@ export function withSandboxRuntimes(plan: ExecSandboxPlan, workspace: string): E
       } catch { /* npm remains available when this installation omits npx. */ }
     }
   }
+  if (go) {
+    const goroot = dirname(dirname(go));
+    // The compiler needs its standard-library sources and native toolchain,
+    // not the surrounding version manager, shell configuration or credentials.
+    try {
+      if (statSync(join(goroot, 'src', 'runtime', 'runtime.go')).isFile()
+        && statSync(join(goroot, 'pkg', 'tool')).isDirectory()) {
+        for (const component of ['bin/go', 'bin/gofmt', 'pkg', 'src', 'lib', 'go.env', 'VERSION']) {
+          const path = join(goroot, component);
+          try { statSync(path); mounts.push('--ro-bind', path, path); } catch { /* Optional distribution component. */ }
+        }
+        mounts.push('--symlink', go, `${SANDBOX_RUNTIME_BIN}/go`);
+        const gofmt = nativeExecutable(join(goroot, 'bin', 'gofmt'));
+        if (gofmt) mounts.push('--symlink', gofmt, `${SANDBOX_RUNTIME_BIN}/gofmt`);
+      }
+    } catch { /* A standalone non-distribution executable is not a Go toolchain. */ }
+  }
   return { ...plan, argvPrefix: [...plan.argvPrefix.slice(0, -1), ...mounts, '--'],
-    boundary: `${plan.boundary}; installed JavaScript runtimes read-only` };
+    boundary: `${plan.boundary}; installed language runtimes read-only` };
 }

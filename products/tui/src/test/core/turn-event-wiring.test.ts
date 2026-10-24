@@ -342,6 +342,15 @@ describe('wireTurnEventHandlers: budget-breach alert', () => {
 // ---------------------------------------------------------------------------
 
 describe('wireTurnEventHandlers: agent/chain-failure alerts', () => {
+  let stdoutTTY: PropertyDescriptor | undefined;
+  beforeEach(() => {
+    stdoutTTY = Object.getOwnPropertyDescriptor(process.stdout, 'isTTY');
+    Object.defineProperty(process.stdout, 'isTTY', { configurable: true, value: true });
+  });
+  afterEach(() => {
+    if (stdoutTTY) Object.defineProperty(process.stdout, 'isTTY', stdoutTTY);
+    else Reflect.deleteProperty(process.stdout, 'isTTY');
+  });
   // notifyCompletion (SDK) writes a terminal bell ('\x07') synchronously for
   // any durationMs > 5000, the alert modules pass FORCE_NOTIFY_DURATION_MS
   // (30_001) precisely so this is observable without mocking the SDK module
