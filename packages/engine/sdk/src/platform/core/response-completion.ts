@@ -532,7 +532,12 @@ export class ResponseCompletionGuard {
         owner.assertCurrent(); current();
         this.rememberReview(error.findings, input);
         this.describeHeld = async () => { owner.assertCurrent(); current(); return completionRepairMessage(error.findings); };
-        return completionRepairMessage(error.findings);
+        const unsettledCorrection = completionRepairMessage(error.findings);
+        // An identical resubmission cannot settle the same open evidence
+        // question; a changed draft can name the resolving observation, so it
+        // gets a fresh read with the qualified audits reused.
+        this.heldCycle = { evidenceKey, draft: input.response, correction: unsettledCorrection, wordingCannotRepair: false, shortCircuits: 0 };
+        return unsettledCorrection;
       }
       state = checked.state; verificationFindings = checked.findings;
       if (verificationFindings.length) {

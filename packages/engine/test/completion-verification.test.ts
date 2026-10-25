@@ -870,7 +870,7 @@ test('held page audits repeat only for a changed evidence context and still cove
   expect(fake.requests.filter(request => request.context?.battery === 'engine.verification.requirement').length).toBeGreaterThan(5);
 });
 
-test('counterevidence reuse retains draft bindings while changed claims and new invalidating execution receive fresh checks', async () => {
+test('counterevidence qualifications outlive draft rewording while new invalidating execution receives fresh checks', async () => {
   const input = { ...state('Earlier native observation. '.repeat(18_000)),
     response: 'The requested review is saved.', initial: { request: 'Review all source and write review.md.', transcript: [] } };
   const fake = fakePort((name, question, raw) => {
@@ -885,8 +885,10 @@ test('counterevidence reuse retains draft bindings while changed claims and new 
   const first = auditCount(); expect(first).toBeGreaterThan(0);
   expect((await verifier.prepare(input, access(fake.port, identity))).findings).toHaveLength(0);
   expect(auditCount()).toBe(first);
+  // A reworded draft reuses the qualified history: an observation's factual
+  // bearing on the requirement does not change with the answer's wording.
   expect((await verifier.prepare({ ...input, response: 'The complete findings are available in review.md.' }, access(fake.port, identity))).findings).toHaveLength(0);
-  expect(auditCount()).toBeGreaterThan(first);
+  expect(auditCount()).toBe(first);
   const changed = { ...input, transcript: [...input.transcript,
     { role: 'assistant', toolCalls: [{ id: 'erase-report', name: 'write', arguments: { files: [{ path: 'review.md', content: '' }] } }] },
     { role: 'tool', callId: 'erase-report', outcome: 'ok', content: 'The requested write completed.' },

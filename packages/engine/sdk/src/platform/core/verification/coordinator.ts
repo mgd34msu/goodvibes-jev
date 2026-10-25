@@ -84,9 +84,10 @@ export class CompletionVerification {
   private readonly nodes = new Map<string, VerificationReceipt>();
   private readonly originals = new Map<string, VerificationSource>();
   private readonly sourceOrder = new Map<string, number>();
-  // Counterevidence is conditional on the proposed claims. Reuse it only for
-  // the same draft, scope, live authority and supporting immutable sources.
-  // Component acceptance is separately retained by native contract receipts.
+  // Counterevidence qualifications are conditional on the requirement scope,
+  // live authority and supporting immutable sources, and outlive draft
+  // rewording. Component acceptance is separately retained by native contract
+  // receipts.
   private readonly historyQualifications = new WeakMap<object, Map<string, Map<string, readonly string[]>>>();
   private readonly readReceiptViews = new Map<string, ReturnType<typeof nativeReadReceipts>>();
   private readonly sourceWitnesses = new Map<string, readonly string[]>();
@@ -417,7 +418,12 @@ export class CompletionVerification {
     ].flatMap(id => this.sourceWitnesses.get(id) ?? [id]))].filter(id => available.has(id));
     let authority = this.historyQualifications.get(access.identity);
     if (!authority) { authority = new Map(); this.historyQualifications.set(access.identity, authority); }
-    const scopeKey = verificationHash(['counterevidence-scope-v2', requirement, turnContext?.request, turnContext?.requirements, response]);
+    // An observation either establishes an unmet obligation for this
+    // requirement or it does not; the draft's wording does not change that
+    // factual bearing, and draft-specific claims are judged by the checks that
+    // receive the draft. Keying qualifications by the draft re-audited the
+    // entire history for every rewording, observed live at review scale.
+    const scopeKey = verificationHash(['counterevidence-scope-v3', requirement, turnContext?.request, turnContext?.requirements]);
     let qualified = authority.get(scopeKey);
     if (!qualified) { qualified = new Map(); authority.set(scopeKey, qualified); }
     for (const source of observations.observations) {
