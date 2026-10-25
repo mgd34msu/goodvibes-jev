@@ -393,6 +393,27 @@ test('an uncertain history page is resolved against its individual originals wit
   expect(fake.requests.some(request => request.context?.battery === 'engine.verification.integration')).toBe(true);
 });
 
+test('a permanently mid-band observation audit becomes a disclosed limitation after bounded attempts', async () => {
+  const history = state('Retained history. '.repeat(2000)).transcript;
+  const input = { ...state(), initial: { request: state().request, transcript: history },
+    transcript: [...history, { role: 'tool', callId: 'current', content: 'Completed review and delivery observed.' }] };
+  const fake = fakePort((name, _question, raw) => {
+    const evidence = (raw as unknown as { evidence?: { unresolvedQuestion?: string } }).evidence;
+    return noulAnswer(name === 'missed' ? .4 : name === 'unsupported' && evidence?.unresolvedQuestion ? .4 : .01);
+  });
+  const verifier = new CompletionVerification(noIssueWriter), identity = {};
+  await expect(verifier.prepare(input, access(fake.port, identity))).rejects.toThrow('unsettled');
+  let resolved: Awaited<ReturnType<CompletionVerification['prepare']>> | undefined;
+  for (let attempt = 2; attempt <= 4 && !resolved; attempt++) {
+    try { resolved = await verifier.prepare({ ...input, response: `Draft ${attempt}: the requested review is saved.` }, access(fake.port, identity)); }
+    catch { /* still within the bounded attempts */ }
+  }
+  expect(resolved).toBeDefined();
+  expect(resolved!.findings).toHaveLength(0);
+  expect(JSON.stringify(resolved!.state)).toContain('disclosedLimitations');
+  expect(JSON.stringify(resolved!.state)).toContain('never established counterevidence');
+});
+
 test.each([.4, .99])('a factual dismissal held at %s cannot clear an uncertain original-source audit', async probability => {
   const history = state('Retained history. '.repeat(2000)).transcript;
   const input = { ...state(), initial: { request: state().request, transcript: history },

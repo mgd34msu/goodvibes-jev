@@ -90,6 +90,11 @@ export class CompletionVerification {
   // receipts.
   private readonly historyQualifications = new WeakMap<object, Map<string, Map<string, readonly string[]>>>();
   private readonly readReceiptViews = new Map<string, ReturnType<typeof nativeReadReceipts>>();
+  // A permanently mid-band observation audit cannot block publication forever:
+  // after bounded distinct attempts over unchanged evidence it is retained as a
+  // disclosed limitation, never as counterevidence and never as approval.
+  private readonly unsettledAttempts = new Map<string, number>();
+  private readonly disclosedLimitations = new Map<string, { readonly observation: string; readonly reference: string; readonly requirement: string; readonly attempts: number }>();
   private readonly sourceWitnesses = new Map<string, readonly string[]>();
   private originalTurns: ReadonlyMap<string, readonly VerificationSource[]> = new Map();
   private previousSources: { identity: object; request: string; ids: Set<string> } | undefined;
@@ -455,6 +460,10 @@ export class CompletionVerification {
         for (const source of page) { audited.add(source.id); if (accepted || !unresolved.includes(source)) { accounted.add(source.id); remember(source); } }
         return accepted ? null : unresolved;
       }
+      if (page.every(source => accounted.has(source.id))) {
+        for (const source of page) audited.add(source.id);
+        return null;
+      }
       const audit = page.every(source => source.kind === 'instruction') ? verificationInstructionAudit : verificationAudit;
       const run = await audit.run(access.port, context as never, { ...this.options(access), site: audit.name });
       let accepted = clean(run.readings);
@@ -471,7 +480,12 @@ export class CompletionVerification {
           const state = { originalRequirement: requirement, requirements: turnContext?.requirements, currentWorkEvidence: workEvidence,
             ...(instruction ? { originalInstruction: verificationWireSource(observation) } : { observation: verificationWireSource(observation) }),
             ...(originalTurn ? { originalTurn } : {}), currentTurn: turnContext?.currentTurn, proposedResponse: response };
-          const sourceKey = verificationHash(['original-counterevidence-v1', state]);
+          // The key is draft-independent: an observation's factual bearing on
+          // the requirement does not change with answer wording, and a changed
+          // evidence binding starts fresh attempts.
+          const binding = nativeQualification && typeof nativeQualification === 'object' ? (nativeQualification as { evidenceBinding?: unknown }).evidenceBinding ?? null : null;
+          const sourceKey = verificationHash(['original-counterevidence-v2', requirement, turnContext?.requirements,
+            verificationWireSource(observation), originalTurn ?? null, binding]);
           if (cache.has(sourceKey)) return cache.get(sourceKey) === true;
           const refinement = instruction ? verificationInstructionAudit : verificationObservationAudit;
           const exact = await refinement.run(access.port, state as never,
@@ -490,8 +504,20 @@ export class CompletionVerification {
             // Independent work/quality, integration and final checks still run.
             settled = assessment.qualifiedNoIssues?.includes(check) === true;
           }
-          access.assertCurrent(); cache.set(sourceKey, settled);
-          return settled;
+          access.assertCurrent();
+          if (settled) { cache.set(sourceKey, true); return true; }
+          const attempts = (this.unsettledAttempts.get(sourceKey) ?? 0) + 1;
+          this.unsettledAttempts.set(sourceKey, attempts);
+          if (attempts < 3) return false;
+          // Three distinct full resolution attempts over unchanged evidence
+          // have not established counterevidence. Retain the exact observation
+          // as a disclosed limitation the publication checks see; it never
+          // becomes approval, and changed evidence restarts its attempts.
+          this.disclosedLimitations.set(sourceKey, { observation: observation.id, reference: observation.reference,
+            requirement: requirement.id, attempts });
+          exact.recordAction('Unsettled after bounded distinct attempts; retained as a disclosed limitation, never as counterevidence or approval.');
+          cache.set(sourceKey, true);
+          return true;
         });
         accepted = resolved.every(Boolean);
         unresolved = page.filter((_, index) => !resolved[index]);
@@ -1125,6 +1151,8 @@ export class CompletionVerification {
         ...(resolution ? { resolution, meaning: 'Fresh native Jev fulfillment and work-quality check of these uncertain aspects against the exact original requirement and actual primary observations; original negative readings remain unchanged. Original-source verification and history audits remain required under the stated verification mode. This is not final-response approval.' } : {}) })),
         deferredRequirements: ledger.filter(requirement => !cases!.some(entry => entry.requirement.id === requirement.id)).map(requirement => requirement.id),
         sourceCount: sources.length, nativeReadReceiptPages: readReceipts.length, exactRuntimeFacts,
+        ...(this.disclosedLimitations.size ? { disclosedLimitations: { entries: [...this.disclosedLimitations.values()],
+          meaning: 'Observation audits that stayed unsettled after bounded distinct attempts over unchanged evidence. They are retained open questions the answer may honestly disclose, never established counterevidence and never approval; changed evidence restarts their checks.' } } : {}),
         meaning: indexed ? 'Relevant primary records were retrieved and checked. Original instructions and execution observations were audited for unaccounted counterevidence. Native read receipts preserve actual returned ranges, hashes and truncation; the contents of a read file are separately retrievable evidence, not events executed by the runtime. These receipts never establish substantive review quality. Retrieval indexes and assistant/report claims are not execution proof. Final exact-response publication checks remain required.' : 'Runtime facts were independently checked against complete native-observation pages. Read-execution facts retain actual returned ranges, not substantive review quality. Original read bodies remain available for claim-specific retrieval. Source-index pages retain locations only, never qualified facts or approval. Assistant/report assertions remain assertions; missing source content never establishes completion. Final exact-response publication checks remain required.' },
       previousReview: null,
     };
