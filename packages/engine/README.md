@@ -1,10 +1,17 @@
-# GoodVibes SDK
+# GoodVibes engine
 
-[![CI](https://github.com/mgd34msu/goodvibes-sdk/actions/workflows/ci.yml/badge.svg)](https://github.com/mgd34msu/goodvibes-sdk/actions/workflows/ci.yml)
+[![CI](https://github.com/mgd34msu/goodvibes-jev/actions/workflows/ci.yml/badge.svg)](https://github.com/mgd34msu/goodvibes-jev/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.0.19-blue.svg)](https://github.com/mgd34msu/goodvibes-sdk)
 
-GoodVibes SDK is the typed TypeScript platform layer behind the GoodVibes products: sessions, provider/model routing, in-process agents, a knowledge and memory store, a control-plane HTTP and realtime API, and the transports that carry it all. The daemon is its own product, built on this SDK. Full-surface consumers, the GoodVibes terminal app and the GoodVibes agent, embed this runtime directly in a Bun process and connect to the daemon as clients. Companion consumers, the web UI, mobile clients, and the Home Assistant integration, connect to that same daemon as thin remote clients over HTTP, SSE, and WebSocket. One published package covers both: `@goodvibes-jev/engine` carries the whole platform, and each part of it is a subpath of that one package (`@goodvibes-jev/engine/sdk`, `@goodvibes-jev/engine/contracts`, `@goodvibes-jev/engine/errors` and the rest), so consumers install one package and import only the entry points they need.
+The engine is the typed TypeScript platform layer behind the GoodVibes Jev products: sessions, provider/model routing, in-process agents, a knowledge and memory store, a control-plane HTTP and realtime API, and the transports that carry it all. The daemon is its own product, built on the engine. Full-surface consumers embed runtime behavior in a Bun process and connect to daemon services as clients. Companion consumers, including the WebUI and mobile clients, use HTTP, SSE and WebSocket. The workspace package `@goodvibes-jev/engine` carries the platform through explicit subpaths such as `@goodvibes-jev/engine/sdk`, `@goodvibes-jev/engine/contracts` and `@goodvibes-jev/engine/errors`.
+
+Use the [monorepo installation guide](../../docs/installation.md) to install the
+application suite. Engine integration and product acceptance remain in progress;
+older SDK release history does not certify this checkout. Current behavior for
+[completion verification](docs/runtime-orchestration.md#completion-verification),
+[project review inventory](docs/contract-criteria.md#project-review-inventory) and
+[owner-configured tool access](docs/tool-safety.md#owner-configured-access) lives
+in the engine.
 
 Public contract, config keys, route paths, event shapes, and file layouts follow the semver policy in `docs/semver-policy.md`. Pin exact versions and read `CHANGELOG.md` before upgrading.
 
@@ -17,7 +24,7 @@ and the [retained review evidence](docs/decisions/2026-10-16-hosted-turn-review-
 
 ```mermaid
 flowchart LR
-    subgraph pkg["packages/ (published, one workspace version)"]
+    subgraph pkg["packages/engine (one workspace package)"]
         sdk["@goodvibes-jev/engine/sdk<br/>facade: platform runtime + daemon + clients"]
         contracts["@goodvibes-jev/engine/contracts"]
         siblings["errors, transport-core/-http/-realtime,<br/>daemon-sdk, operator-sdk, peer-sdk"]
@@ -26,31 +33,39 @@ flowchart LR
     sdk --> contracts
     sdk --> siblings
 
-    tui["GoodVibes terminal app<br/>(full surface, embeds the daemon)"]
-    agent["GoodVibes agent<br/>(full surface, embeds the daemon)"]
+    tui["GoodVibes terminal app<br/>(Bun runtime and daemon client)"]
+    agent["GoodVibes agent<br/>(Bun runtime and daemon client)"]
+    daemon["GoodVibes daemon<br/>(standalone runtime and API host)"]
     webui["GoodVibes web UI<br/>(companion surface, browser)"]
     ha["Home Assistant integration<br/>(separate project, talks to the daemon)"]
 
     sdk --> tui
     sdk --> agent
+    sdk --> daemon
     sdk --> webui
-    tui -. daemon HTTP/SSE/WebSocket .-> ha
-    agent -. daemon HTTP/SSE/WebSocket .-> ha
-    toolchain -. bunx release tooling .-> tui
-    toolchain -. bunx release tooling .-> agent
+    tui -. HTTP/SSE/WebSocket .-> daemon
+    agent -. HTTP/SSE/WebSocket .-> daemon
+    webui -. HTTP/SSE/WebSocket .-> daemon
+    ha -. HTTP/SSE/WebSocket .-> daemon
+    toolchain -. workspace tooling .-> tui
+    toolchain -. workspace tooling .-> agent
 ```
 
 ---
 
 ## Install
 
+Prepare the engine through the monorepo workspace:
+
 ```bash
-bun add @goodvibes-jev/engine
-# or
-npm install @goodvibes-jev/engine
+# From the goodvibes-jev repository root:
+bun install
+bun run build
 ```
 
-This installs one package; import only the entry points you need. For a Bun host (terminal app, agent, CLI, daemon), the root entry point talks to a reachable GoodVibes daemon:
+Products depend on `@goodvibes-jev/engine` through `workspace:*`; import only
+declared entry points. For a Bun host (terminal app, agent, CLI, daemon), the SDK
+client factory talks to a reachable GoodVibes daemon:
 
 ```ts
 import { createGoodVibesSdk } from '@goodvibes-jev/engine/sdk';
@@ -128,19 +143,20 @@ Full index: [docs/README.md](./docs/README.md).
 ## Development
 
 ```bash
-git clone https://github.com/mgd34msu/goodvibes-sdk.git
-cd goodvibes-sdk
+git clone https://github.com/mgd34msu/goodvibes-jev.git
+cd goodvibes-jev
 bun install
 bun run build
 ```
 
 | Command | Does |
 | --- | --- |
-| `bun run build` | Build every workspace package's `dist/` output once |
-| `bun run test` | Run the full Bun test suite (`test/`, mirroring the package sources) |
-| `bun run validate` | Exactly what CI's `validate` job runs: doc/contract/version/changelog gates, TypeScript build and typecheck, the API-surface and exports checks, examples typecheck, browser-compat, package metadata, packaging smoke checks (`pack`, `publint`, install), and the bundle-budget check |
+| `bun run build` | Build judgment, engine and all four products from the monorepo root |
+| `bun run test` | Run installer, judgment, engine and product tests through their owned runners |
+| `bun run validate` | Run the local integration gate: build/types, API/contracts, exports, packaging and runtime checks; see the full gate reference below |
 | `bun run api:extract` / `bun run api:check` | Regenerate / verify the API Extractor reports under `etc/*.api.md` |
-| `bun run refresh:contracts` | Regenerate contract JSON artifacts and their generated docs after a contract change |
+| `bun run refresh:contracts` | Regenerate shared contract artifacts and product snapshots after a contract change |
+| `bun run docs:generate` / `bun run docs:check` | Regenerate / verify API reference docs; the check also verifies required docs and examples exist |
 
 CI (`.github/workflows/ci.yml`) runs `validate`, a standing eval gate scored against a checked-in baseline, a dependency and secret-scan audit, a single `build` that every downstream job restores rather than rebuilding, a `platform-matrix` job (Bun tests plus companion-bundle and Workers runtime legs), a types-resolution check over the packed exports map, `publint`, and a packaged-artifact conformance lane. On a green `main` push, an auto-release job tags and dispatches the release, but only while the repo's `RELEASE_ARMED` variable is set. Full gate reference: [docs/testing-and-validation.md](./docs/testing-and-validation.md).
 
@@ -148,11 +164,20 @@ CI (`.github/workflows/ci.yml`) runs `validate`, a standing eval gate scored aga
 
 ## Release and stability
 
-Package versions are aligned across the whole workspace, and every version is published together. What counts as a major, minor, or patch change, down to specific export and error-kind rules, is fixed by [docs/semver-policy.md](./docs/semver-policy.md). A misclassified bump is a release gate failure. Releases follow a by-reference flow in which a commit is validated exactly once on its push-CI run. A cut bumps versions and tags without re-running gates, either locally or automatically on a green `main` push while `RELEASE_ARMED` is set, and the tag push re-verifies that the tagged commit's CI run was green before publishing with provenance. Full flow: [docs/release-and-publishing.md](./docs/release-and-publishing.md).
+The monorepo owns versioning and release workflows. The root version governs
+the engine, judgment and daemon; the other product manifests retain their own
+versions. The application products are private workspaces and the suite is
+installed from this checkout. Export and compatibility rules are recorded in
+[the semver policy](./docs/semver-policy.md); release machinery and its explicit
+gates are described in [release and publishing](./docs/release-and-publishing.md).
+Update an installed suite with the [repository installer](../../docs/installation.md#update-and-check-the-installation).
 
 ## Security
 
-Security fixes land in the latest published release line; earlier lines are not patched, so upgrade to the newest version to receive them. The published package carries source-level overrides for reviewed transitive dependencies, including a patched Bash LSP dependency graph. Bash LSP itself stays bundled because shell language support is part of the SDK feature set. Report a vulnerability and read the current dependency posture in [SECURITY.md](./SECURITY.md) and [docs/security.md](./docs/security.md).
+Report vulnerabilities through the repository [security policy](../../SECURITY.md).
+Engine security boundaries and dependency posture are described in
+[docs/security.md](./docs/security.md). Updating the installed suite rebuilds
+the selected repository commit and its locked dependencies.
 
 ## License
 

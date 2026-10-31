@@ -19,21 +19,15 @@ export TYPESAFE_API_KEY
 unset TYPESAFE_API_KEY
 ```
 
-The checkout must have no uncommitted changes to tracked files. To update, pull
-this repository and run `./install.sh` again. The previous installation is kept
-until the replacement starts successfully; a startup failure restores it.
+The checkout must have no uncommitted changes to tracked files. The installed
+release records the exact Git commit it was built from. See [updating](#update-and-check-the-installation)
+for the update procedure.
 
 ## Credentials and commands
 
-Jev uses `jev-latest`. To supply your TypeSafe key during installation without
-putting it in shell history:
-
-```bash
-read -rsp 'TypeSafe API key: ' TYPESAFE_API_KEY; echo
-export TYPESAFE_API_KEY
-./install.sh
-unset TYPESAFE_API_KEY
-```
+Jev uses `jev-latest`. The prompt in the installation example keeps the TypeSafe
+key out of shell history. That key configures judgment; select and authenticate
+the conversation model separately in the application.
 
 Installation requires a working Jev connection and stops with a setup error if
 the key is missing or rejected. On the first install, an exported key is saved in the private environment file
@@ -53,6 +47,10 @@ requires no separate service. Check status or logs with:
 systemctl --user status goodvibes-jev.service
 journalctl --user -u goodvibes-jev.service
 ```
+
+Launch `goodvibes` from your project directory for the terminal UI, or
+`goodvibes-agent` for Agent. The installer pairs the TUI; Agent has its own
+[connected-host setup and native authority requirements](../products/agent/docs/setup-native-readiness.md).
 
 The service starts with your user session. To start it before login and keep it
 running after logout, run `loginctl enable-linger "$USER"`; your distribution
@@ -85,9 +83,35 @@ are remembered. Existing commands and services belonging to another installation
 are never overwritten. Choose another command directory or remove the previous
 installation first.
 
-With `--no-service`, start the daemon using `goodvibes-daemon serve`.
+With `--no-service`, start the daemon using `goodvibes-daemon serve`; repeat any
+selected port or workspace options needed for that manual launch.
 Browser drivers are included; browser engines and optional voice models are
 provisioned by the application when those features are used.
+
+## Update and check the installation
+
+From a checkout with no uncommitted changes to tracked files:
+
+```bash
+git pull --ff-only
+./install.sh
+goodvibes --version
+goodvibes-daemon --version
+systemctl --user status goodvibes-jev.service
+```
+
+Repeat a custom installation with its original `--prefix`. The installer
+remembers command/data paths, port, workspace and service choice. Existing
+environment files are retained, so updates reuse the saved TypeSafe key. The
+previous release remains available until replacement startup succeeds; a
+startup failure restores it. Restart open TUI and Agent processes after an
+update so they use the new release.
+
+If installation refuses a dirty checkout, commit or stash your tracked changes
+before retrying. If the Jev probe fails, check the saved key and endpoint. For a
+service startup failure, inspect the journal command above. These checks confirm
+installation and startup; functional acceptance still depends on the selected
+providers and workflows.
 
 ## Uninstall
 

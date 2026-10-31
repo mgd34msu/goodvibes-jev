@@ -6,6 +6,29 @@ This guide covers how tool-call arguments move from raw streaming output through
 
 ---
 
+## Owner-configured access
+
+Tool admission uses explicit owner settings and deterministic checks. Jev
+interprets work and verifies outcomes; its uncertainty or unavailability cannot
+veto an otherwise valid tool call. Authentication, scopes, revocation, captured
+input ownership, cancellation and schema validation still apply. The
+[autonomous decision contract](../../../docs/design/autonomous-jev-decisions.md)
+supersedes legacy semantic approval/escalation flows, including the historical
+approval UI described later in this guide.
+
+In the TUI, `goodvibes --no-worries-just-vibes` sets
+`behavior.autoApprove=true` for that launch without saving the setting. The
+equivalent general override is `--config behavior.autoApprove=true`. Read,
+find and repository-map tools honor that setting for access outside the project,
+including resolved symlink targets. This setting does not grant operating-system
+access or bypass the other authority checks above. See [CLI flags](../../../products/tui/docs/cli-flags.md#--no-worries-just-vibes).
+
+Built-in reads report an operation failure when every requested file fails,
+retaining per-file diagnostics. Mixed results retain successful reads and
+individual failures. Captured API inspection can continue past policy-denied
+files while recording those failures; a blocked file is never evidence that its
+contents were inspected.
+
 ## Tool-call lifecycle
 
 When a provider streams a response that includes a tool call, the SDK processes it in three stages:

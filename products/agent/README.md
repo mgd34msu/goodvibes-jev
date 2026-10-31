@@ -2,15 +2,26 @@
 
 ## Jev migration status
 
-This workspace is an unfinished port; the upstream package/release instructions
-and product tour below are retained as reference, not a claim that this Jev
-workspace is published or fully autonomous. The [current decision contract](../../docs/design/autonomous-jev-decisions.md)
-supersedes their confirmation-gated runtime behavior: Jev makes semantic
-decisions with no human approval or escalation loop, and products consume the
-one shared port's retry/waiting lifecycle with cancellation. Admission,
-grant/revocation and legacy caller migration remain [release gates](../../README.md#status).
-Setup, login, workspace provisioning and deterministic authority checks remain
-distinct from runtime semantic decisions.
+Agent is a private workspace in the GoodVibes Jev monorepo, included in the
+suite installer and root build, typecheck and test commands. Integration and
+full product acceptance remain in progress. The upstream tour below describes
+inherited behavior; the [current decision contract](../../docs/design/autonomous-jev-decisions.md)
+supersedes its semantic confirmation/escalation paths. Explicit owner settings,
+identity, scopes and revocation still control access. The shared judgment port
+owns retry/waiting and cancellation.
+
+## Install
+
+Use the [suite installation guide](../../docs/installation.md) from the monorepo
+root, then run `goodvibes-agent`. A fresh Agent home opens setup. The installer
+pairs the TUI; Agent's connected-host credentials and native authority require
+separate setup. See [native readiness](docs/setup-native-readiness.md) before
+using native conversation or work controls. Completing the onboarding marker
+alone does not grant those scopes.
+
+This workspace is not installed through the upstream npm package. Updates use
+the repository's `./install.sh`; the release and automatic-update descriptions
+in historical product docs are not release claims for this checkout.
 
 ## Native work controls (local Jev implementation)
 
@@ -116,53 +127,11 @@ source; inspect `/work` and use its separate explicit Start control.
 
 ## Upstream product reference
 
-[![CI](https://github.com/mgd34msu/goodvibes-agent/actions/workflows/ci.yml/badge.svg)](https://github.com/mgd34msu/goodvibes-agent/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/mgd34msu/goodvibes-agent)
 
 GoodVibes Agent is an installable autonomous operator assistant. You run `goodvibes-agent` and get one workspace for chat, planning, memory, research, scheduling, and confirmation-gated automation, backed by a connected GoodVibes host that supplies the operator API, schedules, channels, knowledge, media, and remote-execution routes. Agent presents that capability as a user-first harness, with route planning, plain-language confirmations, and redacted receipts for anything it sends, spends, or writes, instead of exposing raw daemon plumbing. It can also reuse provider, permission, and other shared settings already configured for goodvibes-tui or another published GoodVibes platform store, so setup does not start from zero.
 
 <img src="docs/assets/operator-workspace.png" alt="The fullscreen GoodVibes Agent operator workspace. A left column lists operator areas under an Onboarding heading, with Start and Models flagged for attention. The right pane is headed Start, 16 actions, and summarises setup state: 3 of 13 done, 4 need attention, the current chat route, a count of local personas, skills, routines, and memories, and a next step reading Connected-host auth, blocked. Below, a Setting / Default / Current table lists the available actions: use a local model with no sign-in, sign in to a provider, choose main model, import GoodVibes settings, reasoning effort medium, save history true, and a Finish setup row. A footer shows the workspace key hints." width="900">
-
----
-
-## Install
-
-```sh
-bun add -g @pellux/goodvibes-agent
-bun pm trust -g goodvibes-daemon
-goodvibes-agent --help
-goodvibes-agent
-```
-
-The Agent talks to a GoodVibes daemon, so this package depends on `goodvibes-daemon` and one install brings both commands. Bun blocks lifecycle scripts for untrusted global packages, and the daemon's own postinstall is what places the daemon binary, hence the trust line. Nothing else here needs trusting; this package has no postinstall of its own. Check both landed with `goodvibes-agent --version` and `goodvibes-daemon --version`; they report different numbers because they are separate products on separate version lines.
-
-If `goodvibes-agent` is not on `PATH` after a global install:
-
-```sh
-export PATH="$(bun pm bin -g):$PATH"
-```
-
-On a fresh Agent home, `goodvibes-agent` opens setup first; once setup is applied it opens directly into the Agent workspace.
-
-Each GitHub release also attaches standalone compiled binaries and a `SHA256SUMS.txt` manifest, for environments that download a binary directly rather than through Bun:
-
-| Release asset | Platform |
-| --- | --- |
-| `goodvibes-agent-linux-x64` | Linux on x86-64 |
-| `goodvibes-agent-linux-arm64` | Linux on ARM64 |
-| `goodvibes-agent-macos-x64` | macOS on Intel |
-| `goodvibes-agent-macos-arm64` | macOS on Apple silicon |
-| `sqlite-vec-<os>-<arch>.tar.gz` | Per-platform semantic-index addon archives, one per binary above |
-| `SHA256SUMS.txt` | Checksums for every asset; the updater verifies downloads against it |
-
-A directly-downloaded binary self-updates at launch. It runs a bounded check against the latest GitHub release, then a checksum-verified download-and-swap when one is newer, and every swap keeps the replaced file beside it as `<file>.previous` so `/update rollback` can undo it. Package-managed installs never self-swap; they defer to `bun add -g` instead. `update.autoUpdateAtLaunch: false` in `settings.json` turns the launch check off.
-
-A long-running agent also keeps looking after launch. The same checksum-verified path runs on a periodic check (first one ~30s after start, hourly after that) and installs only at an idle moment, meaning no active turn, no in-flight channel delivery, and no confirmation waiting on you. It then restarts in place with the same arguments. `update.auto: false` turns that off.
-
-The semantic (embedding-backed) memory index depends on a native `sqlite-vec` addon that Bun cannot embed in a compiled binary, so each release ships it separately as `sqlite-vec-<os>-<arch>.tar.gz`. A binary with no co-located addon still runs; memory search falls back to literal matching until the matching archive is extracted next to it. This addon stays unavailable on macOS regardless of co-location, because the system SQLite that macOS links refuses to load extensions.
-
-Connect Agent to a GoodVibes daemon before using daemon-backed features. The default target is `http://127.0.0.1:3421`. `goodvibes-agent status --json`, `goodvibes-agent doctor`, and `goodvibes-agent compat` are scriptable checks for that connection and for the install itself. Deeper install notes, the full workspace tour, and CLI diagnostics are in [docs/getting-started.md](docs/getting-started.md) and [docs/connected-host.md](docs/connected-host.md).
 
 ---
 
@@ -243,11 +212,14 @@ The full settings catalog, the checkpoint-guard keys, and the shared-settings-im
 Agent builds on the existing terminal renderer and workspace foundations of the GoodVibes platform; what differs is the product layer composed on top of them.
 
 ```sh
-git clone https://github.com/mgd34msu/goodvibes-agent.git
-cd goodvibes-agent
+git clone https://github.com/mgd34msu/goodvibes-jev.git
+cd goodvibes-jev
 bun install
-bun run dev
+bun run build
+bun run --cwd products/agent dev
 ```
+
+Run these commands from `products/agent` after preparing the monorepo:
 
 | Command | Does |
 | --- | --- |
@@ -256,8 +228,6 @@ bun run dev
 | `bun run typecheck` | Type-check the source tree |
 | `bun run build` | Bundle the workspace package entrypoint into `dist/package/main.js` |
 | `bun run build:binary` | Compile the native Agent executable and stage its sqlite-vec library in `dist/lib` |
-| `bun run package:install-check` | Verify the packaged CLI actually installs and runs |
-| `bun run publish:check` | Run the package-facing text, metadata, and tarball-contents gates |
 
 Source layout, in brief:
 
@@ -276,9 +246,9 @@ src/
 └── verification/        release-readiness and evidence checks
 ```
 
-Tests live under `src/test/`, mirroring the source tree, and cover contracts, release gates, package-facing text policy, security boundaries, and the workspace/tool/CLI surfaces above. `bun run publish:check` and `bun run package:install-check` are the same gates the release pipeline runs before a version is published.
+Tests live under `src/test/`, mirroring the source tree, and cover runtime contracts, security boundaries and workspace/tool/CLI behavior. Use the declared workspace scripts above or the root product checks; package publication commands from the upstream product are not part of this private workspace.
 
-The Agent consumes the bundled GoodVibes platform runtime, pinned in `package.json`, for shared contracts, daemon routes, and transports, and keeps the workspace, local behavior library, and Agent Knowledge boundary here. GoodVibes Agent owns the autonomous assistant harness; the connected GoodVibes host owns the platform capabilities Agent presents.
+The Agent consumes `@goodvibes-jev/engine` and `@goodvibes-jev/daemon` through `workspace:*` dependencies for shared contracts, daemon routes, and transports, and keeps the workspace, local behavior library, and Agent Knowledge boundary here. GoodVibes Agent owns the autonomous assistant harness; the connected GoodVibes host owns the platform capabilities Agent presents.
 
 ---
 

@@ -1,49 +1,47 @@
 # Getting started
 
-GoodVibes Agent is the installable autonomous operator assistant for GoodVibes.
+GoodVibes Agent is the operator-assistant workspace in the GoodVibes Jev
+monorepo. The workspace tour below describes inherited capabilities; native
+setup and current authority requirements take precedence over historical
+confirmation or release behavior.
 
-## Requirements
+## Requirements and installation
 
-- Bun `1.3.14` or newer.
-- A connected GoodVibes daemon or compatible host with operator routes. Installing this package installs one: it depends on `goodvibes-daemon`.
-- Token/config state accepted by that daemon.
-
-## Install from package
+Use the [suite installer](../../../docs/installation.md) from `goodvibes-jev`.
+It builds the private Agent workspace with the daemon, TUI and WebUI on supported
+Linux hosts. Source development requires Bun **1.3.14** and Node **22 or later**.
+Upstream npm installation commands do not install this workspace.
 
 ```sh
-bun add -g @pellux/goodvibes-agent
-bun pm trust -g goodvibes-daemon
 goodvibes-agent --help
+goodvibes-agent --version
+goodvibes-daemon --version
 goodvibes-agent
 ```
 
-Bun blocks lifecycle scripts for untrusted global packages. This package depends on `goodvibes-daemon`, so one install brings both commands. It needs trusting so its own postinstall can place the daemon binary. Nothing else needs trusting: this package has no postinstall of its own, and its libraries are bundled into the published runtime. Verify the install with:
+Commands are installed in `~/.local/bin`; add that directory to `PATH` if
+needed. A fresh Agent home opens setup. After setup is applied, the TUI opens
+directly into the Agent workspace.
 
-```sh
-bun pm -g untrusted
-goodvibes-agent --version
-goodvibes-daemon --version
-```
-
-The two versions differ on purpose. The Agent and the daemon are separate products on separate version lines.
-
-If `goodvibes-agent` is not on `PATH`:
-
-```sh
-export PATH="$(bun pm bin -g):$PATH"
-goodvibes-agent --help
-```
-
-`goodvibes-agent` starts the interactive TUI. On a fresh Agent home, setup opens first. After setup is applied, the TUI opens directly into the Agent workspace.
+Agent needs a connected daemon, accepted credentials and the scopes required
+by each route. The suite installer pairs the TUI, while Agent's native
+conversation and work routes require their own [native readiness](setup-native-readiness.md)
+and [explicit pairing](setup-explicit-pairing.md). An onboarding marker does not
+grant authority. Configure the conversation provider separately from Jev.
 
 ## Run from source
 
+From the monorepo root:
+
 ```sh
-git clone https://github.com/mgd34msu/goodvibes-agent.git
-cd goodvibes-agent
 bun install
-bun run dev
+bun run build
+bun run --cwd products/agent dev
 ```
+
+The daemon lives in `products/daemon` in this same checkout. Agent consumes the
+engine and daemon through workspace dependencies. See [connected-host setup](connected-host.md)
+for endpoint configuration and diagnostics.
 
 ## First run
 

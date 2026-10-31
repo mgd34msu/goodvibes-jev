@@ -1,9 +1,11 @@
-# GoodVibes SDK documentation
+# GoodVibes engine documentation
 
-These documents describe the SDK architecture. The SDK is a monorepo of
-source-of-truth packages plus a main facade package. Public imports are explicit
-package entrypoints, not arbitrary repo folder paths. [`CHANGELOG.md`](../CHANGELOG.md) remains the
-release-history source.
+These documents describe `packages/engine` in the GoodVibes Jev monorepo. The
+SDK facade and its supporting libraries are subpaths of the engine workspace
+package. Public imports use explicit package entrypoints. Start with the
+[repository README](../../../README.md) and [suite installation guide](../../../docs/installation.md)
+for application setup. [`CHANGELOG.md`](../CHANGELOG.md) preserves engine release
+history, including upstream releases.
 
 ## Start here
 
@@ -40,9 +42,11 @@ release-history source.
 - [Provider and model API](./provider-model-api.md)
 - [Provider architecture](./providers.md)
 - [Runtime orchestration](./runtime-orchestration.md)
+- [Completion verification](./runtime-orchestration.md#completion-verification): applicability, private repairs and original evidence.
 - [Tool system](./tools.md)
 - [Tool safety](./tool-safety.md)
 - [Contract criteria](./contract-criteria.md)
+- [Project review inventory](./contract-criteria.md#project-review-inventory): inspected files, accepted assessments and current versions.
 - [Architecture](./architecture.md)
 - [Platform architecture](./architecture-platform.md)
 
@@ -110,9 +114,11 @@ kept the same way in [reviews/](./reviews/).
 
 ## Project and repository docs
 
-Operational docs in the repository root, one level up from `docs/`:
+Repository-wide policies and engine references:
 
-- [Project README](../README.md)
-- [Security policy](../SECURITY.md)
+- [Project README](../../../README.md)
+- [Engine README](../README.md)
+- [Installation and updates](../../../docs/installation.md)
+- [Security policy](../../../SECURITY.md)
 - [Changelog](../CHANGELOG.md)
 - [Test coverage](../COVERAGE.md)

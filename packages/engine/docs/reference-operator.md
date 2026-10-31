@@ -31132,6 +31132,62 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
     "taskEvidence": {
       "type": "string"
     },
+    "reviewInventory": {
+      "type": "object",
+      "properties": {
+        "paths": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "digest": {
+          "type": "string"
+        },
+        "source": {
+          "type": "string",
+          "enum": [
+            "git",
+            "filesystem"
+          ]
+        },
+        "errors": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "paths",
+        "digest",
+        "source",
+        "errors"
+      ],
+      "additionalProperties": false
+    },
+    "reviewExclusions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "files": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "reason": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "files",
+          "reason"
+        ],
+        "additionalProperties": false
+      }
+    },
     "nativeSource": {
       "type": "object",
       "properties": {
@@ -33580,6 +33636,30 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
     "ask": {
       "type": "string"
     },
+    "selectedModel": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "provider": {
+          "type": "string"
+        },
+        "registryKey": {
+          "type": "string"
+        },
+        "displayName": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "provider",
+        "registryKey",
+        "displayName"
+      ],
+      "additionalProperties": false
+    },
     "ownerAgentId": {
       "type": "string"
     },
@@ -33756,6 +33836,32 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
               "type": "string"
             }
           },
+          "contribution": {
+            "type": "object",
+            "properties": {
+              "kind": {
+                "type": "string",
+                "enum": [
+                  "outcome",
+                  "support",
+                  "scaffolding",
+                  "secondary"
+                ]
+              },
+              "reason": {
+                "type": "string"
+              },
+              "verification": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "kind",
+              "reason",
+              "verification"
+            ],
+            "additionalProperties": false
+          },
           "disposition": {
             "type": "string",
             "enum": [
@@ -33929,6 +34035,32 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
                   "items": {
                     "type": "string"
                   }
+                },
+                "contribution": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "outcome",
+                        "support",
+                        "scaffolding",
+                        "secondary"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "verification": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "reason",
+                    "verification"
+                  ],
+                  "additionalProperties": false
                 },
                 "disposition": {
                   "type": "string",
@@ -34352,6 +34484,25 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
                 },
                 "evidenceDigest": {
                   "type": "string"
+                },
+                "reviewedFiles": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "sha256": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "sha256"
+                    ],
+                    "additionalProperties": false
+                  }
                 }
               },
               "required": [
@@ -34564,6 +34715,32 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
                   "items": {
                     "type": "string"
                   }
+                },
+                "contribution": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "outcome",
+                        "support",
+                        "scaffolding",
+                        "secondary"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "verification": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "reason",
+                    "verification"
+                  ],
+                  "additionalProperties": false
                 },
                 "disposition": {
                   "type": "string",
@@ -35049,6 +35226,25 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
                 },
                 "evidenceDigest": {
                   "type": "string"
+                },
+                "reviewedFiles": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "sha256": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "sha256"
+                    ],
+                    "additionalProperties": false
+                  }
                 }
               },
               "required": [
@@ -35253,6 +35449,81 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
           },
           "lastOutput": {
             "type": "string"
+          },
+          "readEvidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "returnedRanges": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "returnedLines": {
+                  "type": "number"
+                },
+                "returnedContent": {
+                  "type": "string"
+                },
+                "contentKind": {
+                  "type": "string",
+                  "enum": [
+                    "declared-reference",
+                    "cited-source"
+                  ]
+                }
+              },
+              "required": [
+                "path",
+                "returnedRanges",
+                "returnedLines"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "commandEvidence": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "agentId": {
+                  "type": "string"
+                },
+                "callId": {
+                  "type": "string"
+                },
+                "turn": {
+                  "type": "number"
+                },
+                "callIndex": {
+                  "type": "number"
+                },
+                "command": {
+                  "type": "string"
+                },
+                "success": {
+                  "type": "boolean"
+                },
+                "head": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "agentId",
+                "turn",
+                "callIndex",
+                "callId",
+                "command",
+                "success",
+                "head"
+              ],
+              "additionalProperties": false
+            }
           },
           "lastReport": {
             "oneOf": [
@@ -35601,6 +35872,32 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
                         "items": {
                           "type": "string"
                         }
+                      },
+                      "contribution": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "outcome",
+                              "support",
+                              "scaffolding",
+                              "secondary"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "verification": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "reason",
+                          "verification"
+                        ],
+                        "additionalProperties": false
                       },
                       "disposition": {
                         "type": "string",
@@ -36086,6 +36383,25 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
                       },
                       "evidenceDigest": {
                         "type": "string"
+                      },
+                      "reviewedFiles": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "path": {
+                              "type": "string"
+                            },
+                            "sha256": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "path",
+                            "sha256"
+                          ],
+                          "additionalProperties": false
+                        }
                       }
                     },
                     "required": [
@@ -36290,6 +36606,81 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
                 },
                 "lastOutput": {
                   "type": "string"
+                },
+                "readEvidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "returnedRanges": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "returnedLines": {
+                        "type": "number"
+                      },
+                      "returnedContent": {
+                        "type": "string"
+                      },
+                      "contentKind": {
+                        "type": "string",
+                        "enum": [
+                          "declared-reference",
+                          "cited-source"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "returnedRanges",
+                      "returnedLines"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "commandEvidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "agentId": {
+                        "type": "string"
+                      },
+                      "callId": {
+                        "type": "string"
+                      },
+                      "turn": {
+                        "type": "number"
+                      },
+                      "callIndex": {
+                        "type": "number"
+                      },
+                      "command": {
+                        "type": "string"
+                      },
+                      "success": {
+                        "type": "boolean"
+                      },
+                      "head": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "agentId",
+                      "turn",
+                      "callIndex",
+                      "callId",
+                      "command",
+                      "success",
+                      "head"
+                    ],
+                    "additionalProperties": false
+                  }
                 },
                 "lastReport": {
                   "oneOf": [
@@ -36738,6 +37129,36 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
           ],
           "additionalProperties": false
         },
+        "project_review": {
+          "type": "object",
+          "properties": {
+            "verdict": {
+              "type": "string",
+              "enum": [
+                "yes",
+                "no",
+                "uncertain"
+              ]
+            },
+            "probability": {
+              "type": "number"
+            },
+            "outcome": {
+              "type": "string",
+              "enum": [
+                "act",
+                "confirm",
+                "escalate"
+              ]
+            }
+          },
+          "required": [
+            "verdict",
+            "probability",
+            "outcome"
+          ],
+          "additionalProperties": false
+        },
         "decisionIds": {
           "type": "array",
           "items": {
@@ -37119,6 +37540,25 @@ One contract with its whole tree, running or ended. 404 with CONTRACT_NOT_FOUND 
           },
           "evidenceDigest": {
             "type": "string"
+          },
+          "reviewedFiles": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "path": {
+                  "type": "string"
+                },
+                "sha256": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "path",
+                "sha256"
+              ],
+              "additionalProperties": false
+            }
           }
         },
         "required": [
@@ -37768,6 +38208,62 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
           },
           "taskEvidence": {
             "type": "string"
+          },
+          "reviewInventory": {
+            "type": "object",
+            "properties": {
+              "paths": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "digest": {
+                "type": "string"
+              },
+              "source": {
+                "type": "string",
+                "enum": [
+                  "git",
+                  "filesystem"
+                ]
+              },
+              "errors": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              }
+            },
+            "required": [
+              "paths",
+              "digest",
+              "source",
+              "errors"
+            ],
+            "additionalProperties": false
+          },
+          "reviewExclusions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "properties": {
+                "files": {
+                  "type": "array",
+                  "items": {
+                    "type": "string"
+                  }
+                },
+                "reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "files",
+                "reason"
+              ],
+              "additionalProperties": false
+            }
           },
           "nativeSource": {
             "type": "object",
@@ -40217,6 +40713,30 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
           "ask": {
             "type": "string"
           },
+          "selectedModel": {
+            "type": "object",
+            "properties": {
+              "id": {
+                "type": "string"
+              },
+              "provider": {
+                "type": "string"
+              },
+              "registryKey": {
+                "type": "string"
+              },
+              "displayName": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "id",
+              "provider",
+              "registryKey",
+              "displayName"
+            ],
+            "additionalProperties": false
+          },
           "ownerAgentId": {
             "type": "string"
           },
@@ -40393,6 +40913,32 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
                     "type": "string"
                   }
                 },
+                "contribution": {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "outcome",
+                        "support",
+                        "scaffolding",
+                        "secondary"
+                      ]
+                    },
+                    "reason": {
+                      "type": "string"
+                    },
+                    "verification": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "reason",
+                    "verification"
+                  ],
+                  "additionalProperties": false
+                },
                 "disposition": {
                   "type": "string",
                   "enum": [
@@ -40566,6 +41112,32 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
                         "items": {
                           "type": "string"
                         }
+                      },
+                      "contribution": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "outcome",
+                              "support",
+                              "scaffolding",
+                              "secondary"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "verification": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "reason",
+                          "verification"
+                        ],
+                        "additionalProperties": false
                       },
                       "disposition": {
                         "type": "string",
@@ -40989,6 +41561,25 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
                       },
                       "evidenceDigest": {
                         "type": "string"
+                      },
+                      "reviewedFiles": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "path": {
+                              "type": "string"
+                            },
+                            "sha256": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "path",
+                            "sha256"
+                          ],
+                          "additionalProperties": false
+                        }
                       }
                     },
                     "required": [
@@ -41201,6 +41792,32 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
                         "items": {
                           "type": "string"
                         }
+                      },
+                      "contribution": {
+                        "type": "object",
+                        "properties": {
+                          "kind": {
+                            "type": "string",
+                            "enum": [
+                              "outcome",
+                              "support",
+                              "scaffolding",
+                              "secondary"
+                            ]
+                          },
+                          "reason": {
+                            "type": "string"
+                          },
+                          "verification": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "kind",
+                          "reason",
+                          "verification"
+                        ],
+                        "additionalProperties": false
                       },
                       "disposition": {
                         "type": "string",
@@ -41686,6 +42303,25 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
                       },
                       "evidenceDigest": {
                         "type": "string"
+                      },
+                      "reviewedFiles": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "path": {
+                              "type": "string"
+                            },
+                            "sha256": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "path",
+                            "sha256"
+                          ],
+                          "additionalProperties": false
+                        }
                       }
                     },
                     "required": [
@@ -41890,6 +42526,81 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
                 },
                 "lastOutput": {
                   "type": "string"
+                },
+                "readEvidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "returnedRanges": {
+                        "type": "array",
+                        "items": {
+                          "type": "string"
+                        }
+                      },
+                      "returnedLines": {
+                        "type": "number"
+                      },
+                      "returnedContent": {
+                        "type": "string"
+                      },
+                      "contentKind": {
+                        "type": "string",
+                        "enum": [
+                          "declared-reference",
+                          "cited-source"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "returnedRanges",
+                      "returnedLines"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "commandEvidence": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "agentId": {
+                        "type": "string"
+                      },
+                      "callId": {
+                        "type": "string"
+                      },
+                      "turn": {
+                        "type": "number"
+                      },
+                      "callIndex": {
+                        "type": "number"
+                      },
+                      "command": {
+                        "type": "string"
+                      },
+                      "success": {
+                        "type": "boolean"
+                      },
+                      "head": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "agentId",
+                      "turn",
+                      "callIndex",
+                      "callId",
+                      "command",
+                      "success",
+                      "head"
+                    ],
+                    "additionalProperties": false
+                  }
                 },
                 "lastReport": {
                   "oneOf": [
@@ -42238,6 +42949,32 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
                               "items": {
                                 "type": "string"
                               }
+                            },
+                            "contribution": {
+                              "type": "object",
+                              "properties": {
+                                "kind": {
+                                  "type": "string",
+                                  "enum": [
+                                    "outcome",
+                                    "support",
+                                    "scaffolding",
+                                    "secondary"
+                                  ]
+                                },
+                                "reason": {
+                                  "type": "string"
+                                },
+                                "verification": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "kind",
+                                "reason",
+                                "verification"
+                              ],
+                              "additionalProperties": false
                             },
                             "disposition": {
                               "type": "string",
@@ -42723,6 +43460,25 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
                             },
                             "evidenceDigest": {
                               "type": "string"
+                            },
+                            "reviewedFiles": {
+                              "type": "array",
+                              "items": {
+                                "type": "object",
+                                "properties": {
+                                  "path": {
+                                    "type": "string"
+                                  },
+                                  "sha256": {
+                                    "type": "string"
+                                  }
+                                },
+                                "required": [
+                                  "path",
+                                  "sha256"
+                                ],
+                                "additionalProperties": false
+                              }
                             }
                           },
                           "required": [
@@ -42927,6 +43683,81 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
                       },
                       "lastOutput": {
                         "type": "string"
+                      },
+                      "readEvidence": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "path": {
+                              "type": "string"
+                            },
+                            "returnedRanges": {
+                              "type": "array",
+                              "items": {
+                                "type": "string"
+                              }
+                            },
+                            "returnedLines": {
+                              "type": "number"
+                            },
+                            "returnedContent": {
+                              "type": "string"
+                            },
+                            "contentKind": {
+                              "type": "string",
+                              "enum": [
+                                "declared-reference",
+                                "cited-source"
+                              ]
+                            }
+                          },
+                          "required": [
+                            "path",
+                            "returnedRanges",
+                            "returnedLines"
+                          ],
+                          "additionalProperties": false
+                        }
+                      },
+                      "commandEvidence": {
+                        "type": "array",
+                        "items": {
+                          "type": "object",
+                          "properties": {
+                            "agentId": {
+                              "type": "string"
+                            },
+                            "callId": {
+                              "type": "string"
+                            },
+                            "turn": {
+                              "type": "number"
+                            },
+                            "callIndex": {
+                              "type": "number"
+                            },
+                            "command": {
+                              "type": "string"
+                            },
+                            "success": {
+                              "type": "boolean"
+                            },
+                            "head": {
+                              "type": "string"
+                            }
+                          },
+                          "required": [
+                            "agentId",
+                            "turn",
+                            "callIndex",
+                            "callId",
+                            "command",
+                            "success",
+                            "head"
+                          ],
+                          "additionalProperties": false
+                        }
                       },
                       "lastReport": {
                         "oneOf": [
@@ -43375,6 +44206,36 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
                 ],
                 "additionalProperties": false
               },
+              "project_review": {
+                "type": "object",
+                "properties": {
+                  "verdict": {
+                    "type": "string",
+                    "enum": [
+                      "yes",
+                      "no",
+                      "uncertain"
+                    ]
+                  },
+                  "probability": {
+                    "type": "number"
+                  },
+                  "outcome": {
+                    "type": "string",
+                    "enum": [
+                      "act",
+                      "confirm",
+                      "escalate"
+                    ]
+                  }
+                },
+                "required": [
+                  "verdict",
+                  "probability",
+                  "outcome"
+                ],
+                "additionalProperties": false
+              },
               "decisionIds": {
                 "type": "array",
                 "items": {
@@ -43756,6 +44617,25 @@ Every contract this daemon holds, newest first, each with its whole tree: the as
                 },
                 "evidenceDigest": {
                   "type": "string"
+                },
+                "reviewedFiles": {
+                  "type": "array",
+                  "items": {
+                    "type": "object",
+                    "properties": {
+                      "path": {
+                        "type": "string"
+                      },
+                      "sha256": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "path",
+                      "sha256"
+                    ],
+                    "additionalProperties": false
+                  }
                 }
               },
               "required": [
@@ -44513,6 +45393,62 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
         },
         "taskEvidence": {
           "type": "string"
+        },
+        "reviewInventory": {
+          "type": "object",
+          "properties": {
+            "paths": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "digest": {
+              "type": "string"
+            },
+            "source": {
+              "type": "string",
+              "enum": [
+                "git",
+                "filesystem"
+              ]
+            },
+            "errors": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            }
+          },
+          "required": [
+            "paths",
+            "digest",
+            "source",
+            "errors"
+          ],
+          "additionalProperties": false
+        },
+        "reviewExclusions": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "properties": {
+              "files": {
+                "type": "array",
+                "items": {
+                  "type": "string"
+                }
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "files",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
         },
         "nativeSource": {
           "type": "object",
@@ -46962,6 +47898,30 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
         "ask": {
           "type": "string"
         },
+        "selectedModel": {
+          "type": "object",
+          "properties": {
+            "id": {
+              "type": "string"
+            },
+            "provider": {
+              "type": "string"
+            },
+            "registryKey": {
+              "type": "string"
+            },
+            "displayName": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "id",
+            "provider",
+            "registryKey",
+            "displayName"
+          ],
+          "additionalProperties": false
+        },
         "ownerAgentId": {
           "type": "string"
         },
@@ -47138,6 +48098,32 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
                   "type": "string"
                 }
               },
+              "contribution": {
+                "type": "object",
+                "properties": {
+                  "kind": {
+                    "type": "string",
+                    "enum": [
+                      "outcome",
+                      "support",
+                      "scaffolding",
+                      "secondary"
+                    ]
+                  },
+                  "reason": {
+                    "type": "string"
+                  },
+                  "verification": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "kind",
+                  "reason",
+                  "verification"
+                ],
+                "additionalProperties": false
+              },
               "disposition": {
                 "type": "string",
                 "enum": [
@@ -47311,6 +48297,32 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "contribution": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "outcome",
+                            "support",
+                            "scaffolding",
+                            "secondary"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "verification": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "reason",
+                        "verification"
+                      ],
+                      "additionalProperties": false
                     },
                     "disposition": {
                       "type": "string",
@@ -47734,6 +48746,25 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
                     },
                     "evidenceDigest": {
                       "type": "string"
+                    },
+                    "reviewedFiles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "sha256": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "sha256"
+                        ],
+                        "additionalProperties": false
+                      }
                     }
                   },
                   "required": [
@@ -47946,6 +48977,32 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
                       "items": {
                         "type": "string"
                       }
+                    },
+                    "contribution": {
+                      "type": "object",
+                      "properties": {
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "outcome",
+                            "support",
+                            "scaffolding",
+                            "secondary"
+                          ]
+                        },
+                        "reason": {
+                          "type": "string"
+                        },
+                        "verification": {
+                          "type": "string"
+                        }
+                      },
+                      "required": [
+                        "kind",
+                        "reason",
+                        "verification"
+                      ],
+                      "additionalProperties": false
                     },
                     "disposition": {
                       "type": "string",
@@ -48431,6 +49488,25 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
                     },
                     "evidenceDigest": {
                       "type": "string"
+                    },
+                    "reviewedFiles": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "sha256": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "sha256"
+                        ],
+                        "additionalProperties": false
+                      }
                     }
                   },
                   "required": [
@@ -48635,6 +49711,81 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
               },
               "lastOutput": {
                 "type": "string"
+              },
+              "readEvidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "returnedRanges": {
+                      "type": "array",
+                      "items": {
+                        "type": "string"
+                      }
+                    },
+                    "returnedLines": {
+                      "type": "number"
+                    },
+                    "returnedContent": {
+                      "type": "string"
+                    },
+                    "contentKind": {
+                      "type": "string",
+                      "enum": [
+                        "declared-reference",
+                        "cited-source"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "returnedRanges",
+                    "returnedLines"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "commandEvidence": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "agentId": {
+                      "type": "string"
+                    },
+                    "callId": {
+                      "type": "string"
+                    },
+                    "turn": {
+                      "type": "number"
+                    },
+                    "callIndex": {
+                      "type": "number"
+                    },
+                    "command": {
+                      "type": "string"
+                    },
+                    "success": {
+                      "type": "boolean"
+                    },
+                    "head": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "agentId",
+                    "turn",
+                    "callIndex",
+                    "callId",
+                    "command",
+                    "success",
+                    "head"
+                  ],
+                  "additionalProperties": false
+                }
               },
               "lastReport": {
                 "oneOf": [
@@ -48983,6 +50134,32 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
                             "items": {
                               "type": "string"
                             }
+                          },
+                          "contribution": {
+                            "type": "object",
+                            "properties": {
+                              "kind": {
+                                "type": "string",
+                                "enum": [
+                                  "outcome",
+                                  "support",
+                                  "scaffolding",
+                                  "secondary"
+                                ]
+                              },
+                              "reason": {
+                                "type": "string"
+                              },
+                              "verification": {
+                                "type": "string"
+                              }
+                            },
+                            "required": [
+                              "kind",
+                              "reason",
+                              "verification"
+                            ],
+                            "additionalProperties": false
                           },
                           "disposition": {
                             "type": "string",
@@ -49468,6 +50645,25 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
                           },
                           "evidenceDigest": {
                             "type": "string"
+                          },
+                          "reviewedFiles": {
+                            "type": "array",
+                            "items": {
+                              "type": "object",
+                              "properties": {
+                                "path": {
+                                  "type": "string"
+                                },
+                                "sha256": {
+                                  "type": "string"
+                                }
+                              },
+                              "required": [
+                                "path",
+                                "sha256"
+                              ],
+                              "additionalProperties": false
+                            }
                           }
                         },
                         "required": [
@@ -49672,6 +50868,81 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
                     },
                     "lastOutput": {
                       "type": "string"
+                    },
+                    "readEvidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "path": {
+                            "type": "string"
+                          },
+                          "returnedRanges": {
+                            "type": "array",
+                            "items": {
+                              "type": "string"
+                            }
+                          },
+                          "returnedLines": {
+                            "type": "number"
+                          },
+                          "returnedContent": {
+                            "type": "string"
+                          },
+                          "contentKind": {
+                            "type": "string",
+                            "enum": [
+                              "declared-reference",
+                              "cited-source"
+                            ]
+                          }
+                        },
+                        "required": [
+                          "path",
+                          "returnedRanges",
+                          "returnedLines"
+                        ],
+                        "additionalProperties": false
+                      }
+                    },
+                    "commandEvidence": {
+                      "type": "array",
+                      "items": {
+                        "type": "object",
+                        "properties": {
+                          "agentId": {
+                            "type": "string"
+                          },
+                          "callId": {
+                            "type": "string"
+                          },
+                          "turn": {
+                            "type": "number"
+                          },
+                          "callIndex": {
+                            "type": "number"
+                          },
+                          "command": {
+                            "type": "string"
+                          },
+                          "success": {
+                            "type": "boolean"
+                          },
+                          "head": {
+                            "type": "string"
+                          }
+                        },
+                        "required": [
+                          "agentId",
+                          "turn",
+                          "callIndex",
+                          "callId",
+                          "command",
+                          "success",
+                          "head"
+                        ],
+                        "additionalProperties": false
+                      }
                     },
                     "lastReport": {
                       "oneOf": [
@@ -50120,6 +51391,36 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
               ],
               "additionalProperties": false
             },
+            "project_review": {
+              "type": "object",
+              "properties": {
+                "verdict": {
+                  "type": "string",
+                  "enum": [
+                    "yes",
+                    "no",
+                    "uncertain"
+                  ]
+                },
+                "probability": {
+                  "type": "number"
+                },
+                "outcome": {
+                  "type": "string",
+                  "enum": [
+                    "act",
+                    "confirm",
+                    "escalate"
+                  ]
+                }
+              },
+              "required": [
+                "verdict",
+                "probability",
+                "outcome"
+              ],
+              "additionalProperties": false
+            },
             "decisionIds": {
               "type": "array",
               "items": {
@@ -50501,6 +51802,25 @@ Start a contract for `ask`, the person's words verbatim, which every stated acce
               },
               "evidenceDigest": {
                 "type": "string"
+              },
+              "reviewedFiles": {
+                "type": "array",
+                "items": {
+                  "type": "object",
+                  "properties": {
+                    "path": {
+                      "type": "string"
+                    },
+                    "sha256": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "path",
+                    "sha256"
+                  ],
+                  "additionalProperties": false
+                }
               }
             },
             "required": [
@@ -136158,7 +137478,6 @@ Persist cancellation for the selected existing attempt, including a pending init
                   ]
                 },
                 "units": {
-                  "maxItems": 256,
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -136287,22 +137606,18 @@ Persist cancellation for the selected existing attempt, including a pending init
                                 "maxLength": 200
                               },
                               "worktreePath": {
-                                "type": "string",
-                                "maxLength": 12288
+                                "type": "string"
                               },
                               "worktreeBranch": {
-                                "type": "string",
-                                "maxLength": 12288
+                                "type": "string"
                               },
                               "worktreeKept": {
                                 "type": "boolean"
                               },
                               "conflictFiles": {
-                                "maxItems": 256,
                                 "type": "array",
                                 "items": {
-                                  "type": "string",
-                                  "maxLength": 12288
+                                  "type": "string"
                                 }
                               }
                             },
@@ -137093,7 +138408,6 @@ Explicitly resume an interrupted/refused intent with a fresh evaluation or recov
                   ]
                 },
                 "units": {
-                  "maxItems": 256,
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -137222,22 +138536,18 @@ Explicitly resume an interrupted/refused intent with a fresh evaluation or recov
                                 "maxLength": 200
                               },
                               "worktreePath": {
-                                "type": "string",
-                                "maxLength": 12288
+                                "type": "string"
                               },
                               "worktreeBranch": {
-                                "type": "string",
-                                "maxLength": 12288
+                                "type": "string"
                               },
                               "worktreeKept": {
                                 "type": "boolean"
                               },
                               "conflictFiles": {
-                                "maxItems": 256,
                                 "type": "array",
                                 "items": {
-                                  "type": "string",
-                                  "maxLength": 12288
+                                  "type": "string"
                                 }
                               }
                             },
@@ -138028,7 +139338,6 @@ Start one existing complete native work attempt using host-owned source and pair
                   ]
                 },
                 "units": {
-                  "maxItems": 256,
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -138157,22 +139466,18 @@ Start one existing complete native work attempt using host-owned source and pair
                                 "maxLength": 200
                               },
                               "worktreePath": {
-                                "type": "string",
-                                "maxLength": 12288
+                                "type": "string"
                               },
                               "worktreeBranch": {
-                                "type": "string",
-                                "maxLength": 12288
+                                "type": "string"
                               },
                               "worktreeKept": {
                                 "type": "boolean"
                               },
                               "conflictFiles": {
-                                "maxItems": 256,
                                 "type": "array",
                                 "items": {
-                                  "type": "string",
-                                  "maxLength": 12288
+                                  "type": "string"
                                 }
                               }
                             },
@@ -138963,7 +140268,6 @@ Inspect a bounded execution or admission-intent projection for an existing nativ
                   ]
                 },
                 "units": {
-                  "maxItems": 256,
                   "type": "array",
                   "items": {
                     "type": "object",
@@ -139092,22 +140396,18 @@ Inspect a bounded execution or admission-intent projection for an existing nativ
                                 "maxLength": 200
                               },
                               "worktreePath": {
-                                "type": "string",
-                                "maxLength": 12288
+                                "type": "string"
                               },
                               "worktreeBranch": {
-                                "type": "string",
-                                "maxLength": 12288
+                                "type": "string"
                               },
                               "worktreeKept": {
                                 "type": "boolean"
                               },
                               "conflictFiles": {
-                                "maxItems": 256,
                                 "type": "array",
                                 "items": {
-                                  "type": "string",
-                                  "maxLength": 12288
+                                  "type": "string"
                                 }
                               }
                             },

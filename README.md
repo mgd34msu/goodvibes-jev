@@ -1,6 +1,8 @@
 # goodvibes-jev
 
-goodvibes-jev is the goodvibes platform being rebuilt as one Bun monorepo. The target is for Jev (TypeSafe's System One judgment model) to make every semantic decision, replacing keyword lists, regexes over prose, length cutoffs and guessed classifications. Existing product behavior carries over except where the current autonomous decision contract supersedes it.
+goodvibes-jev is a Bun and TypeScript monorepo for the GoodVibes platform: a shared engine, the Jev judgment foundation, a daemon, a terminal UI, an operator agent and a browser UI. Jev (TypeSafe's System One judgment model) handles semantic interpretation and work verification; code handles explicit permissions, formats, identity and execution bookkeeping.
+
+The suite builds and installs from this checkout. Integration and product acceptance remain in progress; an installed build or passing focused checks do not certify full product readiness.
 
 It replaces five separate repositories:
 
@@ -47,27 +49,42 @@ products/tui        the terminal UI over the engine
 products/agent      the agent over the engine
 products/webui      the web UI over the daemon contract
 docs/contracts      runtime and integration contracts
-docs/design         designs for new subsystems (the contract runner)
+docs/design         subsystem designs and migration decisions
 ```
 
 A product holds its rendering, input capture, composition root and packaging. Platform behaviour lives in the engine.
 
 ## Status
 
-The work is tracked in the Finish GoodVibes Jev Linear project. The current
-upstream targets and implementation sequence are recorded in
+As of October 30, 2026, all four products are executable workspaces included in
+the root build, typecheck and test commands. The products are private packages;
+install this suite from source using the repository installer. Product guides
+also retain labelled upstream history, which is not a registry-install or release
+claim for this monorepo.
+
+The upstream targets and implementation sequence are recorded in
 [`docs/design/upstream-reconciliation.md`](docs/design/upstream-reconciliation.md).
 
-- **`packages/judgment`:** the foundation, shared autonomous receipt schema/validation and shared availability-retry transport are implemented. Primary-only transient Jev outages stay pending until recovery or owned cancellation, with per-attempt timeouts, backoff and bounded attempt history. Configured failover tries compatible targets once and returns typed `unavailable` on exhaustion. Native runtime disposal and browser/relay cancellation use that lifecycle. Permanent request/authentication/format and decision-log failures remain terminal; autonomous consumer migration and live-provider proof remain unfinished.
-- **Autonomous execution:** tool admission ([THE-118](https://linear.app/the-artificery/issue/THE-118/integrate-autonomous-jev-tool-admission)) and remembered grant scope/revocation ([THE-115](https://linear.app/the-artificery/issue/THE-115/preserve-remembered-grant-scope-and-revocation)) remain in progress as of October 3. Legacy gate, runner and product callers are migration/release gates. Shared types and passing synthetic checks do not establish autonomous execution or live-provider proof.
-- **`packages/engine`:** in progress. It holds the whole sdk tree, and its subsystems are being converted one at a time.
-- **The contract runner:** in progress.
-- **The products:** the daemon has a working partial composition and command
-  adapters in `products/daemon`. The redesigned WebUI workspace in `products/webui`
-  builds and runs synthetic browser and LAN scenarios; its remaining semantic
-  decisions, connected flows and full parity are still in progress. TUI and Agent
-  ports are in development and are not yet published workspaces. Ordinary CI
-  checks implemented behavior; it does not establish full product parity.
+- **Judgment:** the shared port, autonomous receipt validation, decision log,
+  patterns and calibration tooling are implemented. Primary-only transient
+  outages wait for recovery or cancellation; explicit failover returns typed
+  `unavailable` on exhaustion. Permanent request, authentication, format and
+  decision-log failures remain terminal.
+- **Conversation and tools:** TUI composer input and `--prompt` reach the
+  selected conversation model directly. Tool admission follows owner settings
+  and deterministic authority checks. Explicit native work intake remains a
+  separate route, with durable source identity and recovery.
+- **Completion and reviews:** the engine decides whether task completion
+  verification applies to the current request, retains private repair findings,
+  and checks evidence before publication. Contract project reviews track native
+  file inventory, read observations and accepted assessments separately. See
+  [runtime orchestration](packages/engine/docs/runtime-orchestration.md#completion-verification)
+  and [review inventory](packages/engine/docs/contract-criteria.md#project-review-inventory).
+- **Product integration:** daemon composition, native work controls, TUI, Agent
+  and WebUI are implemented to differing degrees. Connected-host setup, legacy
+  caller migration, live-provider qualification and end-to-end product acceptance
+  still require validation against the candidate being released. Synthetic
+  checks establish only the behavior and configuration they exercise.
 
 ## How each old module is handled
 
@@ -86,7 +103,7 @@ The upstream product interfaces are the parity target, including the October 1 r
 
 ## The judgment foundation (`packages/judgment`)
 
-Published as `@goodvibes-jev/judgment`, it provides:
+The workspace package `@goodvibes-jev/judgment` provides:
 
 - **The judgment port.** One interface every decision site calls, over the System One API, against the hosted Jev endpoint or a local System One model with the same wire protocol.
 - **Typed readings.** Yes/no, a choice over fixed options, and a score on a rubric. Existing stake-scaled bands retain the legacy `act`, `confirm` and `escalate` vocabulary for unmigrated callers and historical records; these are not autonomous consumer outcomes.
@@ -143,9 +160,22 @@ The runner is designed to run as a CLI and as the daemon's hosted-session host. 
 
 ## Install the application
 
-On Linux x64/arm64, run `./install.sh` from this checkout. It builds the full
-suite and creates the daemon's systemd user service. Bun and Node runtimes are
-supplied when needed. See [installation instructions](docs/installation.md)
+On Linux x64/arm64 with glibc, run the installer as your normal user from a
+checkout with no uncommitted changes to tracked files:
+
+```bash
+read -rsp 'TypeSafe API key: ' TYPESAFE_API_KEY; echo
+export TYPESAFE_API_KEY
+./install.sh
+unset TYPESAFE_API_KEY
+goodvibes
+```
+
+It builds the suite, verifies Jev connectivity, pairs the TUI to the local
+daemon, registers the selected workspace and creates a systemd user service.
+Bun and Node runtimes are supplied when needed. The daemon serves the WebUI at
+`http://127.0.0.1:3421`. Provider accounts for the conversation model are
+configured separately. See [installation instructions](docs/installation.md)
 for prerequisites, credentials, custom paths and service options.
 
 Run `goodvibes-uninstall` (or `./uninstall.sh`) to remove the application and
@@ -158,8 +188,9 @@ Run these from the repository root:
 ```sh
 bun install
 bun run typecheck                               # every package
-bun run build                                   # build the engine and implemented products
-bun run test                                    # judgment, engine and implemented product tests
+bun run build                                   # judgment, engine and all four products
+bun run test                                    # installer, judgment, engine and product tests
+bun run products:check                          # product entrypoints, exports and type coverage
 
 bun run --cwd packages/judgment proof           # live proof of every pattern and compound
 bun run --cwd packages/judgment calibrate       # live calibration of every battery
@@ -170,6 +201,16 @@ bun run judgment:audit --json                    # semantic review candidates; n
 ```
 
 The root `prepare` script points git at `.githooks/`. The local pre-commit hook runs the source-only credential scope check for engine and product implementation/config changes. Run focused behavior tests during development and `bun run validate` for a complete local integration check. Required CI still runs the full build, types, API, product, browser and containment checks against the reviewed commit. A successful commit alone does not establish merge readiness.
+
+## Documentation
+
+- [Installation, updates, services and uninstall](docs/installation.md)
+- [Terminal UI](products/tui/README.md) and [CLI flags](products/tui/docs/cli-flags.md)
+- [Agent](products/agent/README.md) and [first-start readiness](products/agent/docs/setup-native-readiness.md)
+- [Daemon](products/daemon/README.md) and [configuration](products/daemon/docs/configuration.md)
+- [WebUI](products/webui/README.md) and [operator guide](products/webui/docs/operator-guide.md)
+- [Engine documentation](packages/engine/docs/README.md) and [judgment foundation](packages/judgment/README.md)
+- [Security policy](SECURITY.md) and [current autonomous decision contract](docs/design/autonomous-jev-decisions.md)
 
 ## License
 

@@ -6,7 +6,41 @@ The code lives in `packages/engine/sdk/src/platform/contract/`. The build design
 
 See also: [Runtime events reference](./reference-runtime-events.md#contracts) for the `contracts` event domain, [Runtime orchestration](./runtime-orchestration.md) for the contract lifecycle, and [Observability](./observability.md) for event subscription.
 
+The current [autonomous decision contract](../../../docs/design/autonomous-jev-decisions.md)
+supersedes the owner-approval/escalation paths described below. Those sections
+record legacy runner behavior still undergoing migration. Completion checking
+for standalone turns is documented in [runtime orchestration](./runtime-orchestration.md#completion-verification).
+
 ---
+
+## Project review inventory
+
+Project reviews use `contract/review-inventory.ts` to capture actual project
+paths before planning. Git supplies tracked and non-ignored untracked files;
+a filesystem walk is the fallback. Runtime and dependency directories are
+excluded. Enumeration errors remain visible. Large inventories are grouped for
+the planner, while host coverage checks retain the exact paths.
+
+Review units assign file or directory scopes, and `reviewExclusions` records
+explicit paths/patterns and reasons. An inventory does not expand the user's
+request to unrelated files. Unit briefs and evidence carry the assigned scope
+and its contribution to the requested outcome.
+
+The observation distinguishes these facts:
+
+| Fact | Meaning |
+| --- | --- |
+| `inspected` | A native read observation records returned ranges for the file. |
+| `reviewed` | A passed research unit has an accepted native check with decision IDs and the file's current SHA-256 matches its assessed version. |
+| `changed` | An assessed version differs from the current file, or its current version is unavailable. |
+| `version-unchecked` | An assessment exists, but no current version observation is available. |
+| `unreviewed` | No qualifying accepted assessment exists. |
+
+Changed and unreviewed paths remain open; unknown versions require version
+checks. Compact evidence preserves pending paths, justified exclusions and
+accepted check identities without repeating every completed per-file record.
+File counts and read receipts do not establish review quality or approve a final
+answer. The whole deliverable still has to satisfy the original criteria.
 
 ## What a criterion is
 

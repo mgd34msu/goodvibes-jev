@@ -1,101 +1,23 @@
 # Getting started
 
-## Prerequisites
-
-- The recommended global install needs [Bun](https://bun.sh) v1.3.10 or later.
-- An npm install needs Node.js 20+ and npm, plus `bun` on `PATH`.
-- Source and dev workflows need Bun v1.3.10 or later.
-- [Go](https://go.dev) is optional, for Go language-server support.
-- `rust-analyzer` is optional for Rust work; GoodVibes can download it automatically on first use.
-
 ## Install
 
-Install from the npm registry with Bun on Linux, macOS, or WSL:
+The Jev TUI is a private workspace in `goodvibes-jev`. Follow the
+[suite installation guide](../../../docs/installation.md) to build and install
+it with the daemon, Agent and WebUI. The installer supports Linux x64/arm64 with
+glibc, supplies Bun and Node when needed, and requires a TypeSafe key for Jev.
+Run it as your normal user. Upstream npm and `goodvibes.sh` installs do not
+install this workspace.
 
-```sh
-bun add -g @pellux/goodvibes-tui
-bun pm trust -g @pellux/goodvibes-tui @pellux/goodvibes-daemon
-goodvibes
-```
+The installer pairs the local TUI and registers a project workspace. Launch
+`goodvibes` from that directory, then configure a conversation provider below.
+Jev credentials and conversation-provider credentials serve different purposes.
+Use `goodvibes --version` and `goodvibes-daemon --version` to inspect the installed
+products. Updates and data-preserving uninstall use the suite installer.
 
-Bun blocks lifecycle scripts for untrusted global packages. `@pellux/goodvibes-tui` needs trusting so its postinstall can place the matching TUI binary, and `@pellux/goodvibes-daemon` needs trusting so its postinstall can place the daemon binary (use the full scoped name; the bare `goodvibes-daemon` matches nothing and trusts nothing). `@pellux/goodvibes-daemon` is a dependency of this package, so one install brings both commands. Nothing else needs trusting for the install to work. Verify the install with:
-
-```sh
-goodvibes --version
-goodvibes-daemon --version
-```
-
-`bun pm -g untrusted` will still list a handful of transitive packages with blocked scripts (the tree-sitter grammar packages, `protobufjs`, and `core-js`). That is expected and harmless: the app loads the grammars as plain `.wasm` files and never the native bindings their `install` scripts would build, and the other two scripts are non-essential housekeeping. Leave them untrusted.
-
-`npm install -g` is also supported when Bun is already installed and on `PATH`:
-
-```sh
-npm install -g @pellux/goodvibes-tui
-goodvibes
-```
-
-The package downloads the matching prebuilt TUI and daemon binaries for the current Linux or macOS platform during `postinstall`. If `bun` is missing, the preinstall check fails with a clear message instead of installing a broken launcher.
-
-On Windows, use WSL2. Inside a WSL2 distribution GoodVibes is an ordinary Linux install and the Linux binaries apply unchanged (`wsl --install`, then run the install command in your WSL2 shell). Native Windows is beta and not yet a supported path. See [windows.md](windows.md).
-
-### Pure-binary installer (`goodvibes.sh/install.sh`)
-
-The one-line installer downloads the checksum-verified TUI, daemon, and agent
-binaries plus the browser operator surface's bundle without a package manager,
-and doubles as the upgrade path. It lives in this repository (`scripts/install.sh`),
-one copy for the whole suite, and resolves a release tag per repository,
-verifying every file against that repository's own `SHA256SUMS.txt`:
-
-```sh
-curl -fsSL https://goodvibes.sh/install.sh | sh
-```
-
-On a **fresh install**, when no daemon is running and no service unit exists yet, it also registers the daemon as a user service so it comes up immediately and on every login:
-
-- **Linux (systemd):** writes `~/.config/systemd/user/goodvibes.service` (marked as installer-managed), then `systemctl --user daemon-reload` and `enable --now`, and reports whether it went active.
-- **macOS (launchd):** writes `~/Library/LaunchAgents/sh.goodvibes.daemon.plist` (installer-managed) and loads it with `launchctl bootstrap`.
-- **Neither available (or opted out):** prints the plain `goodvibes-daemon` command to run it yourself.
-
-It never overwrites an existing unit. An already-running daemon is restarted in place by the upgrade path instead.
-
-**Installer options** (environment variables):
-
-| Variable | Default | Effect |
-| --- | --- | --- |
-| `GOODVIBES_INSTALL_DIR` | `~/.local/bin` | Target directory for the binaries |
-| `GOODVIBES_VERSION` | `latest` | Pin the terminal app's release tag |
-| `GOODVIBES_DAEMON_VERSION` | `latest` | Pin the daemon's release tag |
-| `GOODVIBES_AGENT` | `1` | Set to `0` to skip installing `goodvibes-agent` |
-| `GOODVIBES_AGENT_VERSION` | `latest` | Pin the agent's release tag |
-| `GOODVIBES_WEBUI` | `1` | Set to `0` to skip the browser operator surface |
-| `GOODVIBES_WEBUI_VERSION` | `latest` | Pin the web UI's release tag |
-| `GOODVIBES_RESTART_DAEMON` | `1` | Set to `0` to leave a running daemon/agent untouched |
-| `GOODVIBES_VECTOR` | `1` | Set to `0` to skip the sqlite-vec native addon |
-| `GOODVIBES_DAEMON_SERVICE` | `1` | Set to `0` to skip first-run daemon service setup |
-| `GOODVIBES_UNINSTALL` | `0` | Set to `1` to uninstall (see below) |
-
-The browser surface is not a fourth binary and not a fourth service. Its bundle
-unpacks to `<install dir>/webui/<version>` and the daemon serves it on its own
-listener. Installing it exposes nothing new to your network. The daemon's
-shipped binding is loopback and the installer does not change it, so the URL in
-the install receipt works on that machine only. Reaching it from another device
-is a deliberate separate act, `goodvibes-daemon webui enable --lan`.
-
-**Uninstall:**
-
-```sh
-curl -fsSL https://goodvibes.sh/install.sh | GOODVIBES_UNINSTALL=1 sh
-```
-
-Uninstall mode takes precedence over everything else (no downloads happen). It stops the running daemon/agent, then removes only what the installer manages, which is the three binaries in the install dir, the sqlite-vec addon directories, the unpacked web UI bundles, and the service unit/plist **only when it carries the installer-managed marker**. A hand-written unit is never deleted; it is reported with the manual removal command instead. Your `~/.goodvibes` data (settings, sessions, memory) is deliberately preserved, and the summary prints the `rm -rf ~/.goodvibes` command if you want to erase it too.
-
-Or install from source:
-
-```sh
-git clone https://github.com/mgd34msu/goodvibes-tui.git
-cd goodvibes-tui
-bun install
-```
+For source development, use Bun **1.3.14** and Node **22 or later**. Go is
+optional for Go language-server support, and `rust-analyzer` can be downloaded
+on first use.
 
 ## Configure a model provider
 
@@ -176,24 +98,45 @@ Environment variables take precedence over stored secrets when both are present.
 
 ## Run from source
 
+From the monorepo root:
+
 ```sh
-bun run dev
+bun install
+bun run build
+bun run --cwd products/tui dev
 ```
 
-That starts the full TUI runtime from `src/main.ts`. It connects to the daemon the same way the
-compiled binary does, adopting one already running, or starting an installed-but-stopped daemon
-service, and never running the daemon itself. To run the daemon/API host from source instead, clone
-and run `goodvibes-daemon` from its own repository.
+The TUI runs from `products/tui/src/main.ts` and connects to the daemon as the
+compiled binary does. It can adopt a running daemon or start an installed,
+stopped daemon service. It does not construct a daemon itself. The daemon
+source and build live in `products/daemon` in this same repository; see its
+[CLI and composition requirements](../../daemon/README.md).
 
 ## Build and run the compiled binary
 
 ```sh
-bun run build
-./dist/goodvibes
+bun run --cwd products/tui build:linux-x64
+./products/tui/dist/goodvibes-linux-x64
 ```
 
-`bun run build` compiles `src/main.ts` into `dist/goodvibes`. The compiled binary runs the TUI and
-can also host the HTTP listener in-process when `danger.httpListener` is enabled in config.
+This example targets Linux x64 and runs from the monorepo root after the engine
+is built. Use `build:linux-arm64` and `dist/goodvibes-linux-arm64` for Linux ARM64;
+other declared targets are listed in `products/tui/package.json`. The control
+plane, optional HTTP listener and WebUI are hosted by the daemon.
+
+## Tool access and completion
+
+`goodvibes --no-worries-just-vibes` enables `behavior.autoApprove=true` for one
+launch, including access outside the project for read/search/map tools. The
+same override is available as `--config behavior.autoApprove=true`. Neither
+form persists it. Authentication, scopes and other deterministic checks remain
+in force. See [CLI flags](cli-flags.md#--no-worries-just-vibes).
+
+Composer input and `--prompt` reach the conversation model directly. Actionable
+work then uses [completion verification](../../../packages/engine/docs/runtime-orchestration.md#completion-verification)
+before publishing the final answer. Rejected drafts remain private while the
+model receives specific repair findings. Ordinary conversation and status
+questions can finish while earlier work remains pending.
 
 ## Launch and resume
 
@@ -233,7 +176,11 @@ crash. Keeping (or dismissing) stays quiet for the rest of the run.
 
 ## Common paths
 
-Project runtime data lives under `.goodvibes/` in the working directory, holding sessions, hooks, MCP config, artifacts, and local state. The specific files worth knowing:
+Project runtime data lives under `.goodvibes/` in the working directory. The
+suite installer also sets `GOODVIBES_HOME` to
+`~/.local/share/goodvibes-jev-data`, so global paths shown as `~/.goodvibes`
+below resolve under that directory instead. A custom `--data-dir` relocates it.
+The specific files worth knowing:
 
 | Path | What it holds |
 | --- | --- |
@@ -243,7 +190,6 @@ Project runtime data lives under `.goodvibes/` in the working directory, holding
 | `~/.goodvibes/goodvibes.secrets.json` | Compatibility secrets read by older suite components |
 | `.goodvibes/tui/services.json` | The service registry |
 | `~/.goodvibes/daemon` | The daemon's own home and state directory |
-| `~/.goodvibes/tui/sandbox` | The QEMU sandbox setup bundle |
 | `~/.goodvibes/tui/providers/*.json` | Custom provider definitions, hot-reloaded |
 | `.goodvibes/tui/automation-jobs.json` | Scheduled and automation jobs |
 | `.goodvibes/tui/repl-history.json` | REPL history |
@@ -264,7 +210,6 @@ These slash commands are the fastest way to get oriented once the TUI is running
 | `/plugin browse` and `/marketplace` | The plugin ecosystem and the curated marketplace |
 | `/remote` | Remote peers and node-host runners, if you use them |
 | `/mcp` | Add, edit, remove, reload, and inspect MCP servers while the TUI is running |
-| `/sandbox review` | The sandbox posture, if you plan to use bounded eval or isolated MCP/REPL execution |
 
 ## Local server discovery
 

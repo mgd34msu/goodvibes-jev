@@ -27,20 +27,17 @@ tells the model not to start agent work for ordinary questions, environment
 inspection, or direct research that can be answered in the current turn with
 tools.
 
-Before the model is called, each user turn is read once by the contract
-intake (`createContractIntake`, `contract/intake-route.ts`):
+The TUI delivers composer messages and `goodvibes --prompt` directly to the
+selected conversation model. Jev does not approve or divert those inputs into
+contract work. Explicit `/workstream start` and `/work submit-file` commands
+use the daemon's source-bearing native intake/submission routes, with retained
+identity and recovery. See the [TUI input and work controls](../../../products/tui/README.md#conversation-input).
 
-1. **Open escalation.** When one of the session's contracts is waiting on its
-   owner, the turn's text is the owner's reply and goes to `runner.reply` for
-   the newest open escalation. The turn ends there.
-2. **Request route.** Otherwise Jev reads the text with `contract.request-route`
-   (`converse`, `answer` or `contract`). Route `contract` at act starts a
-   contract with the text as its ask, and the turn ends; the answer arrives
-   when the contract's owner record completes. Any other route, or any reading
-   below act, leaves the turn to the conversation model, which may still start
-   a contract through the `agent` tool.
-
-Nothing is injected into the model's prompt by this step.
+Embedders can still compose legacy `createContractIntake` routing. Its
+request-route and owner-reply behavior is a compatibility path, and native-mode
+runners reject that source-less intake. The contract lifecycle descriptions
+below include those legacy APIs and statuses; current consumers follow the
+[autonomous decision contract](../../../docs/design/autonomous-jev-decisions.md).
 
 Important pieces:
 
@@ -52,6 +49,39 @@ Important pieces:
   sessions.
 - `ExecutionPlanManager` tracks structured plans with `pending`, `in_progress`,
   `complete`, `failed`, and `skipped` statuses.
+
+## Completion verification
+
+`ResponseCompletionGuard` owns final-response checking separately from input
+delivery and tool permissions. Its applicability reading considers the current
+request and original user instructions before starting fulfillment checks.
+Conversation, explanations, factual questions and status requests can finish
+without completing an earlier project. Requests to implement, inspect, audit,
+run checks or produce an artifact require verification. An unsettled
+applicability reading retains the checks. This routing neither completes nor
+cancels earlier pending work.
+
+When verification applies, the guard checks the requested outcome against
+native observations, delegated work and the exact proposed answer. Rejected
+final drafts stay private. The model receives numbered findings with repair and
+closure conditions, so it can fix the remaining work while preserving valid
+results. Equivalent drafts over unchanged evidence reuse held findings for up
+to three cycles before a fresh full check; new execution evidence triggers a
+fresh check. Rewording cannot satisfy a finding that requires more work.
+
+Original instructions and execution observations are audited separately.
+Read receipts preserve returned ranges, hashes and truncation; reading a file
+does not establish that its behavior was reviewed. A historical observation
+audit that remains unsettled after three distinct resolution attempts over
+unchanged evidence is retained as a disclosed limitation. It is never converted
+to approval or established counterevidence. Work-quality, integration and final
+publication checks still apply, and a changed evidence binding starts fresh
+attempts. Contract reviews also expose [file inventory and version-bound assessments](./contract-criteria.md#project-review-inventory).
+
+Jev authentication, access or billing failures hold completion and report the
+operational problem. Completed work is retained and the draft is not published.
+These mechanisms describe implemented behavior; they do not establish
+live-provider accuracy or end-to-end acceptance for an untested candidate.
 
 ## Sessions
 

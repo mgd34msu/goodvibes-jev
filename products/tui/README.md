@@ -2,14 +2,29 @@
 
 ## Jev migration status
 
-This workspace is an unfinished port. The upstream installation instructions,
-screenshots and tour below are reference material, not proof of a published or
-fully autonomous Jev product. The [current decision contract](../../docs/design/autonomous-jev-decisions.md)
-supersedes runtime permission prompts and owner escalation: Jev makes semantic
-decisions, while the UI renders shared outcomes and the one judgment port's
-retry/waiting progress with cancellation. Legacy callers remain [migration gates](../../README.md#status).
-Account login, workspace provisioning/trust and explicit stop/quit controls remain
-legitimate interactions and do not replace deterministic authority enforcement.
+The TUI is a private workspace in the GoodVibes Jev monorepo and is built by
+its suite installer. Integration and full product acceptance remain in progress.
+The screenshots and product tour below preserve upstream reference behavior;
+the [current decision contract](../../docs/design/autonomous-jev-decisions.md)
+takes precedence over legacy permission prompts and owner escalation. Jev makes
+semantic decisions; explicit owner settings and deterministic checks control
+tool access. The shared judgment port owns retry/waiting and cancellation.
+
+## Install
+
+Use the [suite installer](../../docs/installation.md) from the monorepo root.
+It installs the daemon, TUI, Agent and WebUI, pairs the TUI and registers the
+selected project workspace. Configure the conversation provider separately,
+then run `goodvibes` from your project directory. This private workspace is not
+installed through the upstream npm package or `goodvibes.sh` installer.
+
+`goodvibes --no-worries-just-vibes` enables auto-approve for one launch, including
+reads and searches outside the project. It does not persist the override or
+bypass authentication, scopes or operating-system access. See [CLI flags](docs/cli-flags.md#--no-worries-just-vibes).
+
+Actionable work uses the engine's [completion verification](../../packages/engine/docs/runtime-orchestration.md#completion-verification).
+Rejected final drafts stay private while specific findings are repaired.
+Conversation and status questions do not require completing earlier work first.
 
 ## Native work controls (local Jev implementation)
 
@@ -123,46 +138,13 @@ source; inspect `/work` and use its separate explicit Start control.
 
 ## Upstream product reference
 
-[![CI](https://github.com/mgd34msu/goodvibes-tui/actions/workflows/ci.yml/badge.svg)](https://github.com/mgd34msu/goodvibes-tui/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
-[![Version](https://img.shields.io/badge/version-2.1.0-blue.svg)](https://github.com/mgd34msu/goodvibes-tui)
 
 GoodVibes is a terminal console for coding and operations work with an AI model. You run `goodvibes` in a project directory and get a full-screen terminal app where you talk to a model that can read and edit your files, run shell commands, search the web, and hand work off to background agents, asking your permission before anything that writes or executes.
 
 It talks to many model providers (OpenAI, Anthropic, Gemini, Bedrock, Copilot, OpenRouter and other OpenAI-compatible gateways, plus local servers like Ollama and LM Studio that `/scan` finds on your machine and LAN), keeps its settings, sessions, and secrets on your own machine, and shows you the token count and running cost of every turn. Background work opens in large modals over the conversation: running agents, changed files and diffs, tokens and cost.
 
 <img src="docs/assets/splash.png" alt="GoodVibes starting up in a terminal: a glitch-art GOODVIBES wordmark in cyan-to-magenta gradient, the version and tagline beneath it, the active model and tool count, the working directory, a line offering to resume the last session, and a hint line reading Ctrl+P panels / ? help / F2 fleet. A status footer shows mode, token usage, context usage, and the daemon and web listener addresses." width="900">
-
----
-
-## Install
-
-GoodVibes runs on Linux, macOS, and Windows via WSL2. The one-line installer downloads checksum-verified binaries and needs no package manager:
-
-```sh
-curl -fsSL https://goodvibes.sh/install.sh | sh
-goodvibes
-```
-
-Or install from the npm registry with [Bun](https://bun.sh):
-
-```sh
-bun add -g @pellux/goodvibes-tui
-bun pm trust -g @pellux/goodvibes-tui @pellux/goodvibes-daemon
-goodvibes
-```
-
-Bun blocks lifecycle scripts for untrusted global packages, so the second line lets both postinstalls run: `@pellux/goodvibes-tui`'s own, which places the TUI binary, and `@pellux/goodvibes-daemon`'s, which places the daemon binary (both names must be the full scoped names). `@pellux/goodvibes-daemon` is a real dependency of this package, so one install brings both commands. No other dependency needs trusting for the install to work. If you skip that step, the `goodvibes` launcher still self-heals on first run by fetching and checksum-verifying its own binary. `npm install -g @pellux/goodvibes-tui` also works when `bun` is already on `PATH`.
-
-Then point it at a model. An environment variable is the fastest path:
-
-```sh
-export OPENAI_API_KEY=...
-```
-
-On Windows, run it inside a WSL2 distribution, where it is an ordinary Linux install. Native Windows is beta. See [docs/windows.md](docs/windows.md).
-
-Deeper install notes are in [docs/getting-started.md](docs/getting-started.md): the installer's environment variables, uninstall, daemon service registration, encrypted and vault-backed secrets, and running from source.
 
 ---
 
@@ -258,7 +240,6 @@ Each row links to the page that documents it. The product's own `?` overlay and 
 | Remote access | A worked home-server setup: always-on daemon, browser access, TUI over SSH, reachability and TLS | [remote-access.md](docs/remote-access.md) |
 | Channels and API | Slack, Discord, Telegram, Matrix, webhook and other surfaces; the shared reply pipeline; remote peers and node hosts; the control-plane HTTP and streaming API | [channels-remote-and-api.md](docs/channels-remote-and-api.md) |
 | Voice | Live `/tts` playback, TTS and STT providers, streaming voice API | [voice-and-live-tts.md](docs/voice-and-live-tts.md) |
-| Sandboxing | Bounded eval and isolated MCP execution, with a QEMU-backed VM path | [qemu-sandbox.md](docs/qemu-sandbox.md) |
 | Integrations | Home Assistant surface, Cloudflare Workers/Queues batch, GitHub Action | [homeassistant-surface.md](docs/homeassistant-surface.md) · [cloudflare-batch.md](docs/cloudflare-batch.md) · [github-action.md](docs/github-action.md) |
 | Contributing surfaces | The checked-in operator/peer contracts and knowledge schemas | [foundation-artifacts](docs/foundation-artifacts/README.md) |
 
@@ -327,18 +308,21 @@ Paid and subscription models never auto-switch to a different model. That choice
 ## Development
 
 ```sh
-git clone https://github.com/mgd34msu/goodvibes-tui.git
-cd goodvibes-tui
+git clone https://github.com/mgd34msu/goodvibes-jev.git
+cd goodvibes-jev
 bun install
-bun run dev
+bun run build
+bun run --cwd products/tui dev
 ```
+
+Run these commands from `products/tui` after preparing the monorepo:
 
 | Command | Does |
 | --- | --- |
 | `bun run dev` | Run the TUI from source |
 | `bun run test:changed` | Run the test files your change affects (since `origin/main`) |
 | `bun run test` | Run the whole suite through the parallel per-file runner (CI runs it on every push) |
-| `bun run build` | Compile `src/main.ts` into `dist/goodvibes` |
+| `bun run build` | Compile the selected target, such as `dist/goodvibes-linux-x64` |
 
 The compiled binary is the TUI entrypoint. With `daemon.enabled` on (the default) it adopts a running standalone GoodVibes daemon over loopback, and when a daemon is installed as a service but stopped, it starts that service once and waits for it to come online. It never embeds or constructs a daemon of its own. The control plane, HTTP listener (`danger.httpListener`), and web surface are all hosted by the daemon; the TUI configures them and reports their bindings.
 
@@ -355,7 +339,7 @@ Some decisions worth knowing before you read the source:
 - **Crash recovery.** Periodic snapshots plus an fsync-per-record append-only transcript journal, replayed at every resume seam.
 - **Render coalescing and a per-message line cache.** Same-tick render requests collapse into one composite frame, and transcript growth re-renders only the appended message instead of rebuilding the whole conversation.
 
-The TUI consumes the published `@pellux/goodvibes-sdk` platform layer for shared contracts, daemon routes, and transports, and keeps the terminal UI, host wiring, and product composition here. The dependency is pinned in `package.json`. Reference consumers of those surfaces live under [`examples/`](examples/reference-operator-client/README.md).
+The TUI consumes `@goodvibes-jev/engine` and `@goodvibes-jev/daemon` through `workspace:*` dependencies for shared runtime behavior, contracts and transports, and keeps terminal rendering, input and product composition here. Reference consumers of those surfaces live under [`examples/`](examples/reference-operator-client/README.md).
 
 Source layout, in brief (the layer rules and the operator API bridge are in [docs/architecture.md](docs/architecture.md)):
 

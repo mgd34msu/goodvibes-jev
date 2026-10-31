@@ -12,12 +12,15 @@ This SDK has two surfaces. Read the [Published Surface Matrix](./surfaces.md) (t
 ## Install
 
 ```bash
-bun add @goodvibes-jev/engine/sdk
-# or
-npm install @goodvibes-jev/engine/sdk
+# From the goodvibes-jev repository root:
+bun install
+bun run build
 ```
 
-This installs one package. Import only the entry points you need.
+The SDK is a subpath of the `@goodvibes-jev/engine` workspace package. Products
+declare `"@goodvibes-jev/engine": "workspace:*"` and import the entry points
+shown below. For the application and a local daemon, use the
+[suite installer](../../../docs/installation.md).
 
 ## Bun quickstart (full surface)
 
@@ -146,7 +149,7 @@ The SDK accepts two auth options, with the following precedence (highest first):
 2. **`getAuthToken`.** An async resolver with signature `() => Promise<string | null>`.
    Use for dynamic token resolution without the full store interface.
 
-3. **`authToken`.** A static value. The TypeScript type is `string | null | undefined`. Setting it to `null` or omitting it both mean "unauthenticated". Lowest precedence. Use only for short-lived scripts or when the token is static. See [client.ts JSDoc](../packages/sdk/src/client.ts) `Auth token precedence` block for the canonical type definition.
+3. **`authToken`.** A static value. The TypeScript type is `string | null | undefined`. Setting it to `null` or omitting it both mean "unauthenticated". Lowest precedence. Use only for short-lived scripts or when the token is static. See [client.ts JSDoc](../sdk/src/client.ts) `Auth token precedence` block for the canonical type definition.
 
 When `tokenStore` is present, `auth.login()` and `auth.clearToken()` automatically persist changes through the store.
 

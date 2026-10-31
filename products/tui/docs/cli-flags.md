@@ -158,6 +158,19 @@ Override the working directory used for session storage and project-scoped confi
 
 ## Runtime
 
+### `--no-worries-just-vibes`
+
+Enable tool auto-approve for this launch. This is shorthand for
+`--config behavior.autoApprove=true` and does not save a settings change.
+Read, search and repository-map tools also honor it for access outside the
+project, including resolved symlink targets. Authentication, capability scopes,
+revocation, input ownership and operating-system access still apply.
+
+```sh
+goodvibes --no-worries-just-vibes
+goodvibes --no-worries-just-vibes --prompt 'Inspect the sibling project directory.'
+```
+
 ### `--config <key=value>`, `-c <key=value>`
 
 Apply a settings override at startup. May be repeated.

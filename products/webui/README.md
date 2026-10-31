@@ -15,6 +15,14 @@ connected-daemon parity or live-provider accuracy. The default browser matrix
 uses a synthetic daemon. Connected runtime and provider qualification require
 their own receipts for the tested source and configuration.
 
+## Run the installed WebUI
+
+The [suite installer](../../docs/installation.md) builds this workspace and
+serves it from the daemon at `http://127.0.0.1:3421` by default. It needs no
+separate WebUI service. Configure pairing and authentication as described in the
+[operator guide](docs/operator-guide.md). Use the suite installer for updates;
+the development server below is for source work.
+
 ## Development
 
 Install dependencies from the monorepo root and build the workspace with
@@ -43,3 +51,7 @@ The monorepo owns installation, versions, release workflows, tagging and
 publication. Product-level preparation only writes generated browser data and
 asset cache stamps. Existing legacy URLs continue to map into Chat, Work,
 Library, Personal and Settings while preserving deep-link fragments.
+
+See [development](docs/development.md), [testing and validation](docs/testing-and-validation.md),
+[runtime boundaries](docs/runtime-boundaries.md) and [known limitations](docs/known-limitations.md)
+for the supported workflows and remaining integration work.
